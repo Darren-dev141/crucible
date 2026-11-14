@@ -19,6 +19,16 @@ test('combinedAssetBytes counts decoded bytes of every asset field in one call',
   assert.equal(combinedAssetBytes({}), 0);
 });
 
+test('combinedAssetBytes counts grid files and look files, which a call also sends (#1246)', () => {
+  const input = {
+    gridData: { 'a.67vg': base64OfSize(100), 'b.67vg': base64OfSize(101) },
+    lookData: { sky: { kind: 'environment', base64: base64OfSize(7) }, grade: { kind: 'look', text: 'abcde' } },
+  };
+  assert.equal(combinedAssetBytes(input), 100 + 101 + 7 + 5);
+  const over = { gridData: { first: base64OfSize(40 * MEBIBYTE), second: base64OfSize(40 * MEBIBYTE) } };
+  assert.throws(() => assertCombinedAssetBytes(over), /maxCombinedBytes/);
+});
+
 test('a call whose assets are each under maxBytes but together over maxCombinedBytes fails naming limit and total', () => {
   const each = 40 * MEBIBYTE;
   assert.ok(each < AGENT_ASSET_LIMITS.maxBytes);
