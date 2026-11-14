@@ -267,8 +267,20 @@ function applyNormalMap(material, hit, u, v) {
   hit.normal[2] = mappedZ / mappedLength;
 }
 
+// A texel index folded into 0..size-1 by a wrap code: 0 repeat, 1 clamp to edge, 2 mirrored repeat.
+export function wrapTexelIndex(index, size, mode) {
+  if (mode === 1) return Math.max(0, Math.min(size - 1, index));
+  if (mode === 2) {
+    const folded = ((index % (2 * size)) + 2 * size) % (2 * size);
+    return folded < size ? folded : 2 * size - 1 - folded;
+  }
+  return ((index % size) + size) % size;
+}
+
 function sampleTexture(texture, u, v, out) {
-  const { width, height, data, colorLookup, repeat } = texture;
+  const { width, height, data, colorLookup } = texture;
+  const wrapU = texture.wrapU ?? (texture.repeat ? 0 : 1);
+  const wrapV = texture.wrapV ?? (texture.repeat ? 0 : 1);
   const x = u * width - 0.5;
   const y = v * height - 0.5;
   const left = Math.floor(x);
@@ -282,8 +294,8 @@ function sampleTexture(texture, u, v, out) {
   for (let corner = 0; corner < 4; corner++) {
     let column = left + (corner & 1);
     let row = top + (corner >> 1);
-    column = repeat ? ((column % width) + width) % width : Math.max(0, Math.min(width - 1, column));
-    row = repeat ? ((row % height) + height) % height : Math.max(0, Math.min(height - 1, row));
+    column = wrapTexelIndex(column, width, wrapU);
+    row = wrapTexelIndex(row, height, wrapV);
     const weight = ((corner & 1) ? shareX : 1 - shareX) * ((corner >> 1) ? shareY : 1 - shareY);
     const base = (row * width + column) * 4;
     for (let channel = 0; channel < 3; channel++) out[channel] += weight * (colorLookup ? colorLookup[data[base + channel]] : data[base + channel] / 255);

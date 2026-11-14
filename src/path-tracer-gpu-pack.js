@@ -132,8 +132,12 @@ export function packAtlas(materials) {
 // The float of a material record that holds the shadow-only flag: texel 5, second channel (its first channel is the emission map flag).
 export const SHADOW_ONLY_SLOT = 21;
 
-function textureFlags(texture) {
-  return (texture.repeat ? 1 : 0) + (texture.colorLookup ? 2 : 0);
+// The value 2 marks sRGB texels, 4 to 12 hold the wrap code of U and 16 to 48 the wrap code of V (0 repeat, 1 clamp, 2 mirror).
+// The shaders read each field on its own, so the colour test is no longer `flags >= 2`.
+export function textureFlags(texture) {
+  const wrapU = texture.wrapU ?? (texture.repeat ? 0 : 1);
+  const wrapV = texture.wrapV ?? (texture.repeat ? 0 : 1);
+  return (texture.colorLookup ? 2 : 0) + wrapU * 4 + wrapV * 16;
 }
 
 /**
