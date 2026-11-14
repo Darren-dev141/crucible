@@ -297,6 +297,8 @@ function allowedFile(name) {
   return INTERNAL_FILES.has(name) || artifact.test(name);
 }
 
+const FILE_IN_USE_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
+
 async function regularFile(path) {
   const details = await lstat(path);
   if (!details.isFile() || details.isSymbolicLink() || details.nlink !== 1) throw new Error('Job files must be regular files without links or aliases.');
@@ -332,7 +334,8 @@ async function hashFile(path, maximum) {
 }
 
 /** Persistent controller. The trusted runner must stop its owned browser and encoder when aborted. */
-// `lockTakeoverHooks` is a seam for tests that need to pause a process at a chosen point of the lock takeover.
+// `lockTakeoverHooks` is a seam for tests that need to pause a process at a chosen point of the lock takeover, or to replace how a
+// job file is deleted (`removeJobFile`).
 export async function createAgentRenderJobs({ root, run, limits: inputLimits = {}, lockTakeoverHooks = {} }) {
   if (typeof root !== 'string' || !isAbsolute(root)) throw new TypeError('Job root must be an explicit absolute directory.');
   if (typeof run !== 'function') throw new TypeError('run must be an async render callback.');
@@ -357,6 +360,7 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
   // taken) and removes the temporary name. The target therefore never exists empty or half written, even if the process is killed
   // or the disk fills. Where hard links are not supported it falls back to creating the target with `wx` and writing into it.
   // The file operations used here can be replaced through `lockTakeoverHooks.fileOperations`, so tests can make one of them fail.
+  const removeJobFile = lockTakeoverHooks.removeJobFile ?? unlink;
   const publishOperations = { writeFile, link, open, unlink, ...lockTakeoverHooks.fileOperations };
 
   // Removing the temporary name can fail for a moment (a virus scanner holding the file on Windows), so it is retried with a
@@ -615,13 +619,28 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
     const ordered = [...filenames].sort((left, right) => rank(left) - rank(right));
     // Refuse an alias or a foreign entry before anything is deleted.
     for (const filename of ordered) await regularFile(join(directory, filename));
-    for (const filename of ordered) await unlink(join(directory, filename));
+    for (const filename of ordered) await removeJobFile(join(directory, filename));
     await rmdir(directory);
   }
 
+  // A folder that lost owner.json (what the 0.20.0 release left) is ours when its status names the same job and it holds only job files.
+  async function statusNamesJob(directory, filenames, jobId) {
+    if (!filenames.includes('status.json') || !filenames.every(allowedFile)) return false;
+    try {
+      return (await readJson(join(directory, 'status.json'))).jobId === jobId;
+    } catch {
+      return false;
+    }
+  }
+
+  function describeUnprovenFolder(directory) {
+    return `Job folder ${directory} has no owner file and cannot be proven to belong to this store. Delete that folder by hand and try again.`;
+  }
+
   /**
-   * Finishes a release that stopped halfway. A job folder with no files, or one that still has its owner file but lost its status or
-   * snapshot, is what such a release leaves. Returns true when the folder is gone (or was never there), false for a whole job.
+   * Finishes a release that stopped halfway. A job folder with no files, one that still has its owner file but lost its status or
+   * snapshot, or one that lost only its owner file is what such a release leaves. Returns true when the folder is gone (or was never
+   * there), false for a whole job.
    */
   async function discardRemnant(jobId) {
     const directory = join(root, jobId);
@@ -635,12 +654,33 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
     if (!details.isDirectory() || details.isSymbolicLink() || await realpath(directory) !== directory) return false;
     const filenames = await readdir(directory);
     if (filenames.length) {
-      if (!filenames.includes('owner.json') || (filenames.includes('status.json') && filenames.includes('snapshot.json'))) return false;
-      const owner = await readJson(join(directory, 'owner.json'), 4096);
-      if (owner.storeId !== storeId || owner.jobId !== jobId) return false;
+      if (!filenames.includes('owner.json')) {
+        if (!await statusNamesJob(directory, filenames, jobId)) throw new Error(describeUnprovenFolder(directory));
+      } else {
+        if (filenames.includes('status.json') && filenames.includes('snapshot.json')) return false;
+        const owner = await readJson(join(directory, 'owner.json'), 4096);
+        if (owner.storeId !== storeId || owner.jobId !== jobId) return false;
+      }
     }
     await removeJobDirectory(directory);
     return true;
+  }
+
+  // A file another program holds open (a viewer, a sync client) cannot be deleted on Windows yet. That is not a reason to take the
+  // store down: the next submit, release or start finishes the job.
+  async function tryDiscardRemnant(jobId) {
+    try {
+      return await discardRemnant(jobId) ? 'gone' : 'whole';
+    } catch (error) {
+      if (!FILE_IN_USE_CODES.has(error.code)) throw error;
+      return 'in-use';
+    }
+  }
+
+  async function directoryBytes(directory) {
+    let bytes = 0;
+    for (const filename of await readdir(directory)) bytes += (await regularFile(join(directory, filename))).size;
+    return bytes;
   }
 
   async function storeBytes() {
@@ -656,9 +696,9 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
           continue;
         }
         if (!UUID.test(name)) throw new Error(`Foreign store entry: ${name}.`);
-        if (await discardRemnant(name)) continue;
-        const directory = await directoryFor(name);
-        for (const filename of await readdir(directory)) bytes += (await regularFile(join(directory, filename))).size;
+        const outcome = await tryDiscardRemnant(name);
+        if (outcome === 'gone') continue;
+        bytes += await directoryBytes(outcome === 'in-use' ? join(root, name) : await directoryFor(name));
       }
     }
     if (bytes > limits.maxStoreBytes) throw new RangeError('Job store exceeds its total byte budget. Release completed jobs.');
@@ -716,7 +756,7 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
         continue;
       }
       if (!UUID.test(name)) throw new Error(`Foreign store entry: ${name}.`);
-      if (await discardRemnant(name)) continue;
+      if (await tryDiscardRemnant(name) !== 'whole') continue;
       const directory = await directoryFor(name);
       const record = await readJson(join(directory, 'status.json'));
       objectKeys(record, ['schemaVersion', 'jobId', 'sourceRevision', 'state', 'settings', 'progress', 'artifacts', 'metrics', 'reason'], 'job status');
@@ -925,7 +965,12 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
       if (active === job || !TERMINAL.has(job.record.state)) throw new Error('Cancel and settle the active job before release.');
       await job.persistence.catch(() => {});
       // A retry after a failed release finds a half-deleted folder: finish it here instead of failing on the missing owner file.
-      if (!await discardRemnant(jobId)) await removeJobDirectory(await directoryFor(jobId));
+      try {
+        if (!await discardRemnant(jobId)) await removeJobDirectory(await directoryFor(jobId));
+      } catch (error) {
+        if (!FILE_IN_USE_CODES.has(error.code)) throw error;
+        throw new Error(`Job ${jobId} is only partly released: a file in ${join(root, jobId)} is open in another program. Close it and call release again.`, { cause: error });
+      }
       jobs.delete(jobId);
       return { jobId, released: true };
     },

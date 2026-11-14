@@ -42,7 +42,7 @@ export function assetBytesLimitMessage(size) {
 /** Message for one call whose assets together pass the combined limit; it names the limit, the total and the way out. */
 export function combinedAssetBytesLimitMessage(total) {
   const limit = AGENT_ASSET_LIMITS.maxCombinedBytes;
-  return `This call sends ${total} bytes of assets to the preview page at once, over the catalog maxCombinedBytes ${limit} (${describeAssetBytes(limit)}). Place fewer or smaller assets in one call and add the rest in later calls, or shrink them (meshopt compression, smaller textures).`;
+  return `This call sends ${total} bytes of assets to the preview page at once, over the catalog maxCombinedBytes ${limit} (${describeAssetBytes(limit)}). Place fewer or smaller assets in one call and add the rest in later calls, or shrink them (meshopt compression, smaller textures). The frames of one volume grid cannot be split across calls: use fewer frames or convert them with a lower --max-resolution.`;
 }
 
 function decodedBase64Bytes(text) {

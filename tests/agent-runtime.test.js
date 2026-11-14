@@ -456,6 +456,67 @@ runTest('a recipe over the combined asset limit is refused from file sizes befor
   assert.equal(gridReads, 0);
 });
 
+// A catalog that reports sizes and counts how often a file is read, so a test can prove a call was refused before any read.
+function countingCatalog(sizeByAssetId) {
+  const counts = { sizeCalls: 0, reads: 0 };
+  const catalog = {
+    counts,
+    list: () => ({ assets: [] }),
+    size: async assetId => {
+      counts.sizeCalls++;
+      return sizeByAssetId[assetId];
+    },
+    read: async () => {
+      counts.reads++;
+      return Buffer.alloc(0);
+    },
+  };
+  return catalog;
+}
+
+const catalogAssetIds = ['a', 'b', 'c'].map(letter => letter.repeat(64));
+
+async function catalogLimitHarness(sizeEach) {
+  const catalog = countingCatalog(Object.fromEntries(catalogAssetIds.map(assetId => [assetId, sizeEach])));
+  const harness = await reviewRuntimeHarness({
+    runtimeOptions: { assets: join(tmpdir(), 'crucible-counting-catalog') },
+    contextOverrides: { createAgentAssetCatalog: async () => catalog },
+  });
+  catalog.counts.sizeCalls = 0;
+  return { ...harness, catalog };
+}
+
+function refusedAtTotal(total) {
+  return error => error instanceof RangeError && error.message.includes('maxCombinedBytes') && error.message.includes(String(total));
+}
+
+runTest('placed catalog assets over the combined limit are refused from sizes before any read (#1246)', async () => {
+  const sizeEach = 30 * 1024 * 1024;
+  const { runtime, catalog } = await catalogLimitHarness(sizeEach);
+  const recipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [],
+    nodes: catalogAssetIds.map((assetId, index) => ({ id: `placed-${index}`, asset: { id: assetId } })) };
+  await assert.rejects(runtime.create({ recipe }), refusedAtTotal(3 * sizeEach));
+  assert.equal(catalog.counts.sizeCalls, 3);
+  assert.equal(catalog.counts.reads, 0);
+});
+
+runTest('map sequence frames over the combined limit are refused from sizes before any read (#1246)', async () => {
+  const sizeEach = 40 * 1024 * 1024;
+  const { runtime, catalog } = await catalogLimitHarness(sizeEach);
+  const recipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], nodes: [],
+    materials: [{ id: 'screen', map: { sequence: { frames: catalogAssetIds.slice(0, 2), fps: 24 } } }] };
+  await assert.rejects(runtime.create({ recipe }), refusedAtTotal(2 * sizeEach));
+  assert.equal(catalog.counts.reads, 0);
+});
+
+runTest('motion source assets count in the sum before a scene_apply reads them (#1246)', async () => {
+  const sizeEach = 30 * 1024 * 1024;
+  const { runtime, sessionId, catalog } = await catalogLimitHarness(sizeEach);
+  const motion = { layers: catalogAssetIds.map(assetId => ({ from: { asset: assetId } })) };
+  await assert.rejects(runtime.apply({ sessionId, operations: [{ type: 'set-motion', motion }] }), refusedAtTotal(3 * sizeEach));
+  assert.equal(catalog.counts.reads, 0);
+});
+
 runTest('the preview server accepts only its own loopback host', () => {
   assert.equal(isPreviewHost('127.0.0.1:4100', 4100), true);
   assert.equal(isPreviewHost('evil.example:4100', 4100), false);

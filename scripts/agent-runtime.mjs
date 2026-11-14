@@ -249,18 +249,19 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   /**
    * Adds up the sizes of the files one call would send, from their directory entries, and refuses the call over the combined limit
-   * before any file is read or base64 encoded. Reading first peaked at about 2.2 times the total before the check ran.
+   * before any file is read or base64 encoded. Reading first peaked at about 2.2 times the total before the check ran. Motion source
+   * assets travel in their own field next to the placed ones, so each counts again even when a recipe also places it.
    */
-  async function assertPlacedAssetsFitBeforeReading(value) {
+  async function assertPlacedAssetsFitBeforeReading(value, motionSourceIds = []) {
     const catalogIds = new Set([...recipeAssetNeeds(value).map(need => need.id), ...sequenceFrameIds(value)]);
     const { environments, looks } = catalogLookReferences(value);
     for (const reference of [...environments, ...looks]) {
       if (!BUNDLED_ENVIRONMENT_NAMES.includes(reference) && !BUNDLED_CUBE_LOOK_NAMES.includes(reference)) catalogIds.add(reference);
     }
     let total = volumeGridFileBytes(value);
-    if (catalogIds.size) {
+    if (catalogIds.size || motionSourceIds.length) {
       const readyCatalog = await catalog();
-      for (const id of catalogIds) total += await readyCatalog.size(id);
+      for (const id of [...catalogIds, ...motionSourceIds]) total += await readyCatalog.size(id);
     }
     assertCombinedByteTotal(total);
   }
@@ -321,7 +322,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   // Motion layers can play a clip of another catalog asset (`from.asset`). The page gets those assets' bytes by catalog ID,
   // never a path, and keeps only their clips and nodes.
-  async function motionSources(motions) {
+  async function motionSources(motions, placedValue = {}) {
     const ids = new Set();
     for (const motion of motions) {
       for (const layer of Array.isArray(motion?.layers) ? motion.layers : []) {
@@ -331,6 +332,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     }
     if (ids.size > MAXIMUM_MOTION_SOURCES) throw new RangeError(`Motion layers can retarget clips of at most ${MAXIMUM_MOTION_SOURCES} other assets at once.`);
     if (!ids.size) return {};
+    await assertPlacedAssetsFitBeforeReading(placedValue, [...ids]);
     const sources = {};
     for (const id of ids) sources[id] = (await (await catalog()).read(id)).toString('base64');
     return { sources };
@@ -1081,7 +1083,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         const rebakes = hadBake || bakeAfter === true;
         const motions = (input.operations ?? []).filter(operation => operation.type === 'set-motion').map(operation => operation.motion);
         const gameAssets = await gameAssetNeeds(input);
-        const applied = await invoke('apply', { ...input, ...(await motionSources(motions)), ...(await placedAssetData(gameAssets?.recipe ?? input.operations)), ...(gameAssets ? { assetNeeds: gameAssets.recipe } : {}) }, rebakes ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
+        const placedValue = gameAssets?.recipe ?? input.operations;
+        const applied = await invoke('apply', { ...input, ...(await motionSources(motions, placedValue)), ...(await placedAssetData(placedValue)), ...(gameAssets ? { assetNeeds: gameAssets.recipe } : {}) }, rebakes ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
         if (bakeAfter ?? hadBake) bakedSessionIds.add(input.sessionId);
         else bakedSessionIds.delete(input.sessionId);
         return applied;
