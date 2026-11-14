@@ -57,7 +57,7 @@ test('a terrain resolution that is not a number names the real range', () => {
 test('the geometry preflight error names the geometry and the numbers, and checkpoints only when held', () => {
   const recipe = singleGeometryRecipe({ id: 'ball', type: 'mesh', base: { type: 'sphere', segments: 512, rings: 512 } });
   assert.throws(() => createAgentScene(recipe, {}), error => {
-    assert.match(error.message, /peak needs \d+ vertices \(max \d+\) and \d+ bytes \(max \d+\)/);
+    assert.match(error.message, /^geometry\.vertices: got \d+; expected a geometry preflight peak of at most \d+ vertices and \d+ bytes \(this needs \d+ bytes\): /);
     assert.match(error.message, /"ball"/);
     assert.match(error.message, /\d+ vertices are already held by the active scene, checkpoints and staged resources and \d+ are new/);
     assert.match(error.message, /Reduce detail\.$/);
@@ -65,6 +65,27 @@ test('the geometry preflight error names the geometry and the numbers, and check
     return true;
   });
 });
+
+test('the geometry preflight error suggests releasing checkpoints when one is held', () => {
+  const session = createAgentScene(singleGeometryRecipe({ id: 'box', type: 'box', bevel: 0 }), { maxVertices: 24, maxGeometryBytes: 1344 });
+  session.checkpoint();
+  session.apply([
+    { type: 'remove-node', id: 'node-box' },
+    { type: 'remove-geometry', id: 'box' },
+  ], { expectedRevision: 0 });
+  const add = [{ type: 'add-geometry', geometry: { id: 'new', type: 'box', bevel: 0 } }];
+  assert.throws(() => session.apply(add, { expectedRevision: 1 }), error => {
+    assert.match(error.message, /Reduce detail or release checkpoints\.$/);
+    return true;
+  });
+});
+
+for (const field of ['size', 'resolution', 'amplitude']) {
+  test(`a null terrain ${field} is rejected, not read as the default`, () => {
+    const recipe = singleGeometryRecipe({ id: 'ground', type: 'terrain', [field]: null });
+    assert.throws(() => createAgentScene(recipe, {}), new RegExp(`${field}: got null`));
+  });
+}
 
 test('the path tracer text points at the real scene_capabilities topic', async () => {
   const server = await readFile(new URL('../scripts/mcp-server.mjs', import.meta.url), 'utf8');

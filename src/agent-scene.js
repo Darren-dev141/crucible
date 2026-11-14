@@ -496,8 +496,8 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
     return input.length;
   }
   for (const field of GEOMETRY_FIELDS[value.type]) {
-    // Terrain checks its own numbers (a whole resolution from 2 to 256), so its message names the real range.
-    if (value.type === 'terrain' && ['size', 'resolution', 'amplitude'].includes(field)) continue;
+    // Terrain checks its own numbers (a whole resolution from 2 to 256), so its message names the real range; null is not absent there, so it still fails below.
+    if (value.type === 'terrain' && ['size', 'resolution', 'amplitude'].includes(field) && value[field] !== null) continue;
     if (value[field] !== undefined && !['profile', 'contour', 'holes', 'path', 'closed', 'base', 'edits', 'stack', 'shapeKeys', 'points', 'taper', 'text', 'font', 'align', 'from', 'to', 'shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'root', 'source', 'impact'].includes(field)) {
       finite(value[field], field);
     }
@@ -1461,7 +1461,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   function geometryBudgetError({ residentStats, pendingVertices }, plans, budget, heldCheckpoints) {
     const largest = plans.filter(plan => !plan.existing).sort((first, second) => second.estimatedVertices - first.estimatedVertices)[0];
     const largestNote = largest === undefined ? 'no new geometry is added' : `largest new geometry "${largest.definition.id}" has ${largest.estimatedVertices}`;
-    return new RangeError(`Geometry preflight peak needs ${residentStats.vertices + pendingVertices} vertices (max ${budget.maxVertices}) and ${residentStats.geometryBytes + pendingVertices * 56} bytes (max ${budget.maxGeometryBytes}): ${residentStats.vertices} vertices are already held by the active scene, checkpoints and staged resources and ${pendingVertices} are new; ${largestNote}. Reduce detail${heldCheckpoints ? ' or release checkpoints' : ''}.`);
+    return invalidField('geometry.vertices', residentStats.vertices + pendingVertices, `a geometry preflight peak of at most ${budget.maxVertices} vertices and ${budget.maxGeometryBytes} bytes (this needs ${residentStats.geometryBytes + pendingVertices * 56} bytes): ${residentStats.vertices} vertices are already held by the active scene, checkpoints and staged resources and ${pendingVertices} are new; ${largestNote}. Reduce detail${heldCheckpoints ? ' or release checkpoints' : ''}`);
   }
 
   function stage(inputRecipe, preferred = null, removedNodes = new Set(), removedMaterials = new Set()) {
