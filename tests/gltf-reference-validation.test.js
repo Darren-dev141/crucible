@@ -79,7 +79,7 @@ test('meshopt views and accessors share one decoded budget', async () => {
       extensions: { EXT_meshopt_compression: { buffer: 0, byteLength: 16, byteStride: 12, count: 10, mode: 'ATTRIBUTES' } },
     });
   });
-  await assert.rejects(() => parseGltf(text, { maxDecodedBytes: 150, decoders: { meshopt: { ready: Promise.resolve(), decodeGltfBuffer() {} } } }), /decoded accessor bytes.*maxDecodedBytes/);
+  await assert.rejects(() => parseGltf(text, { maxDecodedBytes: 150, decoders: { meshopt: { ready: Promise.resolve(), decodeGltfBuffer() {} } } }), /decoded accessor and meshopt view bytes.*maxDecodedBytes/);
 });
 
 const danglingCases = [
@@ -146,17 +146,12 @@ function texturedPart(material, geometryExtras = {}) {
 
 const texture = { image: { width: 1, height: 1, data: new Uint8Array([255, 255, 255, 255]) } };
 
-test('exportGlb throws for a uvChannel 1 map without geometry.lightUvs', () => {
-  assert.throws(() => exportGlb([texturedPart({ map: { ...texture, uvChannel: 1 } })]), error => error instanceof RangeError && /geometry\.lightUvs/.test(error.message));
+test('exportGlb writes a uvChannel 1 map on a mesh without lightUvs, leaving the import to drop it', () => {
+  assert.ok(exportGlb([texturedPart({ map: { ...texture, uvChannel: 1 } })]).byteLength > 0);
 });
 
-test('exportGlb throws for a lightMap without geometry.lightUvs', () => {
-  assert.throws(() => exportGlb([texturedPart({ lightMap: texture })]), error => error instanceof RangeError && /geometry\.lightUvs/.test(error.message));
-});
-
-test('exportGlb accepts a lightMap when geometry.lightUvs is set', () => {
-  const lightUvs = new Float32Array([0, 0, 1, 0, 0, 1]);
-  assert.ok(exportGlb([texturedPart({ lightMap: texture }, { lightUvs })]).byteLength > 0);
+test('exportGlb writes a lightMap on a mesh without lightUvs', () => {
+  assert.ok(exportGlb([texturedPart({ lightMap: texture })]).byteLength > 0);
 });
 
 test('semverSatisfies ignores prerelease and build metadata of the running version', () => {

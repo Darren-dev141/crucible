@@ -506,7 +506,8 @@ function validateDocument(document, limits, allowedExtensions) {
     if (!components[accessor.type]) throw new Error('Unsupported glTF accessor shape.');
     decodedBytes += accessor.count * components[accessor.type] * 4;
   }
-  overLimit(overruns, 'decoded accessor bytes', decodedBytes, 'maxDecodedBytes', limits.maxDecodedBytes);
+  const decodedLabel = meshoptViewBytes > 0 ? 'decoded accessor and meshopt view bytes' : 'decoded accessor bytes';
+  overLimit(overruns, decodedLabel, decodedBytes, 'maxDecodedBytes', limits.maxDecodedBytes);
   return { vertices, ignoredExtensions, overruns };
 }
 
