@@ -70,7 +70,7 @@ Skipped, with the reason in `report.skipped`: transparent parts, a material tag 
 
 GLB export writes `lightUvs` as `TEXCOORD_1` and the light map as the emissive texture on `texCoord` 1, with the base colour factor as `emissiveFactor`. glTF has no light map slot, so a base colour texture does not tint it there: the export is an approximation for viewers, not for reference renders. The path tracer ignores `lightMap` and `emissiveMap` on purpose: it traces indirect light itself, so reading a baked map would count the same light twice.
 
-Export does not check that `lightUvs` exists: a `lightMap` or a `uvChannel: 1` map on a mesh without `lightUvs` is written with `texCoord` 1 and no `TEXCOORD_1`, and the glTF import drops that texture with a warning, the way it does for any file whose mesh lacks the UV set a map reads.
+Export throws a `RangeError` naming `geometry.lightUvs` when a part has a `lightMap` or a map with `uvChannel: 1` but its geometry has no `lightUvs`, because the file would point at a `TEXCOORD_1` that is not written.
 
 ## Sky visibility alone
 
