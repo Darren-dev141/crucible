@@ -607,6 +607,42 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
     return directory;
   }
 
+  // status.json goes first and owner.json last. A release that fails midway then leaves a folder that has no status (so it never
+  // reads as a job with missing artifacts) and still proves it is ours, and a retry or the next start can finish it.
+  async function removeJobDirectory(directory) {
+    const filenames = await readdir(directory);
+    const rank = filename => filename === 'status.json' ? 0 : filename === 'owner.json' ? 2 : 1;
+    const ordered = [...filenames].sort((left, right) => rank(left) - rank(right));
+    // Refuse an alias or a foreign entry before anything is deleted.
+    for (const filename of ordered) await regularFile(join(directory, filename));
+    for (const filename of ordered) await unlink(join(directory, filename));
+    await rmdir(directory);
+  }
+
+  /**
+   * Finishes a release that stopped halfway. A job folder with no files, or one that still has its owner file but lost its status or
+   * snapshot, is what such a release leaves. Returns true when the folder is gone (or was never there), false for a whole job.
+   */
+  async function discardRemnant(jobId) {
+    const directory = join(root, jobId);
+    let details;
+    try {
+      details = await lstat(directory);
+    } catch (error) {
+      if (error.code === 'ENOENT') return true;
+      throw error;
+    }
+    if (!details.isDirectory() || details.isSymbolicLink() || await realpath(directory) !== directory) return false;
+    const filenames = await readdir(directory);
+    if (filenames.length) {
+      if (!filenames.includes('owner.json') || (filenames.includes('status.json') && filenames.includes('snapshot.json'))) return false;
+      const owner = await readJson(join(directory, 'owner.json'), 4096);
+      if (owner.storeId !== storeId || owner.jobId !== jobId) return false;
+    }
+    await removeJobDirectory(directory);
+    return true;
+  }
+
   async function storeBytes() {
     let bytes = 0;
     for (const name of await readdir(root)) {
@@ -620,6 +656,7 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
           continue;
         }
         if (!UUID.test(name)) throw new Error(`Foreign store entry: ${name}.`);
+        if (await discardRemnant(name)) continue;
         const directory = await directoryFor(name);
         for (const filename of await readdir(directory)) bytes += (await regularFile(join(directory, filename))).size;
       }
@@ -649,7 +686,8 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
 
   function persist(job, record = job.record) {
     const text = JSON.stringify(record);
-    job.persistence = job.persistence.then(async () => {
+    // A write that failed already told its own caller; it must not make every later write reject with the same old error.
+    job.persistence = job.persistence.catch(() => {}).then(async () => {
       const directory = await directoryFor(job.record.jobId);
       const pending = join(directory, 'status.json.pending');
       await writeFile(pending, text, { mode: 0o600 });
@@ -678,6 +716,7 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
         continue;
       }
       if (!UUID.test(name)) throw new Error(`Foreign store entry: ${name}.`);
+      if (await discardRemnant(name)) continue;
       const directory = await directoryFor(name);
       const record = await readJson(join(directory, 'status.json'));
       objectKeys(record, ['schemaVersion', 'jobId', 'sourceRevision', 'state', 'settings', 'progress', 'artifacts', 'metrics', 'reason'], 'job status');
@@ -884,13 +923,9 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
       if (closed) throw new Error('Render job controller is closed.');
       const job = getJob(jobId);
       if (active === job || !TERMINAL.has(job.record.state)) throw new Error('Cancel and settle the active job before release.');
-      await job.persistence;
-      const directory = await directoryFor(jobId);
-      for (const filename of await readdir(directory)) {
-        await regularFile(join(directory, filename));
-        await unlink(join(directory, filename));
-      }
-      await rmdir(directory);
+      await job.persistence.catch(() => {});
+      // A retry after a failed release finds a half-deleted folder: finish it here instead of failing on the missing owner file.
+      if (!await discardRemnant(jobId)) await removeJobDirectory(await directoryFor(jobId));
       jobs.delete(jobId);
       return { jobId, released: true };
     },
@@ -901,13 +936,14 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
         const job = active;
         job.record.state = 'cancelling';
         job.controller.abort(new Error('Render job controller closed.'));
-        await persist(job);
+        // A failed write must not stop close() from settling the job and giving the store lock back.
+        await persist(job).catch(() => {});
         let timer;
         try {
           await Promise.race([job.settled, new Promise((resolveWait, reject) => { timer = setTimeout(() => reject(new Error('Render callback did not settle after cancellation. Store ownership remains locked.')), limits.cleanupMs); })]);
         } finally { clearTimeout(timer); }
       }
-      for (const job of jobs.values()) await job.persistence;
+      for (const job of jobs.values()) await job.persistence.catch(() => {});
       await unlock();
     },
   });

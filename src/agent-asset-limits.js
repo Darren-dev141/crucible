@@ -58,14 +58,25 @@ export function combinedAssetBytes(input) {
       if (typeof text === 'string') total += decodedBase64Bytes(text);
     }
   }
+  for (const text of Object.values(input?.gridData ?? {})) {
+    if (typeof text === 'string') total += decodedBase64Bytes(text);
+  }
+  for (const entry of Object.values(input?.lookData ?? {})) {
+    if (typeof entry?.base64 === 'string') total += decodedBase64Bytes(entry.base64);
+    else if (typeof entry?.text === 'string') total += Buffer.byteLength(entry.text);
+  }
   if (typeof input?.data === 'string') total += decodedBase64Bytes(input.data);
   return total;
 }
 
+/** Throws a RangeError when a byte total passes the combined limit. The runtime calls it with file sizes before it reads any file. */
+export function assertCombinedByteTotal(total) {
+  if (total > AGENT_ASSET_LIMITS.maxCombinedBytes) throw new RangeError(combinedAssetBytesLimitMessage(total));
+}
+
 /** Throws a RangeError when the assets in one preview call pass the combined limit. */
 export function assertCombinedAssetBytes(input) {
-  const total = combinedAssetBytes(input);
-  if (total > AGENT_ASSET_LIMITS.maxCombinedBytes) throw new RangeError(combinedAssetBytesLimitMessage(total));
+  assertCombinedByteTotal(combinedAssetBytes(input));
 }
 
 /**

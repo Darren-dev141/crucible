@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { sampleBrowserHeap, exceedsMemoryGuard, memoryGuardMessage, createNativeMemoryAllowance } from './agent-memory-guard.mjs';
-import { lstat, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -25,10 +25,10 @@ import { createAgentAssetCatalog } from './agent-asset-catalog.mjs';
 import { createPackRegistry } from './agent-packs.mjs';
 import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMUM_PACK_FILE_BYTES, MAXIMUM_PACK_JSON_BYTES, MAXIMUM_PACK_ITEMS_PER_KIND, PACK_CONTENT_KINDS } from '../src/pack-manifest.js';
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
-import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes } from '../src/agent-asset-limits.js';
+import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes, assertCombinedByteTotal } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { sequenceFrameIds } from '../src/agent-texture-sequence.js';
-import { readVolumeGridFiles } from '../src/mcp-volume-grids.js';
+import { readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grids.js';
 import { catalogLookReferences, BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES } from '../src/look-catalog.js';
 import { TEXTURE_SEQUENCE_CAPABILITIES } from '../src/texture-sequence-limits.js';
 import { writeWebBuild } from './web-export.mjs';
@@ -69,6 +69,8 @@ const MAXIMUM_REMEMBERED_EVICTIONS = 32;
 const MAXIMUM_GLB_BYTES = 32 * 1024 * 1024;
 const MAXIMUM_KEPT_GLBS = 8;
 const MAXIMUM_KEPT_WEB_BUILDS = 4;
+const EXPORTED_GLB_NAME = /^[0-9a-f-]{36}\.glb$/;
+const EXPORTED_WEB_BUILD_NAME = /^web-[0-9a-f-]{36}$/;
 const EVALUATION_TIMEOUT_MS = 30000;
 const QUERY_ONLY_TIMEOUT_MS = 120000;
 /** A bake runs on a worker for up to its own limit, so a call that bakes gets that much more than a plain call. */
@@ -136,6 +138,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   let page;
   let reviewPage;
   let cancelReview;
+  // One per scene_ask_user call that is waiting for the person; close() aborts them so the page server and its timer end at once.
+  const pendingAskControllers = new Set();
   // Open scenes, least recently used first; the last one is what a call without a sessionId means.
   const openSessionIds = new Set();
   // Scenes the page closed to stay under the scene cap, so a later call with one of them gets a clear error.
@@ -190,12 +194,30 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     });
     return jobsPromise;
   }
+  // Exports an earlier server run left in the folder count toward the retention limits, oldest first, so a run never adds to them.
+  let keptExportsSeeded = false;
+  async function seedKeptExports(directory) {
+    if (keptExportsSeeded) return;
+    const found = [];
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const isGlb = entry.isFile() && EXPORTED_GLB_NAME.test(entry.name);
+      const isWebBuild = entry.isDirectory() && EXPORTED_WEB_BUILD_NAME.test(entry.name);
+      if (!isGlb && !isWebBuild) continue;
+      const path = join(directory, entry.name);
+      found.push({ path, isGlb, modified: (await lstat(path)).mtimeMs });
+    }
+    found.sort((left, right) => left.modified - right.modified);
+    savedGlbPaths.unshift(...found.filter(item => item.isGlb).map(item => item.path));
+    savedWebBuildPaths.unshift(...found.filter(item => !item.isGlb).map(item => item.path));
+    keptExportsSeeded = true;
+  }
   // The caller never names a path: files get a server-chosen name in the jobs folder, and only the newest few are kept.
   async function saveGlbExport(bytes) {
     const directory = join(jobRoot, EXPORT_DIRECTORY_NAME);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const details = await lstat(directory);
     if (!details.isDirectory() || details.isSymbolicLink()) throw new Error('The export folder must be a real directory without links.');
+    await seedKeptExports(directory);
     while (savedGlbPaths.length >= MAXIMUM_KEPT_GLBS) await unlink(savedGlbPaths.shift());
     const filename = `${randomUUID()}.glb`;
     const path = join(directory, filename);
@@ -225,8 +247,27 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     return packsPromise;
   }
 
+  /**
+   * Adds up the sizes of the files one call would send, from their directory entries, and refuses the call over the combined limit
+   * before any file is read or base64 encoded. Reading first peaked at about 2.2 times the total before the check ran.
+   */
+  async function assertPlacedAssetsFitBeforeReading(value) {
+    const catalogIds = new Set([...recipeAssetNeeds(value).map(need => need.id), ...sequenceFrameIds(value)]);
+    const { environments, looks } = catalogLookReferences(value);
+    for (const reference of [...environments, ...looks]) {
+      if (!BUNDLED_ENVIRONMENT_NAMES.includes(reference) && !BUNDLED_CUBE_LOOK_NAMES.includes(reference)) catalogIds.add(reference);
+    }
+    let total = volumeGridFileBytes(value);
+    if (catalogIds.size) {
+      const readyCatalog = await catalog();
+      for (const id of catalogIds) total += await readyCatalog.size(id);
+    }
+    assertCombinedByteTotal(total);
+  }
+
   /** Bytes of the catalog assets a recipe or edit list places, base64 by asset id, for the page that decodes them. */
   async function placedAssetData(value) {
+    await assertPlacedAssetsFitBeforeReading(value);
     const needs = recipeAssetNeeds(value);
     const entries = await Promise.all(needs.map(async ({ id }) => [id, (await (await catalog()).read(id)).toString('base64')]));
     return { ...(needs.length ? { assetData: Object.fromEntries(entries) } : {}), ...(await sequenceFrameData(value)), ...(await lookFileData(value)), ...volumeGridData(value) };
@@ -467,7 +508,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       await loadAddons();
       phase = 'ready';
     } catch (error) {
-      phase = 'failed';
+      // A failed start is not final: the next call boots again, as the job store does after a failed start.
+      phase = closing ? 'closing' : 'idle';
       await shutdownResources();
       throw error;
     }
@@ -1098,11 +1140,20 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         await page.setViewportSize({ width, height });
         return invoke('annotateFrame', { sessionId: input.sessionId });
       });
-      const session = await runAnnotateSession({ png: frame.data, width: frame.width, height: frame.height, prompt: input.prompt ?? '',
-        maxMarks, waitMs: timeoutSeconds * 1000, open: async url => {
-          console.error(`Crucible annotate page: ${url}`);
-          await openPage(url);
-        } });
+      if (closing) throw new Error('The agent runtime is closing.');
+      const askController = new AbortController();
+      pendingAskControllers.add(askController);
+      let session;
+      try {
+        session = await runAnnotateSession({ png: frame.data, width: frame.width, height: frame.height, prompt: input.prompt ?? '',
+          maxMarks, waitMs: timeoutSeconds * 1000, signal: askController.signal, open: async url => {
+            console.error(`Crucible annotate page: ${url}`);
+            await openPage(url);
+          } });
+      } finally {
+        pendingAskControllers.delete(askController);
+      }
+      if (session.outcome === 'aborted') throw new Error('The agent runtime closed while the person was marking the scene.');
       const base = { sessionId: input.sessionId, revision: frame.metadata.revision, view: { width: frame.width, height: frame.height, camera: frame.camera } };
       if (session.outcome !== 'sent') {
         return { content: { ...base, outcome: session.outcome, marks: [], message: session.outcome === 'timeout'
@@ -1298,6 +1349,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         // Same name rule as GLB exports: the server picks the folder, and only the newest few are kept.
         const directory = join(jobRoot, EXPORT_DIRECTORY_NAME);
         await mkdir(directory, { recursive: true, mode: 0o700 });
+        await seedKeptExports(directory);
         const outputDirectory = join(directory, `web-${randomUUID()}`);
         let summary;
         try {
@@ -1389,6 +1441,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       if (!closing) {
         phase = 'closing';
         cancelReview?.(new Error('The agent runtime is closing.'));
+        for (const askController of pendingAskControllers) askController.abort();
         closing = (async () => {
           try {
             // The job store goes first: a client that closes the connection waits only a couple of seconds before it kills this

@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setVolumeGridLoader, VOLUME_GRID_MAX_BYTES } from './volume-grid.js';
 import { VOLUME_GRID_SEQUENCE_MAX_BYTES, VOLUME_GRID_SEQUENCE_MAX_FRAMES } from './volume-grid-sequence.js';
@@ -64,6 +64,26 @@ export function volumeGridUses(value) {
   };
   visit(value, 0);
   return uses;
+}
+
+/**
+ * The total size on disk of the distinct grid files a recipe or edit list names, counted without reading any of them, so a caller can refuse
+ * a call that would send too many bytes before it loads them. A name that is invalid or missing counts as zero here; reading it later
+ * throws the error that says what to pass instead.
+ */
+export function volumeGridFileBytes(value, directory) {
+  const sizes = new Map();
+  for (const { names } of volumeGridUses(value)) {
+    for (const name of names) {
+      if (typeof name !== 'string' || !GRID_FILE_NAME.test(name) || sizes.has(name)) continue;
+      try {
+        sizes.set(name, statSync(resolve(gridRoot(directory), name)).size);
+      } catch {
+        sizes.set(name, 0);
+      }
+    }
+  }
+  return [...sizes.values()].reduce((total, size) => total + size, 0);
 }
 
 /**

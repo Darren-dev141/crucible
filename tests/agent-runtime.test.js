@@ -4,10 +4,11 @@ import { createAgentRuntime } from '../scripts/agent-runtime.mjs';
 import { isPreviewHost } from '../scripts/preview-host.mjs';
 import { addonCapabilities, addonFileFor, addonImportMap } from '../scripts/mcp-addons.mjs';
 import { sampleBrowserHeap, exceedsMemoryGuard } from '../scripts/agent-memory-guard.mjs';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { readVolumeGridFiles } from '../src/mcp-volume-grids.js';
 import { writeWebBuild } from '../scripts/web-export.mjs';
 import { EXPORT_DIRECTORY_NAME, RENDER_HISTORY_FILE, normalizeJobSettings } from '../scripts/agent-render-jobs.mjs';
 import { createServer } from 'node:http';
@@ -134,6 +135,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
       events.push(`${this.privateTarget ? 'private' : 'source'}:${method}`);
       if (method === 'create') return { sessionId: input.sessionId, revision: 0 };
       if (method === 'exportRecipe') return { recipe: exportedRecipe, revision: 1 };
+      if (method === 'exportGlb') return { data: Buffer.from('glb bytes').toString('base64') };
       if (method === 'snapshot') {
         if (input.expectedRevision !== sourceRevision) throw new Error('Stale revision for render snapshot.');
         return { sourceRevision, recipe };
@@ -186,7 +188,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     runAnnotateSession: async () => ({ outcome: 'timeout' }), openInDefaultBrowser: async () => {},
     createNativeTracerLocator: () => ({ find: async () => ({ reason: 'no native tracer in tests' }) }),
     createAgentRenderJobs: async () => ({ list: () => [], close: async () => {} }), resolveJobRoot: path => path,
-    chromium: { launch: async () => browser }, URL, Buffer, process, performance, clearTimeout, runtimeOptions, ...contextOverrides,
+    chromium: { launch: async () => browser }, URL, Buffer, AbortController, process, performance, clearTimeout, runtimeOptions, ...contextOverrides,
     setTimeout: (callback, delay) => {
       deadlines.push(delay);
       const timer = setTimeout(callback, delay);
@@ -398,6 +400,62 @@ runTest('requests cannot address an absent session or enter a closing runtime', 
   await closing;
 });
 
+runTest('runtime close settles a pending scene_ask_user at once and stops its page server (#1246)', async () => {
+  let sessionSignal;
+  const waitForSignal = async ({ signal }) => {
+    sessionSignal = signal;
+    return new Promise(resolve => signal.addEventListener('abort', () => resolve({ outcome: 'aborted' }), { once: true }));
+  };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ contextOverrides: { runAnnotateSession: waitForSignal } });
+  const asking = runtime.askUser({ sessionId, timeoutSeconds: 600 });
+  const askingOutcome = asking.then(() => 'resolved', error => error.message);
+  while (!sessionSignal) await new Promise(resolve => setTimeout(resolve, 5));
+  const started = performance.now();
+  await runtime.close();
+  assert.match(await askingOutcome, /closed|closing/);
+  assert.ok(sessionSignal.aborted);
+  assert.ok(performance.now() - started < 3000);
+});
+
+runTest('a failed browser launch leaves the runtime idle so the next call retries (#1246)', async () => {
+  const runtime = createAgentRuntime({ backend: 'cpu', memory: 64, browser: process.execPath });
+  after(() => runtime.close());
+  const first = await runtime.create({ recipe: {} }).then(() => undefined, error => error.message);
+  assert.ok(first, 'a node executable is not a browser, so the first launch must fail');
+  assert.equal((await runtime.capabilities()).phase, 'idle');
+  const second = await runtime.create({ recipe: {} }).then(() => undefined, error => error.message);
+  assert.ok(second);
+  assert.doesNotMatch(second, /The agent runtime is failed/);
+});
+
+runTest('a recipe over the combined asset limit is refused from file sizes before any grid file is read (#1246)', async () => {
+  const gridDirectory = await mkdtemp(join(tmpdir(), 'crucible-grid-limit-'));
+  const previousDirectory = process.env.JS67_GRID_DIRECTORY;
+  process.env.JS67_GRID_DIRECTORY = gridDirectory;
+  after(async () => {
+    if (previousDirectory === undefined) delete process.env.JS67_GRID_DIRECTORY;
+    else process.env.JS67_GRID_DIRECTORY = previousDirectory;
+    await rm(gridDirectory, { recursive: true, force: true });
+  });
+  const frameBytes = 40 * 1024 * 1024;
+  for (const name of ['first.67vg', 'second.67vg']) {
+    await writeFile(join(gridDirectory, name), '');
+    await truncate(join(gridDirectory, name), frameBytes);
+  }
+  let gridReads = 0;
+  const countingRead = (...argumentsList) => {
+    gridReads++;
+    return readVolumeGridFiles(...argumentsList);
+  };
+  const { runtime } = await reviewRuntimeHarness({ contextOverrides: { readVolumeGridFiles: countingRead } });
+  gridReads = 0;
+  const recipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [],
+    environment: { localVolumes: [{ shape: 'grid', frames: ['first.67vg', 'second.67vg'] }] } };
+  await assert.rejects(runtime.create({ recipe }), error => error instanceof RangeError
+    && error.message.includes('maxCombinedBytes') && error.message.includes(String(2 * frameBytes)));
+  assert.equal(gridReads, 0);
+});
+
 runTest('the preview server accepts only its own loopback host', () => {
   assert.equal(isPreviewHost('127.0.0.1:4100', 4100), true);
   assert.equal(isPreviewHost('evil.example:4100', 4100), false);
@@ -406,13 +464,14 @@ runTest('the preview server accepts only its own loopback host', () => {
   assert.equal(isPreviewHost(undefined, 4100), false);
 });
 
-async function webExportHarness({ exportedRecipe, failCopy = () => false } = {}) {
+async function webExportHarness({ exportedRecipe, failCopy = () => false, seedJobsDirectory } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'crucible-web-runtime-'));
   const buildDirectory = join(root, 'build');
   await mkdir(join(buildDirectory, 'mcp'), { recursive: true });
   await writeFile(join(buildDirectory, 'game.js'), 'export {};');
   const jobsDirectory = join(root, 'jobs');
   await mkdir(jobsDirectory);
+  await seedJobsDirectory?.(jobsDirectory);
   const failingWriteWebBuild = async options => {
     if (failCopy()) {
       await mkdir(join(options.outputDirectory, 'engine'), { recursive: true });
@@ -439,6 +498,41 @@ runTest('exportWeb keeps only the newest four builds and returns a real entry pa
   assert.equal((await keptBuilds()).length, 4);
   await assert.rejects(stat(entries[0]), { code: 'ENOENT' });
   for (const entry of entries.slice(1)) assert.ok((await stat(entry)).isFile());
+});
+
+// Files and folders an earlier server run left in the exports folder, oldest first (modified one minute apart).
+async function leaveEarlierExports(jobsDirectory, { glbCount, webBuildCount }) {
+  const exportsDirectory = join(jobsDirectory, EXPORT_DIRECTORY_NAME);
+  await mkdir(exportsDirectory);
+  const names = [
+    ...Array.from({ length: glbCount }, () => `${randomUUID()}.glb`),
+    ...Array.from({ length: webBuildCount }, () => `web-${randomUUID()}`),
+  ];
+  const start = Date.now() / 1000 - 3600;
+  for (const [index, name] of names.entries()) {
+    const path = join(exportsDirectory, name);
+    if (name.startsWith('web-')) await mkdir(path);
+    else await writeFile(path, 'earlier glb');
+    await utimes(path, start + index * 60, start + index * 60);
+  }
+  return names.map(name => join(exportsDirectory, name));
+}
+
+runTest('exports left by an earlier run count toward the newest four web builds and eight GLBs (#1246)', async () => {
+  let earlier;
+  const { runtime, sessionId, keptBuilds } = await webExportHarness({ exportedRecipe: PLAYABLE_RECIPE,
+    seedJobsDirectory: async directory => { earlier = await leaveEarlierExports(directory, { glbCount: 8, webBuildCount: 4 }); } });
+  const glbEarlier = earlier.filter(path => path.endsWith('.glb'));
+  const webEarlier = earlier.filter(path => !path.endsWith('.glb'));
+  await runtime.exportWeb({ sessionId });
+  assert.equal((await keptBuilds()).length, 4);
+  await assert.rejects(stat(webEarlier[0]), { code: 'ENOENT' });
+  assert.ok((await stat(webEarlier[1])).isDirectory());
+  await runtime.exportGlb({ sessionId });
+  const keptGlbs = (await readdir(join(dirname(webEarlier[0])))).filter(name => name.endsWith('.glb'));
+  assert.equal(keptGlbs.length, 8);
+  await assert.rejects(stat(glbEarlier[0]), { code: 'ENOENT' });
+  assert.ok((await stat(glbEarlier[1])).isFile());
 });
 
 runTest('a half-written web export is removed and never evicts or uses up a kept build', async () => {

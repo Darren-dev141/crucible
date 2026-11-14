@@ -655,3 +655,74 @@ test('a job runs against the scene it was submitted for', async context => {
   assert.deepEqual(scenesSeen, ['scene-a']);
   await controller.close();
 });
+
+async function completedJob(controller) {
+  const { jobId } = await controller.submit(request());
+  assert.equal((await terminal(controller, jobId)).state, 'completed');
+  return jobId;
+}
+
+test('a release that stopped halfway is finished by a retry, and a new submit and a restart still work (#1246)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage });
+  const jobId = await completedJob(controller);
+  // The state a failed release leaves when every file is gone but the folder could not be removed: an empty folder with no owner file.
+  for (const filename of await readdir(join(root, jobId))) await unlink(join(root, jobId, filename));
+  const next = await controller.submit(request());
+  assert.equal((await terminal(controller, next.jobId)).state, 'completed');
+  assert.deepEqual(await controller.release(jobId), { jobId, released: true });
+  assert.equal((await readdir(root)).includes(jobId), false);
+  await controller.close();
+  const reopened = await createAgentRenderJobs({ root, limits, run: writeImage });
+  assert.deepEqual(reopened.list().map(record => record.jobId), [next.jobId]);
+  await reopened.close();
+});
+
+test('a half-deleted job folder is cleaned on restart instead of failing the store (#1246)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage });
+  const keptId = await completedJob(controller);
+  const halfId = await completedJob(controller);
+  const emptyId = await completedJob(controller);
+  await controller.close();
+  await unlink(join(root, halfId, 'status.json'));
+  for (const filename of await readdir(join(root, emptyId))) await unlink(join(root, emptyId, filename));
+  const reopened = await createAgentRenderJobs({ root, limits, run: writeImage });
+  assert.deepEqual(reopened.list().map(record => record.jobId), [keptId]);
+  const names = await readdir(root);
+  assert.equal(names.includes(halfId), false);
+  assert.equal(names.includes(emptyId), false);
+  await reopened.close();
+});
+
+test('a failed status write does not poison later writes, release or close, and the lock is given back (#1246)', async context => {
+  const root = await temporary(context);
+  let failedProgress;
+  const controller = await createAgentRenderJobs({ root, limits, async run({ directory, progress, ...rest }) {
+    const obstruction = join(directory, 'status.json.pending');
+    await mkdir(obstruction);
+    failedProgress = await progress({ frames: 1, maximumPendingFrames: 0 }).then(() => undefined, error => error);
+    await rm(obstruction, { recursive: true });
+    return writeImage({ directory, progress, ...rest });
+  } });
+  const jobId = await completedJob(controller);
+  assert.ok(failedProgress, 'the injected write failure must reach the runner');
+  assert.deepEqual(await controller.release(jobId), { jobId, released: true });
+  await controller.close();
+  assert.equal((await readdir(root)).includes('store.lock'), false);
+});
+
+test('close gives the lock back even when the last status write of an active job failed (#1246)', async context => {
+  const root = await temporary(context);
+  const started = deferred();
+  const controller = await createAgentRenderJobs({ root, limits, async run({ directory, signal }) {
+    await mkdir(join(directory, 'status.json.pending'));
+    started.resolve();
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    throw signal.reason;
+  } });
+  await controller.submit(request());
+  await started.promise;
+  await controller.close();
+  assert.equal((await readdir(root)).includes('store.lock'), false);
+});
