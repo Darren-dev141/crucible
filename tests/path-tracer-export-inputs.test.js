@@ -51,6 +51,9 @@ test('the CPU and GPU samplers fold indices by wrap code', () => {
   assert.equal(Math.floor(flags / 4) % 4, WRAP_REPEAT);
   assert.equal(Math.floor(flags / 16) % 4, WRAP_MIRROR);
   assert.equal(Math.floor(textureFlags({ wrapU: WRAP_CLAMP, wrapV: WRAP_CLAMP, colorLookup: null }) / 2) % 2, 0);
+  // The two low bits keep the meaning Cook's v1 table reduction reads: bit 0 repeats both axes, bit 1 is sRGB.
+  assert.equal(textureFlags({ repeat: true, wrapU: WRAP_REPEAT, wrapV: WRAP_REPEAT, colorLookup: new Float32Array(256) }) & 3, 3);
+  assert.equal(textureFlags({ wrapU: WRAP_REPEAT, wrapV: WRAP_CLAMP, colorLookup: null }) & 3, 0);
 });
 
 test('a skinned normal follows the inverse transpose of a joint that scales unevenly', () => {

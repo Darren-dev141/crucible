@@ -69,7 +69,7 @@ test('materials carry values, the light mask in two halves and an atlas rectangl
   assert.equal(table.data[floor + 16], 0xffff);
   assert.equal(table.data[ceiling + 12 + 3], 0b101);
   assert.equal(table.data[ceiling + 16], 0);
-  assert.equal(table.data[floor + 17], 2, 'sRGB flag, both axes repeating (wrap code 0)');
+  assert.equal(table.data[floor + 17], 3, 'repeat and sRGB flags');
   assert.deepEqual([...table.data.subarray(floor + 24, floor + 28)], [0, 0, 2, 1]);
   assert.equal(table.data[ceiling + 24 + 2], 0, 'no map, no rectangle');
   assert.deepEqual([...atlas.data.subarray(0, 8)], [...texture.image.data]);

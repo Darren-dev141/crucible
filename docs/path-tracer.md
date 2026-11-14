@@ -44,7 +44,7 @@ Unidirectional path tracing against the triangle BVH that the [light bake](light
 
 - An area light with no `up`, aimed along the y axis, takes the x axis as its across axis; an explicit `up` parallel to `direction` is refused.
 - A point, spot or area light without `color` or `intensity` gets white and 1, as the rasterizer does. A colour that is not three finite numbers from 0 up, or an intensity below 0 or not finite, is refused with the field name.
-- A map's `wrapS` and `wrapT` apply to U and V on their own: repeat (10497), clamp to edge (33071) and mirrored repeat (33648). Any other value is refused. The CPU, WebGL2 and WebGPU tracers read the two codes from the texture flags (value 2 for sRGB, 4 to 12 for U, 16 to 48 for V), and the native tracer gets `wrapU` and `wrapV`.
+- A map's `wrapS` and `wrapT` apply to U and V on their own: repeat (10497), clamp to edge (33071) and mirrored repeat (33648). Any other value is refused. The CPU, WebGL2 and WebGPU tracers read the two codes from the texture flags (value 1 both axes repeat, 2 for sRGB, 4 to 12 for U, 16 to 48 for V), and the native tracer gets `wrapU` and `wrapV`.
 - A skinned part's normals use the inverse transpose of the blended joint matrix, so a joint that scales unevenly no longer bends them; pixels of such rigs change, rigid and uniformly scaled joints do not.
 
 ## Subsurface
