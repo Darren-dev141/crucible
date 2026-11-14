@@ -655,3 +655,157 @@ test('a job runs against the scene it was submitted for', async context => {
   assert.deepEqual(scenesSeen, ['scene-a']);
   await controller.close();
 });
+
+async function completedJob(controller) {
+  const { jobId } = await controller.submit(request());
+  assert.equal((await terminal(controller, jobId)).state, 'completed');
+  return jobId;
+}
+
+test('a release that stopped halfway is finished by a retry, and a new submit and a restart still work (#1246)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage });
+  const jobId = await completedJob(controller);
+  // The state a failed release leaves when every file is gone but the folder could not be removed: an empty folder with no owner file.
+  for (const filename of await readdir(join(root, jobId))) await unlink(join(root, jobId, filename));
+  const next = await controller.submit(request());
+  assert.equal((await terminal(controller, next.jobId)).state, 'completed');
+  assert.deepEqual(await controller.release(jobId), { jobId, released: true });
+  assert.equal((await readdir(root)).includes(jobId), false);
+  await controller.close();
+  const reopened = await createAgentRenderJobs({ root, limits, run: writeImage });
+  assert.deepEqual(reopened.list().map(record => record.jobId), [next.jobId]);
+  await reopened.close();
+});
+
+test('a half-deleted job folder is cleaned on restart instead of failing the store (#1246)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage });
+  const keptId = await completedJob(controller);
+  const halfId = await completedJob(controller);
+  const emptyId = await completedJob(controller);
+  await controller.close();
+  await unlink(join(root, halfId, 'status.json'));
+  for (const filename of await readdir(join(root, emptyId))) await unlink(join(root, emptyId, filename));
+  const reopened = await createAgentRenderJobs({ root, limits, run: writeImage });
+  assert.deepEqual(reopened.list().map(record => record.jobId), [keptId]);
+  const names = await readdir(root);
+  assert.equal(names.includes(halfId), false);
+  assert.equal(names.includes(emptyId), false);
+  await reopened.close();
+});
+
+test('a failed status write does not poison later writes, release or close, and the lock is given back (#1246)', async context => {
+  const root = await temporary(context);
+  let failedProgress;
+  const controller = await createAgentRenderJobs({ root, limits, async run({ directory, progress, ...rest }) {
+    const obstruction = join(directory, 'status.json.pending');
+    await mkdir(obstruction);
+    failedProgress = await progress({ frames: 1, maximumPendingFrames: 0 }).then(() => undefined, error => error);
+    await rm(obstruction, { recursive: true });
+    return writeImage({ directory, progress, ...rest });
+  } });
+  const jobId = await completedJob(controller);
+  assert.ok(failedProgress, 'the injected write failure must reach the runner');
+  assert.deepEqual(await controller.release(jobId), { jobId, released: true });
+  await controller.close();
+  assert.equal((await readdir(root)).includes('store.lock'), false);
+});
+
+test('close gives the lock back even when the last status write of an active job failed (#1246)', async context => {
+  const root = await temporary(context);
+  const started = deferred();
+  const controller = await createAgentRenderJobs({ root, limits, async run({ directory, signal }) {
+    await mkdir(join(directory, 'status.json.pending'));
+    started.resolve();
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    throw signal.reason;
+  } });
+  await controller.submit(request());
+  await started.promise;
+  await controller.close();
+  assert.equal((await readdir(root)).includes('store.lock'), false);
+});
+
+function fileInUse(path) {
+  return Object.assign(new Error(`EBUSY: resource busy or locked, unlink '${path}'`), { code: 'EBUSY' });
+}
+
+test('a release that fails midway keeps the owner file, and the store keeps working while a file stays held (#1246)', async context => {
+  const root = await temporary(context);
+  let heldFilename = 'render.png';
+  const removeJobFile = async path => {
+    if (heldFilename && path.endsWith(heldFilename)) throw fileInUse(path);
+    await unlink(path);
+  };
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { removeJobFile } });
+  const jobId = await completedJob(controller);
+  await assert.rejects(controller.release(jobId), error => {
+    assert.match(error.message, new RegExp(jobId));
+    assert.match(error.message, /open in another program/);
+    return true;
+  });
+  // The folder lost its status first and keeps owner.json last, so it still proves it is ours.
+  const leftover = await readdir(join(root, jobId));
+  assert.ok(leftover.includes('owner.json'));
+  assert.equal(leftover.includes('status.json'), false);
+  // The file is still held: a new job and a second release attempt must not fail with the raw filesystem error.
+  const next = await controller.submit(request());
+  assert.equal((await terminal(controller, next.jobId)).state, 'completed');
+  await assert.rejects(controller.release(jobId), /open in another program/);
+  await controller.close();
+  const whileHeld = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { removeJobFile } });
+  assert.deepEqual(whileHeld.list().map(record => record.jobId), [next.jobId]);
+  await whileHeld.close();
+  // The other program lets go: the next start finishes the release.
+  heldFilename = undefined;
+  const reopened = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { removeJobFile } });
+  assert.equal((await readdir(root)).includes(jobId), false);
+  assert.deepEqual(reopened.list().map(record => record.jobId), [next.jobId]);
+  await reopened.close();
+});
+
+test('a failed release can be retried to completion once the file is free (#1246)', async context => {
+  const root = await temporary(context);
+  let failuresLeft = 1;
+  const removeJobFile = async path => {
+    if (failuresLeft && path.endsWith('snapshot.json')) {
+      failuresLeft -= 1;
+      throw fileInUse(path);
+    }
+    await unlink(path);
+  };
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { removeJobFile } });
+  const jobId = await completedJob(controller);
+  await assert.rejects(controller.release(jobId), /open in another program/);
+  assert.ok((await readdir(join(root, jobId))).includes('owner.json'));
+  assert.deepEqual(await controller.release(jobId), { jobId, released: true });
+  assert.equal((await readdir(root)).includes(jobId), false);
+  await controller.close();
+  const reopened = await createAgentRenderJobs({ root, limits, run: writeImage });
+  assert.deepEqual(reopened.list(), []);
+  await reopened.close();
+});
+
+test('a job folder that lost only its owner file is healed on restart, and an unproven one is named in the error (#1246)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage });
+  const keptId = await completedJob(controller);
+  const brokenId = await completedJob(controller);
+  await controller.close();
+  // The state the 0.20.0 release left behind.
+  await unlink(join(root, brokenId, 'owner.json'));
+  const reopened = await createAgentRenderJobs({ root, limits, run: writeImage });
+  assert.deepEqual(reopened.list().map(record => record.jobId), [keptId]);
+  assert.equal((await readdir(root)).includes(brokenId), false);
+  await reopened.close();
+
+  const strayId = randomUUID();
+  await mkdir(join(root, strayId));
+  await writeFile(join(root, strayId, 'render.png'), 'not ours');
+  await assert.rejects(createAgentRenderJobs({ root, limits, run: writeImage }), error => {
+    assert.ok(error.message.includes(join(root, strayId)));
+    assert.match(error.message, /Delete that folder by hand/);
+    return true;
+  });
+});

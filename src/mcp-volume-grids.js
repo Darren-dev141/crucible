@@ -1,7 +1,8 @@
-import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setVolumeGridLoader, VOLUME_GRID_MAX_BYTES } from './volume-grid.js';
 import { VOLUME_GRID_SEQUENCE_MAX_BYTES, VOLUME_GRID_SEQUENCE_MAX_FRAMES } from './volume-grid-sequence.js';
+import { AGENT_ASSET_LIMITS } from './agent-asset-limits.js';
 
 // Lets a recipe name a grid volume's file (`grid: "blast.67vg"`) in the MCP server: the name is looked up in one folder, never as a path, so a
 // recipe cannot read anywhere else. The folder is the server's working directory unless this variable names another.
@@ -64,6 +65,33 @@ export function volumeGridUses(value) {
   };
   visit(value, 0);
   return uses;
+}
+
+/**
+ * The total size on disk of the distinct grid files a recipe or edit list names, counted without reading any of them, so a caller can refuse
+ * a call that would send too many bytes before it loads them. A name that is invalid or missing counts as zero here, and a list over the
+ * frame bound is not counted at all; reading it later throws the error that says what to pass instead. Counting stops once the total
+ * passes the combined limit, so the number of stat calls stays bounded.
+ */
+export function volumeGridFileBytes(value, directory) {
+  const sizes = new Map();
+  let total = 0;
+  for (const { names } of volumeGridUses(value)) {
+    if (names.length > VOLUME_GRID_SEQUENCE_MAX_FRAMES) continue;
+    for (const name of names) {
+      if (total > AGENT_ASSET_LIMITS.maxCombinedBytes) return total;
+      if (typeof name !== 'string' || !GRID_FILE_NAME.test(name) || sizes.has(name)) continue;
+      let size = 0;
+      try {
+        size = statSync(resolve(gridRoot(directory), name)).size;
+      } catch {
+        // Missing: readVolumeGridFiles names the file in its own error.
+      }
+      sizes.set(name, size);
+      total += size;
+    }
+  }
+  return total;
 }
 
 /**
