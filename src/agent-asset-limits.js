@@ -42,7 +42,7 @@ export function assetBytesLimitMessage(size) {
 /** Message for one call whose assets together pass the combined limit; it names the limit, the total and the way out. */
 export function combinedAssetBytesLimitMessage(total) {
   const limit = AGENT_ASSET_LIMITS.maxCombinedBytes;
-  return `This call sends ${total} bytes of assets to the preview page at once, over the catalog maxCombinedBytes ${limit} (${describeAssetBytes(limit)}). Place fewer or smaller assets in one call and add the rest in later calls, or shrink them (meshopt compression, smaller textures).`;
+  return `This call sends ${total} bytes of assets to the preview page at once, over the catalog maxCombinedBytes ${limit} (${describeAssetBytes(limit)}). Place fewer or smaller assets in one call and add the rest in later calls, or shrink them (meshopt compression, smaller textures). The frames of one volume grid cannot be split across calls: use fewer frames or convert them with a lower --max-resolution.`;
 }
 
 function decodedBase64Bytes(text) {
@@ -58,14 +58,25 @@ export function combinedAssetBytes(input) {
       if (typeof text === 'string') total += decodedBase64Bytes(text);
     }
   }
+  for (const text of Object.values(input?.gridData ?? {})) {
+    if (typeof text === 'string') total += decodedBase64Bytes(text);
+  }
+  for (const entry of Object.values(input?.lookData ?? {})) {
+    if (typeof entry?.base64 === 'string') total += decodedBase64Bytes(entry.base64);
+    else if (typeof entry?.text === 'string') total += Buffer.byteLength(entry.text);
+  }
   if (typeof input?.data === 'string') total += decodedBase64Bytes(input.data);
   return total;
 }
 
+/** Throws a RangeError when a byte total passes the combined limit. The runtime calls it with file sizes before it reads any file. */
+export function assertCombinedByteTotal(total) {
+  if (total > AGENT_ASSET_LIMITS.maxCombinedBytes) throw new RangeError(combinedAssetBytesLimitMessage(total));
+}
+
 /** Throws a RangeError when the assets in one preview call pass the combined limit. */
 export function assertCombinedAssetBytes(input) {
-  const total = combinedAssetBytes(input);
-  if (total > AGENT_ASSET_LIMITS.maxCombinedBytes) throw new RangeError(combinedAssetBytesLimitMessage(total));
+  assertCombinedByteTotal(combinedAssetBytes(input));
 }
 
 /**
