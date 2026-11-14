@@ -98,7 +98,7 @@ const VENDOR_FILES = Object.freeze({
 });
 
 /** Checks the launch paths that need no job folder; the CLI runs it before serving so a bad value exits with its message. */
-export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg' }) {
+export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg', audio }) {
   if (browser !== undefined && (typeof browser !== 'string' || !existsSync(browser))) {
     throw new Error('The configured browser executable does not exist.');
   }
@@ -107,6 +107,9 @@ export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg' 
   }
   if (packs !== undefined && (typeof packs !== 'string' || !isAbsolute(packs))) {
     throw new TypeError('Packs root must be an explicit absolute directory path.');
+  }
+  if (audio !== undefined) {
+    createAudioLibrary(audio);
   }
   if (typeof ffmpeg !== 'string' || !ffmpeg || (ffmpeg !== 'ffmpeg' && (!isAbsolute(ffmpeg) || !existsSync(ffmpeg)))) {
     throw new TypeError('FFmpeg must be on PATH or configured with an existing absolute executable path.');

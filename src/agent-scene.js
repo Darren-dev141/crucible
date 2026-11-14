@@ -1460,7 +1460,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
 
   function geometryBudgetError({ residentStats, pendingVertices }, plans, budget, heldCheckpoints) {
     const largest = plans.filter(plan => !plan.existing).sort((first, second) => second.estimatedVertices - first.estimatedVertices)[0];
-    return new RangeError(`Geometry preflight needs ${residentStats.vertices + pendingVertices} vertices (max ${budget.maxVertices}) and ${residentStats.geometryBytes + pendingVertices * 56} bytes (max ${budget.maxGeometryBytes}); largest new geometry "${largest?.definition.id}" has ${largest?.estimatedVertices}. Reduce detail${heldCheckpoints ? ' or release checkpoints' : ''}.`);
+    const largestNote = largest === undefined ? 'no new geometry is added' : `largest new geometry "${largest.definition.id}" has ${largest.estimatedVertices}`;
+    return new RangeError(`Geometry preflight peak needs ${residentStats.vertices + pendingVertices} vertices (max ${budget.maxVertices}) and ${residentStats.geometryBytes + pendingVertices * 56} bytes (max ${budget.maxGeometryBytes}): ${residentStats.vertices} vertices are already held by the active scene, checkpoints and staged resources and ${pendingVertices} are new; ${largestNote}. Reduce detail${heldCheckpoints ? ' or release checkpoints' : ''}.`);
   }
 
   function stage(inputRecipe, preferred = null, removedNodes = new Set(), removedMaterials = new Set()) {

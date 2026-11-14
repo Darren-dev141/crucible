@@ -176,6 +176,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
   const originalSource = await readFile(new URL('../scripts/agent-runtime.mjs', import.meta.url), 'utf8');
   let source = originalSource
     .replace(/^import .+;\r?$/gm, '')
+    .replace('export function validateLaunchPaths', 'function validateLaunchPaths')
     .replace('export function createAgentRuntime', 'function createAgentRuntime')
     .replaceAll('import.meta.url', JSON.stringify(import.meta.url))
     .replace("import('playwright-core')", 'Promise.resolve({ chromium: globalThis.chromium })');

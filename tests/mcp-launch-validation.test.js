@@ -2,12 +2,13 @@ import './support/load-agent-scene-modules.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { createAgentRuntime } from '../scripts/agent-runtime.mjs';
-import { runMcpCli } from '../scripts/mcp-server.mjs';
+import { ACCEPTED_CLI_OPTIONS, runMcpCli } from '../scripts/mcp-server.mjs';
 import { createAgentScene } from '../src/agent-scene.js';
 
-const ABSOLUTE_FOLDER = tmpdir();
+// The repository root is an existing absolute folder that is not a temporary directory.
+const ABSOLUTE_FOLDER = fileURLToPath(new URL('..', import.meta.url));
 
 function singleGeometryRecipe(geometry) {
   return {
@@ -18,11 +19,12 @@ function singleGeometryRecipe(geometry) {
   };
 }
 
-test('runMcpCli rejects a relative --packs, --assets or --ffmpeg and a missing --browser before serving', async () => {
+test('runMcpCli rejects a relative --packs, --assets, --audio or --ffmpeg and a missing --browser before serving', async () => {
   const cases = [
     [['--packs', 'relative/packs'], /Packs root must be an explicit absolute directory path\./],
     [['--assets', 'relative/assets'], /Asset root must be an explicit absolute directory path\./],
     [['--ffmpeg', 'relative/ffmpeg'], /FFmpeg must be on PATH or configured with an existing absolute executable path\./],
+    [['--audio', 'relative/audio'], /Audio root must be an explicit absolute directory path\./],
     [['--browser', '/nope/chrome'], /The configured browser executable does not exist\./],
   ];
   for (const [argumentsValue, message] of cases) {
@@ -55,8 +57,9 @@ test('a terrain resolution that is not a number names the real range', () => {
 test('the geometry preflight error names the geometry and the numbers, and checkpoints only when held', () => {
   const recipe = singleGeometryRecipe({ id: 'ball', type: 'mesh', base: { type: 'sphere', segments: 512, rings: 512 } });
   assert.throws(() => createAgentScene(recipe, {}), error => {
-    assert.match(error.message, /needs \d+ vertices \(max \d+\) and \d+ bytes \(max \d+\)/);
+    assert.match(error.message, /peak needs \d+ vertices \(max \d+\) and \d+ bytes \(max \d+\)/);
     assert.match(error.message, /"ball"/);
+    assert.match(error.message, /\d+ vertices are already held by the active scene, checkpoints and staged resources and \d+ are new/);
     assert.match(error.message, /Reduce detail\.$/);
     assert.doesNotMatch(error.message, /checkpoints\./);
     return true;
@@ -73,7 +76,7 @@ test('the path tracer text points at the real scene_capabilities topic', async (
 
 test('crucible-mcp --help lists every option runMcpCli accepts', async () => {
   const bin = await readFile(new URL('../bin/crucible-mcp.mjs', import.meta.url), 'utf8');
-  for (const option of ['--backend', '--memory', '--browser', '--assets', '--packs', '--jobs', '--ffmpeg', '--audio', '--branches', '--relations', '--findings', '--addons', '--allow-addon']) {
+  for (const option of ACCEPTED_CLI_OPTIONS) {
     assert.ok(bin.includes(option), `${option} missing from --help`);
   }
 });
