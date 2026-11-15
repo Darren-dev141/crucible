@@ -91,6 +91,13 @@ const danglingCases = [
   ['accessor bufferView out of range', document => { document.accessors[0].bufferView = 9; }, /accessors\[0\]\.bufferView.*9/s],
   ['scene nodes not an array', document => { document.scenes[0].nodes = 5; }, /scenes\[0\]\.nodes.*array/],
   ['node null', document => { document.nodes = [null]; }, /nodes\[0\].*object/],
+  ['material null', document => { document.materials = [null]; }, /materials\[0\].*object/],
+  ['bufferView null', document => { document.bufferViews = [null]; }, /bufferViews\[0\].*object/],
+  ['image null', document => { document.images = [{ uri: 'a.png' }, null]; }, /images\[1\].*object/],
+  ['texture null', document => { document.textures = [null]; }, /textures\[0\].*object/],
+  ['accessor null', document => { document.accessors = [null]; }, /accessors\[0\].*object/],
+  ['mesh null', document => { document.meshes = [null]; }, /meshes\[0\].*object/],
+  ['materials not an array', document => { document.materials = 5; }, /materials.*array/],
   ['accessor bufferView null', document => { document.accessors[0].bufferView = null; }, /accessors\[0\]\.bufferView/],
 ];
 for (const [name, change, expected] of danglingCases) {

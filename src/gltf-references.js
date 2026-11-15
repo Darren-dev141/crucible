@@ -38,15 +38,22 @@ function validateSceneReferences(document) {
   });
 }
 
-function validateNodeObjects(document) {
-  (document.nodes ?? []).forEach((node, nodeIndex) => requireObject(node, `nodes[${nodeIndex}]`));
+const ENTRY_ARRAYS = ['nodes', 'meshes', 'accessors', 'bufferViews', 'materials', 'textures', 'images'];
+
+function validateEntryObjects(document) {
+  for (const arrayName of ENTRY_ARRAYS) {
+    const entries = document[arrayName];
+    if (entries === undefined) continue;
+    if (!Array.isArray(entries)) throw new Error(`Invalid glTF ${arrayName}: expected an array.`);
+    entries.forEach((entry, entryIndex) => requireObject(entry, `${arrayName}[${entryIndex}]`));
+  }
 }
 
 /** Throws an error naming the field for each dangling reference the loader would otherwise trip over. */
 export function validateDocumentReferences(document) {
   if (!document || typeof document !== 'object' || Array.isArray(document)) throw new Error('glTF JSON must be an object. Fix: pass a glTF 2.0 document.');
+  validateEntryObjects(document);
   validateMeshReferences(document);
   validateAccessorReferences(document);
-  validateNodeObjects(document);
   validateSceneReferences(document);
 }
