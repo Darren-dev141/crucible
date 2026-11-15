@@ -198,20 +198,32 @@ function groundTerrain(recipe, scatter) {
 function scatterArea(scatter, definition) {
   const half = (definition.size ?? 40) / 2 - GROUND_EDGE_MARGIN;
   const area = scatter.area ?? { min: [-half, -half], max: [half, half] };
-  return {
+  const clamped = {
     minX: Math.max(area.min[0], -half), maxX: Math.min(area.max[0], half),
     minZ: Math.max(area.min[1], -half), maxZ: Math.min(area.max[1], half),
   };
+  if (clamped.maxX <= clamped.minX || clamped.maxZ <= clamped.minZ) {
+    throw invalidField(scatter.area ? 'vegetation.scatter.area' : 'vegetation.scatter.ground', scatter.area ?? scatter.ground, `an area that overlaps the ground, which spans ${-half} to ${half} on x and z`);
+  }
+  return clamped;
+}
+
+// The [x, z] of a node in the ground's own space, which is where the scatter area and exclusions are measured.
+function planePositionInGround(recipe, scatter, nodeId) {
+  const target = recipe.nodes.find(node => node.id === nodeId);
+  const ground = recipe.nodes.find(node => node.id === scatter.ground);
+  const inGround = mat4.multiply(mat4.create(), mat4.invert(mat4.create(), nodeWorldMatrix(recipe.nodes, ground)), nodeWorldMatrix(recipe.nodes, target));
+  return [inGround[12], inGround[14]];
 }
 
 function exclusionTest(recipe, scatter, terrain) {
-  const areas = scatter.exclude.map(entry => {
+  const areas = scatter.exclude.map((entry, index) => {
     if (entry.min) return (x, z) => x >= entry.min[0] && x <= entry.max[0] && z >= entry.min[1] && z <= entry.max[1];
     let center = entry.center;
     if (entry.node) {
       const target = recipe.nodes.find(node => node.id === entry.node);
-      if (!target) throw invalidField('vegetation.scatter.exclude[].node', entry.node, 'the ID of a node in the recipe, such as "pond"');
-      center = [target.translation[0], target.translation[2]];
+      if (!target) throw invalidField(`vegetation.scatter.exclude[${index}].node`, entry.node, 'the ID of a node in the recipe, such as "pond"');
+      center = planePositionInGround(recipe, scatter, entry.node);
     }
     return (x, z) => Math.hypot(x - center[0], z - center[1]) <= entry.radius;
   });
