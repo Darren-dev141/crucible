@@ -1,6 +1,6 @@
 import { mat4 } from 'gl-matrix';
 import { applyClip } from './gltf-animation.js';
-import { GLTF_LAYER_EXTENSIONS, layerTextureReferences, materialLayersFromGltf } from './gltf-layers.js';
+import { GLTF_LAYER_EXTENSIONS, clampedIorWarnings, layerTextureReferences, materialLayersFromGltf } from './gltf-layers.js';
 import { attributeFloatsInSlices } from './gltf-accessors.js';
 import { createSlicer, forEachChunk } from './cooperative.js';
 import { describeCompressedImage } from './compressed-texture.js';
@@ -1250,7 +1250,7 @@ export async function parseGltf(data, options = {}) {
   }
   const { ignoredExtensions, overruns } = validated;
   await loadLayerShadersFor(document);
-  const warnings = [...fallbackWarnings, ...ignoredExtensions.map(extension => `${extension} is accepted but not rendered.`), ...skippedPrimitiveWarnings(document), ...unusablePrimitiveWarnings];
+  const warnings = [...fallbackWarnings, ...ignoredExtensions.map(extension => `${extension} is accepted but not rendered.`), ...skippedPrimitiveWarnings(document), ...unusablePrimitiveWarnings, ...clampedIorWarnings(document)];
   const dataBytes = typeof data === 'string' ? new TextEncoder().encode(data).byteLength : data.byteLength;
   const { resourceBytes, textureScaling } = await prepareResources(document, data, dataBytes, options, limits, overruns);
   if (textureScaling.scaledTextures.length) {
