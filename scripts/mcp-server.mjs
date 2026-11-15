@@ -2,6 +2,7 @@ import { answerCapabilities } from './capabilities-topics.mjs';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
 import { McpServer } from '@modelcontextprotocol/server';
 import { resolveJobRoot } from './agent-job-root.mjs';
+import { createGpuQueueFromFlags } from './agent-gpu-queue.mjs';
 import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod/v4';
 import { describeSchemaInputsWithReceivedValues } from './mcp-input-errors.mjs';
@@ -1025,6 +1026,9 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
     if (name === '--allow-addon') allowedAddonNames.push(value);
     else options[name.slice(2)] = name === '--memory' ? Number(value) : value;
   }
+  options.gpuQueue = createGpuQueueFromFlags({ queue: options['gpu-queue'], wait: options['gpu-queue-wait'] });
+  delete options['gpu-queue'];
+  delete options['gpu-queue-wait'];
   const addonSet = resolveAddons({ folder: options.addons, names: allowedAddonNames, version });
   for (const { name, reason } of addonSet.skipped) console.error(`Crucible addon ${name} skipped: ${reason}`);
   options.addons = addonSet;

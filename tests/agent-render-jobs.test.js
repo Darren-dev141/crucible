@@ -857,3 +857,56 @@ test('a job folder that lost only its owner file is healed on restart, and an un
     return true;
   });
 });
+
+test('a job waits for the GPU queue as queued, and the elapsed deadline starts only once the card is granted', async context => {
+  const root = await temporary(context);
+  const events = [];
+  const granted = deferred();
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 150 },
+    async acquireGpu() {
+      events.push('wait');
+      await granted.promise;
+      events.push('granted');
+      return () => events.push('released');
+    },
+    async run(argumentsValue) {
+      events.push('run');
+      return writeImage(argumentsValue);
+    } });
+  const { jobId } = await controller.submit(request());
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.equal(controller.status(jobId).state, 'queued');
+  assert.deepEqual(events, ['wait']);
+  granted.resolve();
+  assert.equal((await terminal(controller, jobId)).state, 'completed');
+  assert.deepEqual(events, ['wait', 'granted', 'run', 'released']);
+  await controller.close();
+});
+
+test('cancelling a job that waits for the GPU queue ends it cancelled without running it', async context => {
+  const root = await temporary(context);
+  const events = [];
+  const controller = await createAgentRenderJobs({ root, limits,
+    acquireGpu: signal => new Promise((resolve, reject) => {
+      events.push('wait');
+      signal.addEventListener('abort', () => reject(new Error('The GPU queue wait was cancelled.')), { once: true });
+    }),
+    async run() { events.push('run'); } });
+  const { jobId } = await controller.submit(request());
+  assert.equal(controller.cancel(jobId).state, 'cancelling');
+  assert.equal((await terminal(controller, jobId)).state, 'cancelled');
+  assert.deepEqual(events, ['wait']);
+  await controller.close();
+});
+
+test('a GPU queue that fails the wait fails the job with the queue message', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits,
+    acquireGpu: async () => { throw new Error('The GPU queue command did not grant the card within 1 seconds.'); },
+    async run() { throw new Error('must not run'); } });
+  const { jobId } = await controller.submit(request());
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.reason, /GPU queue command did not grant/);
+  await controller.close();
+});

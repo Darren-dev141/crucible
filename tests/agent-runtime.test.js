@@ -816,3 +816,104 @@ runTest('exportWeb needs a jobs folder', async () => {
   after(() => harness.runtime.close());
   await assert.rejects(harness.runtime.exportWeb({ sessionId: harness.sessionId }), /--jobs/);
 });
+
+// A queue that grants one unit at a time and records every request, grant and release, like a wrapper that never runs light
+// beside heavy. The runtime must work with it without ever queueing against itself.
+function recordingSerialQueue() {
+  const log = [];
+  let tail = Promise.resolve();
+  return {
+    log,
+    run(weight, work, { signal } = {}) {
+      log.push(`request:${weight}`);
+      const result = tail.then(async () => {
+        signal?.throwIfAborted();
+        log.push(`grant:${weight}`);
+        try { return await work(); } finally { log.push(`release:${weight}`); }
+      });
+      tail = result.catch(() => {});
+      return result;
+    },
+  };
+}
+
+const settleQueue = () => new Promise(resolve => setTimeout(resolve, 20));
+
+runTest('look and review take the card as light and give it back; calls that draw nothing never ask the queue', async () => {
+  const queue = recordingSerialQueue();
+  const { runtime, sessionId } = await reviewRuntimeHarness({ runtimeOptions: { gpuQueue: queue } });
+  assert.deepEqual(queue.log, []);
+  await runtime.look({ sessionId });
+  await settleQueue();
+  assert.deepEqual(queue.log, ['request:light', 'grant:light', 'release:light']);
+  queue.log.length = 0;
+  await runtime.review({ sessionId, expectedRevision: 0, shots: [{}] });
+  await settleQueue();
+  assert.deepEqual(queue.log, ['request:light', 'grant:light', 'release:light']);
+  queue.log.length = 0;
+  await runtime.apply({ sessionId });
+  await runtime.exportRecipe({ sessionId });
+  await settleQueue();
+  assert.deepEqual(queue.log, []);
+});
+
+runTest('a failed look gives the card back', async () => {
+  const queue = recordingSerialQueue();
+  const { runtime } = await reviewRuntimeHarness({ runtimeOptions: { gpuQueue: queue } });
+  await assert.rejects(runtime.look({ sessionId: randomUUID() }));
+  await settleQueue();
+  assert.deepEqual(queue.log, ['request:light', 'grant:light', 'release:light']);
+});
+
+runTest('creating a baked scene and editing a baked scene take the card as heavy, other edits do not', async () => {
+  const queue = recordingSerialQueue();
+  const { runtime, sessionId } = await reviewRuntimeHarness({ runtimeOptions: { gpuQueue: queue } });
+  const bakedRecipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [], bake: { quality: 'draft' } };
+  const baked = await runtime.create({ recipe: bakedRecipe });
+  await settleQueue();
+  assert.deepEqual(queue.log, ['request:heavy', 'grant:heavy', 'release:heavy']);
+  queue.log.length = 0;
+  await runtime.apply({ sessionId: baked.sessionId, operations: [] });
+  await settleQueue();
+  assert.deepEqual(queue.log, ['request:heavy', 'grant:heavy', 'release:heavy']);
+  queue.log.length = 0;
+  await runtime.apply({ sessionId, operations: [] });
+  await settleQueue();
+  assert.deepEqual(queue.log, []);
+});
+
+runTest('a look while a render job holds the card joins it: both finish with a strictly serial queue and no wait timeout', async () => {
+  const queue = recordingSerialQueue();
+  let jobHooks;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId, events } = await reviewRuntimeHarness({ blockPrivateCreate: true,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test'), gpuQueue: queue },
+    contextOverrides: { createAgentRenderJobs: async hooks => { jobHooks = hooks; return controller; } } });
+  await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+  assert.equal(typeof jobHooks.acquireGpu, 'function');
+  const jobAbort = new AbortController();
+  const releaseCard = await jobHooks.acquireGpu(jobAbort.signal);
+  const jobRun = jobHooks.run({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+    settings: { kind: 'image', width: 64, height: 64 }, signal: jobAbort.signal, progress: async () => {} });
+  jobRun.catch(() => {});
+  for (let attempt = 0; attempt < 100 && !events.includes('private:create'); attempt++) await new Promise(resolve => setTimeout(resolve, 5));
+  const started = Date.now();
+  await runtime.look({ sessionId });
+  assert.ok(Date.now() - started < 2000);
+  assert.deepEqual(queue.log, ['request:heavy', 'grant:heavy']);
+  jobAbort.abort(new Error('Render job cancelled.'));
+  await assert.rejects(jobRun, /Review page closed/);
+  releaseCard();
+  await settleQueue();
+  assert.deepEqual(queue.log, ['request:heavy', 'grant:heavy', 'release:heavy']);
+});
+
+runTest('without --gpu-queue the job store gets no card hook', async () => {
+  let jobHooks;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId } = await reviewRuntimeHarness({
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async hooks => { jobHooks = hooks; return controller; } } });
+  await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+  assert.equal(jobHooks.acquireGpu, undefined);
+});

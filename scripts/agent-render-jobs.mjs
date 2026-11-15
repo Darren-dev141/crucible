@@ -338,9 +338,10 @@ async function hashFile(path, maximum) {
 /** Persistent controller. The trusted runner must stop its owned browser and encoder when aborted. */
 // `lockTakeoverHooks` is a seam for tests that need to pause a process at a chosen point of the lock takeover, or to replace how a
 // job file is deleted (`removeJobFile`).
-export async function createAgentRenderJobs({ root, run, limits: inputLimits = {}, lockTakeoverHooks = {} }) {
+export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inputLimits = {}, lockTakeoverHooks = {} }) {
   if (typeof root !== 'string' || !isAbsolute(root)) throw new TypeError('Job root must be an explicit absolute directory.');
   if (typeof run !== 'function') throw new TypeError('run must be an async render callback.');
+  if (acquireGpu !== undefined && typeof acquireGpu !== 'function') throw new TypeError('acquireGpu must be an async function that takes the GPU and returns its release function.');
   objectKeys(inputLimits, Object.keys(DEFAULT_LIMITS), 'limits');
   const limits = { ...DEFAULT_LIMITS, ...inputLimits };
   for (const [key, value] of Object.entries(limits)) boundedNumber(value, 1, DEFAULT_LIMITS[key], key, true);
@@ -825,8 +826,11 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
       persist(job).catch(() => {});
     };
     // Two clocks: the wait behind other calls is bounded on its own, and the elapsed deadline starts when the runner says rendering began.
+    // The wait for the person's GPU queue is bounded by --gpu-queue-wait instead, so the call-queue clock starts once the card is taken.
     const { queueWaitMs } = limits;
-    timer = setTimeout(() => expire(`Render job exceeded its queue wait deadline of ${Math.round(queueWaitMs / 1000)} seconds before rendering started. Submit the job again.`), queueWaitMs);
+    function startQueueWaitClock() {
+      timer = setTimeout(() => expire(`Render job exceeded its queue wait deadline of ${Math.round(queueWaitMs / 1000)} seconds before rendering started. Submit the job again.`), queueWaitMs);
+    }
     let renderClockStarted = false;
     const startRenderClock = () => {
       if (renderClockStarted) return;
@@ -834,8 +838,13 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
       clearTimeout(timer);
       timer = setTimeout(() => expire('Render job exceeded its elapsed deadline. If another process was using the GPU, submit the job again.'), jobDeadlineMs(record.settings, limits.deadlineMs));
     };
+    let releaseGpu;
     const renamed = [];
     try {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      // The state stays queued while the job waits for the GPU queue.
+      if (acquireGpu) releaseGpu = await acquireGpu(controller.signal);
+      startQueueWaitClock();
       if (controller.signal.aborted) throw controller.signal.reason;
       record.state = 'running';
       await persist(job);
@@ -903,6 +912,7 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
       Object.assign(record, failedRecord);
     } finally {
       clearTimeout(timer);
+      releaseGpu?.();
       if (active === job) active = undefined;
     }
   }
