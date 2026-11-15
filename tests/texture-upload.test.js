@@ -187,14 +187,14 @@ function callNameRecorder() {
 test('an upload whose data is shorter than width x height x 4 is refused before any GL call', async () => {
   const { context, calls } = callNameRecorder();
   const image = { width: 4, height: 4, data: new Uint8Array(10) };
-  await assert.rejects(() => uploadTextureInSlices(context, {}, 0, image), /image\.data has 10 bytes, expected 64/);
+  await assert.rejects(() => uploadTextureInSlices(context, {}, 0, image), /width x height x 4 must be data bytes > 0: 4x4, 10/);
   assert.deepEqual(calls, []);
 });
 
-test('an upload with a zero width or height names the field and touches no GL state', async () => {
-  for (const [width, height, field] of [[0, 4, 'width'], [4, 0, 'height']]) {
+test('an upload with a zero width or height shows the size and touches no GL state', async () => {
+  for (const [width, height] of [[0, 4], [4, 0]]) {
     const { context, calls } = callNameRecorder();
-    await assert.rejects(() => uploadTextureInSlices(context, {}, 0, { width, height, data: new Uint8Array(0) }), new RegExp(`image ${field} must be positive`));
+    await assert.rejects(() => uploadTextureInSlices(context, {}, 0, { width, height, data: new Uint8Array(0) }), new RegExp(`must be data bytes > 0: ${width}x${height}, 0`));
     assert.deepEqual(calls, []);
   }
 });
