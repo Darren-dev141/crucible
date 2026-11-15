@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import test from 'node:test';
 
 import { decodePfm, denoiseWithOidn, encodePfm, findOidnBinary } from '../packages/denoise-oidn/index.mjs';
-import { PATH_TRACER_DENOISERS as JOB_DENOISERS } from '../src/path-tracer-capabilities.js';
+import { PATH_TRACER_CAPABILITIES, PATH_TRACER_DENOISERS as JOB_DENOISERS } from '../src/path-tracer-capabilities.js';
 import { normalizePathTracerOptions, PATH_TRACER_DENOISERS, renderPathTracedImage } from '../src/path-tracer.js';
 import { chooseDenoiser } from '../scripts/agent-path-trace-denoise.mjs';
 
@@ -43,7 +43,7 @@ test('a job that asks for oidn without the binary runs the wavelet filter and sa
   });
   const choice = await chooseDenoiser('oidn');
   assert.equal(choice.denoise, 'wavelet');
-  assert.match(choice.note, /oidn.*wavelet filter ran instead/s);
+  assert.match(choice.note, /oidn.*not on npm yet.*source checkout.*npm run fetch --prefix packages\/denoise-oidn.*wavelet filter ran instead/s);
   assert.deepEqual(await chooseDenoiser(true), { denoise: true });
   await assert.rejects(denoiseWithOidn({ width: 1, height: 1, color: new Float32Array(3), albedo: new Float32Array(3), normal: new Float32Array(3) }), /not installed/);
 });
@@ -89,6 +89,7 @@ test('the native default (denoise true) picks OIDN when it is installed and the 
   const explicit = await chooseDenoiser('oidn', { preferOidn: true, loadOidn: async () => null });
   assert.equal(explicit.denoise, 'atrous');
   assert.match(explicit.note, /denoise "oidn".*GPU a-trous filter ran instead/s);
+  assert.match(explicit.note, /not on npm yet/);
   const otherBackends = await chooseDenoiser(true, { loadOidn: async () => null });
   assert.deepEqual(otherBackends, { denoise: true });
   assert.equal((await chooseDenoiser('oidn', { loadOidn: async () => null })).denoise, 'wavelet');
@@ -106,4 +107,11 @@ test('a source checkout finds the fetched OIDN package without it being installe
   const choice = await chooseDenoiser('oidn');
   assert.equal(choice.denoise, 'oidn');
   assert.equal(typeof choice.denoiser.denoiseWithOidn, 'function');
+});
+
+test('the job capability text says the OIDN package is not on npm and what runs without it', () => {
+  const { setting } = PATH_TRACER_CAPABILITIES;
+  assert.match(setting, /@codepawlhq\/crucible-denoise-oidn, which is not on npm yet/);
+  assert.match(setting, /npm run fetch --prefix packages\/denoise-oidn/);
+  assert.match(setting, /wavelet filter.*denoiserNote/s);
 });
