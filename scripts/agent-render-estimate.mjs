@@ -3,6 +3,7 @@
 // (kept in the jobs folder, never sent anywhere) can move it, within a fixed bound.
 
 import { MAXIMUM_MEMORY_MIB } from '../src/agent-scene-capabilities.js';
+import { MAX_TRACE_TRIANGLES } from '../src/path-tracer-scene.js';
 
 const MIB = 1024 ** 2;
 
@@ -237,4 +238,15 @@ export function parseHistory(text) {
   } catch {
     return [];
   }
+}
+
+/**
+ * The message of a path traced job the CPU tracer would refuse after it started, or undefined. The CPU tracer (the default
+ * backend) flattens the scene and takes at most MAX_TRACE_TRIANGLES triangles in total; the count here is the estimate of
+ * `sceneSizeFrom`, so the message says "about". The gpu and native backends have other bounds, checked when the trace starts.
+ */
+export function pathTraceTriangleProblem(size, renderer) {
+  if (!renderer || (renderer.backend !== undefined && renderer.backend !== 'cpu')) return undefined;
+  if (size.triangles <= MAX_TRACE_TRIANGLES) return undefined;
+  return `settings.renderer: this scene has about ${size.triangles} triangles and the cpu path tracer takes at most ${MAX_TRACE_TRIANGLES} in total. Simplify or drop meshes, or set renderer.backend to "gpu" or "native", which hold more.`;
 }

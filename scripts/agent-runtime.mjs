@@ -37,7 +37,7 @@ import { resolveJobRoot } from './agent-job-root.mjs';
 import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings } from './agent-render-jobs.mjs';
 import { RENDER_QUALITY_NOTE, applyQuality, tierReport } from './agent-render-quality.mjs';
 import { RENDER_BUDGET_NOTE, chooseBudgetSettings, parseBudget } from './agent-render-budget.mjs';
-import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
+import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
 import { encodeRenderOutput, encodeMultilayerExr } from './render-output-encoders.mjs';
 import { createFrameEncoder } from './frame-encoder.mjs';
 import { DEFAULT_PAGE_ENCODER_QUANTIZER, createFrameReceiver, startVideoEncoderInPage } from './gpu-frame-reader.mjs';
@@ -47,7 +47,7 @@ import { isPreviewHost } from './preview-host.mjs';
 import { runAnnotateSession } from './annotate-session.mjs';
 import { openInDefaultBrowser } from './annotate-open.mjs';
 import { ANNOTATE_LIMITS } from '../src/agent-annotate.js';
-import { normalizeReview, REVIEW_LIMITS } from './agent-review.mjs';
+import { normalizeReview, reviewDeadlineMessage, REVIEW_LIMITS } from './agent-review.mjs';
 import { mergeFrameDiagnostics, pathTracerFindingsLimit } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
 import { createSharedGpuCard } from './agent-gpu-queue.mjs';
@@ -1231,6 +1231,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         let session;
         let output;
         let deadlineExpired = false;
+        let completedShots = 0;
+        const reviewDeadlineText = () => reviewDeadlineMessage({ completedShots, requestedShots: settings.shots.length, deadlineSeconds: EVALUATION_TIMEOUT_MS / 1000 });
         let cancellationReason;
         const cancellation = new Promise((resolve, reject) => {
           cancelReview = error => {
@@ -1243,10 +1245,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         cancellation.catch(() => {});
         const deadline = setTimeout(() => {
           deadlineExpired = true;
-          cancelReview(new Error('The review exceeded its total 30 second deadline.'));
+          cancelReview(new Error(reviewDeadlineText()));
         }, EVALUATION_TIMEOUT_MS);
         function requireReviewOpen() {
-          if (deadlineExpired) throw new Error('The review exceeded its total 30 second deadline.');
+          if (deadlineExpired) throw new Error(reviewDeadlineText());
           if (closing) throw new Error('The agent runtime is closing.');
         }
         async function reviewEvaluate(method, value) {
@@ -1299,6 +1301,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
                 throw new Error(memoryGuardMessage({ subject: 'Review', ...sample }));
               }
               shots[index] = { ...rendered, ...(group.branch === undefined ? {} : { branch: group.branch, branchStale: branchRecipe.stale }) };
+              completedShots += 1;
             }
             await reviewEvaluate('dispose', { sessionId: privateSessionId });
             privateCreated = false;
@@ -1309,7 +1312,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             backend, width: settings.gridWidth, height: settings.gridHeight, shots,
             peakNodeBytes, peakBrowserHeap, maximumPendingFrames: 1 } };
         } catch (error) {
-          if (deadlineExpired) throw new Error('The review exceeded its total 30 second deadline.');
+          if (deadlineExpired) throw new Error(reviewDeadlineText());
           throw error;
         } finally {
           clearTimeout(deadline);
@@ -1438,6 +1441,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             const { quality, ...base } = settings;
             ({ settings: jobSettings, report: qualityReport } = applyQuality({ quality, base, backend, nativeTracer: Boolean((await nativeTracerLocator.find()).tracer), estimateOf }));
           }
+          const triangleProblem = pathTraceTriangleProblem(size, jobSettings?.renderer);
+          if (triangleProblem) throw new RangeError(triangleProblem);
           const estimate = estimateOf(jobSettings);
           estimateForNextJob = estimate;
           try {

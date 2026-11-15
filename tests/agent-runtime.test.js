@@ -355,7 +355,7 @@ runTest('successful review elapsed time includes source renderer recovery', asyn
 runTest('total review deadline closes private page and restores the usable source', async () => {
   const { runtime, sessionId, events } = await reviewRuntimeHarness({ blockShot: true, deadlineMs: 40 });
   try {
-    await assert.rejects(runtime.review({ sessionId, expectedRevision: 0, shots: [{}] }), /total 30 second deadline/);
+    await assert.rejects(runtime.review({ sessionId, expectedRevision: 0, shots: [{}] }), /total [\d.]+ second deadline after 0 of 1 shots/);
     assert.ok(events.includes('private:close'));
     assert.ok(events.includes('source:resume'));
     assert.equal((await runtime.capabilities()).phase, 'ready');
@@ -497,7 +497,7 @@ runTest('review stale revisions and strict runtime fields reject before leasing 
   const { runtime, sessionId, events } = await reviewRuntimeHarness();
   try {
     await assert.rejects(runtime.review({ sessionId, expectedRevision: 1, shots: [{}] }), /Stale/);
-    await assert.rejects(runtime.review({ sessionId, expectedRevision: 0, shots: [{ url: 'https://example.com' }] }), /unknown/i);
+    await assert.rejects(runtime.review({ sessionId, expectedRevision: 0, shots: [{ url: 'https://example.com' }] }), /Review shot field not accepted: url/);
     assert.ok(!events.includes('source:suspend'));
     assert.equal((await runtime.apply({ sessionId })).revision, 1);
   } finally { await runtime.close(); }

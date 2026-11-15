@@ -267,6 +267,7 @@ Concise `scene_capabilities` drops the one-line notes of a schema topic and keep
 Pass `detailed` to get the earlier full answer. On a four-shot review the concise text is 657 bytes against 2,534 detailed.
 
 `scene_review` compares up to four cameras or motion samples without changing the source recipe, revision or preview pose.
+A review camera takes `eye`, `target`, `up`, `fov`, `near` and `far`; a field such as `focalLength` is refused by name, with `fov` in degrees as the fix. A review that passes its 30 second deadline says how many shots finished and how many to ask for.
 Each shot starts from the authored base pose. The [review guide](agent-review.md) describes separate clocks, dimensions and resource limits.
 
 `scene_apply` with a `branch` name forks instead of editing: the operations run on a scratch copy and the result is stored as that branch, so the scene, its revision and its checkpoints stay as they are. Branches are named with lowercase letters, digits, `_` and `-` (at most 24 characters); up to eight can exist, and branches that end in the same recipe share one snapshot. `scene_restore` with `branch` replays that branch's operations on the scene as one revision and drops every branch; it fails if the scene changed since the fork. Procedural scenes only. See the [review guide](agent-review.md#compare-branches-and-read-labels).
