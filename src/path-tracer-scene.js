@@ -16,7 +16,7 @@ import { liftRankedTriangles } from './flush-lift.js';
 
 export const MAX_TRACE_TRIANGLES = 400_000;
 // The most triangles the WebGL2 and WebGPU tracers are ever asked to hold, whatever the device could address: the triangle
-// table is 144 bytes a triangle, so this is 288 MB of texture or buffer, plus the BVH built in JavaScript. A device with
+// table is 160 bytes a triangle, so this is 320 MB of texture or buffer, plus the BVH built in JavaScript. A device with
 // smaller limits lowers it (`gpuTriangleCapacity` in path-tracer-gpu-pack.js); the option `gpuTriangleLimit` carries the result.
 export const MAX_GPU_TRACE_TRIANGLES = 2_000_000;
 // The bound a scene built for the native "cycles" tracer may ask for with `options.maximumTriangles` (unique triangles of an

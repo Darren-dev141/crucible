@@ -145,7 +145,7 @@ function uploadScene(device, scene, requestedLightSelection = 'uniform') {
   if (largeScene) device.pushErrorScope('out-of-memory');
   const buffers = [
     createStorageBuffer(device, packNodes(scene.bvh).data, 'bvh nodes'),
-    createStorageBuffer(device, packTriangles(scene).data, 'triangles'),
+    createStorageBuffer(device, packTriangles(scene, { secondUvSet: true }).data, 'triangles'),
     createStorageBuffer(device, materialsWithSubsurface, 'materials'),
     createStorageBuffer(device, lightsWithTree, 'lights'),
     createStorageBuffer(device, atlasWords(atlas), 'texture atlas'),
