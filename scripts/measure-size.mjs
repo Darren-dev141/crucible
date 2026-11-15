@@ -10,6 +10,7 @@ import { glslCommentStripperForEsbuild } from './strip-glsl-comments.mjs';
 import { budgetsFrom, compareToBudgets, formatRows, initialOutputPaths } from './size-budget.mjs';
 import { compareToBase, formatGrowthRows, goalProblems } from './size-growth.mjs';
 import { measureArchiveBytes } from './measure-archive.mjs';
+import { renameChunksByContent } from './size-chunk-names.mjs';
 import { DEFAULT_BASE_REF, baseRefExists, measureBase, readAcceptedBundles } from './size-base.mjs';
 
 const BUDGETS_PATH = 'bench/size/budgets.json';
@@ -63,7 +64,8 @@ function gzipSize(contents) {
 // Dynamic imports become separate chunks. What a page pays at start is the entry chunk and every chunk it imports
 // statically; the rest loads when a feature asks for it. Both are reported so lazy code never hides.
 function chunkSizes(result) {
-  const outputsByPath = new Map(result.outputFiles.map(file => [relative(process.cwd(), file.path).replaceAll('\\', '/'), file]));
+  const renamedContents = renameChunksByContent(result.outputFiles);
+  const outputsByPath = new Map(result.outputFiles.map(file => [relative(process.cwd(), file.path).replaceAll('\\', '/'), { contents: renamedContents.get(file.path) }]));
   const initialPaths = initialOutputPaths(result.metafile);
   const sizeOf = paths => {
     const parts = [...paths].map(path => outputsByPath.get(path).contents);
