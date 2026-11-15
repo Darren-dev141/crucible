@@ -6,7 +6,7 @@ import { installRenderPasses } from '../src/render-passes.js';
 import { parseGltf } from '../src/gltf.js';
 import { createAgentScene, loadAllAgentSceneModules } from '../src/agent-scene.js';
 import { assetCopyKey } from '../src/agent-scene-assets.js';
-import { objectIdMetrics } from '../scripts/agent-runtime.mjs';
+import { objectIdMetrics } from '../scripts/agent-object-id-metrics.mjs';
 
 await loadAllAgentSceneModules();
 
