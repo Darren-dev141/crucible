@@ -713,6 +713,22 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
 }
 
 /**
+ * `buildTraceScene` with the triangle bound of the device behind `gpuModule` (a tracer backend module that exports
+ * `gpuTriangleLimit`). Every GPU caller builds its scene through here, so the bound and the error text are the same for a
+ * still, the real-time tracer and the light bake. A page with no device builds with the default bound, so a scene error
+ * reaches the caller before the device error of the trace.
+ */
+export async function buildTraceSceneForDevice(allParts, environment, gpuModule) {
+  let deviceLimit;
+  try {
+    deviceLimit = await gpuModule.gpuTriangleLimit();
+  } catch {
+    deviceLimit = undefined;
+  }
+  return buildTraceScene(allParts, environment, deviceLimit === undefined ? {} : { gpuTriangleLimit: deviceLimit });
+}
+
+/**
  * Builds the scene a path trace reads. With `options.instancing` and at least one geometry shared by two parts, the result
  * holds `instances` instead of flattened triangles (see `buildInstancedTraceScene`); with no shared geometry, or without the
  * option, it is the flattened scene, unchanged. `options.maximumTriangles` (an integer up to MAX_NATIVE_TRACE_TRIANGLES) is for

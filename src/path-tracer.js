@@ -2,7 +2,7 @@ import { cameraFieldOfView, resolveThinLens } from './camera.js';
 import { fresnelSchlick } from './material-layers.js';
 import { pointLightFalloff } from './ray-query.js';
 import { profileGain } from './light-profile.js';
-import { buildTraceScene, refuseLocalVolumes, SUN_ANGULAR_RADIUS } from './path-tracer-scene.js';
+import { buildTraceScene, buildTraceSceneForDevice, refuseLocalVolumes, SUN_ANGULAR_RADIUS } from './path-tracer-scene.js';
 import { denoiseRadiance } from './path-tracer-denoise.js';
 import { acesChannel, displayColor } from './view-transform.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
@@ -1171,15 +1171,6 @@ function renderBandsInWorkers(scene, camera, options, buffers, shouldStop) {
   });
 }
 
-async function readDeviceTriangleLimit(gpuModule) {
-  try {
-    return await gpuModule.gpuTriangleLimit();
-  } catch {
-    // No device on this page: build with the default bound so a scene error reaches the caller before the device error of the trace.
-    return undefined;
-  }
-}
-
 /**
  * Renders one still. `scene` is `{ parts, environment, camera }` as the rasterizer takes them. Resolves with the linear
  * pixels, the tone-mapped RGBA bytes, and a report. Rejects, and returns nothing, when `maxSeconds` runs out.
@@ -1196,8 +1187,7 @@ export async function renderPathTracedImage({ parts, environment = {}, camera },
   const gpuModule = options.backend === 'gpu' || options.backend === 'webgpu'
     ? await (options.backend === 'webgpu' ? import('./path-tracer-webgpu.js') : import('./path-tracer-gpu.js'))
     : null;
-  const deviceLimit = gpuModule ? await readDeviceTriangleLimit(gpuModule) : undefined;
-  const scene = buildTraceScene(parts, environment, deviceLimit === undefined ? {} : { gpuTriangleLimit: deviceLimit });
+  const scene = gpuModule ? await buildTraceSceneForDevice(parts, environment, gpuModule) : buildTraceScene(parts, environment);
   if (options.backend !== 'cpu') refuseLocalVolumes(scene, `backend "${options.backend}"`);
   const pixelCount = width * height;
   const buffers = {
