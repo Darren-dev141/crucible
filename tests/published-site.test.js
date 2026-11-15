@@ -36,7 +36,11 @@ function withFixture(files, run) {
 }
 
 test('every guide that llms.txt links to by absolute URL is one the build publishes', () => {
-  const names = [...readText('public/llms.txt').matchAll(/(?<![\w.\/-])https:\/\/crucible\.codepawl\.com\/([\w-]+\.md)(?![\w.\/-])/g)].map(match => match[1]);
+  const urls = [...readText('public/llms.txt').matchAll(/https:\/\/[^\s)<>"'`\]]+/g)].map(match => new URL(match[0]));
+  const names = urls
+    .filter(url => url.hostname === 'crucible.codepawl.com')
+    .map(url => url.pathname.slice(1))
+    .filter(name => /^[\w-]+\.md$/.test(name));
   assert.ok(names.length > 10);
   assert.deepEqual([...new Set(names)].filter(name => !served(name)), []);
 });
