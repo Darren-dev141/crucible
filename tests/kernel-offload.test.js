@@ -144,3 +144,34 @@ test('a worker answer the page cannot read leaves the work to the inline path in
   const timeout = new Promise(resolve => setTimeout(() => resolve('hung'), 1000));
   assert.equal(await Promise.race([build, timeout]), 'inline');
 });
+
+test('a worker that never answers is ended after the timeout and the work runs inline instead of hanging', async () => {
+  let terminated = 0;
+  const silent = { postMessage() {}, terminate() { terminated++; } };
+  const build = buildWithKernels(() => runKernel('pattern', [{ size: 1 }], () => 'inline'), {
+    createWorker: () => silent,
+    available: true,
+    kernelTimeoutMilliseconds: 50,
+  });
+  const hung = new Promise(resolve => setTimeout(() => resolve('hung'), 1500));
+  assert.equal(await Promise.race([build, hung]), 'inline');
+  assert.ok(terminated >= 1, 'the silent worker was terminated');
+});
+
+test('a worker that stays silent is only waited for once per build', async () => {
+  const silent = { postMessage() {}, terminate() {} };
+  const started = Date.now();
+  const build = buildWithKernels(
+    () => [runKernel('pattern', [{ size: 1 }], () => 'a'), runKernel('pattern', [{ size: 2 }], () => 'b')],
+    { createWorker: () => silent, available: true, kernelTimeoutMilliseconds: 300 },
+  );
+  const hung = new Promise(resolve => setTimeout(() => resolve('hung'), 1500));
+  assert.deepEqual(await Promise.race([build, hung]), ['a', 'b']);
+  assert.ok(Date.now() - started < 550, 'the second kernel did not wait for a second timeout');
+});
+
+test('the kernel timeout must be a finite number above 0 and bounded', async () => {
+  for (const bad of [0, -1, Infinity, NaN, 1e12, '5']) {
+    await assert.rejects(buildWithKernels(() => 1, { kernelTimeoutMilliseconds: bad }), /kernelTimeoutMilliseconds/);
+  }
+});
