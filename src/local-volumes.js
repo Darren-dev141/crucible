@@ -32,6 +32,8 @@ export function packLocalVolumes(volumes, buffers) {
   buffers.gridVolume = null;
   buffers.grid.fill(0);
   buffers.blurred = volumes.some(volume => volume.blur > 0 && volume.density > 0);
+  // A volume that glows is composited before bloom extraction, so its glow blooms (#1046).
+  buffers.emissive = volumes.some(volume => volume.emissionStrength > 0 && (volume.shape === 'grid' || volume.emission.some(channel => channel > 0)));
   volumes.forEach((volume, index) => {
     const at = index * 4;
     const half = volume.shape === 'sphere' ? [volume.radius, volume.radius, volume.radius] : volume.size.map(extent => extent / 2);

@@ -1,0 +1,6 @@
+- entry:core: the hook in the renderer that draws glowing local volumes before bloom extraction, so a fireball blooms.
+- entry:core+lazy: same hook.
+- scene:lit-box: same hook in a scene that uses the renderer.
+- scene:lit-box+lazy: same hook.
+- scene:gltf-box: same hook in a scene that uses the renderer.
+- scene:gltf-box+lazy: same hook.
