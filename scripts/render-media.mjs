@@ -9,7 +9,7 @@ import { FILM_DURATION } from '../src/film.js';
 import { videoFrameCount } from '../src/film-timeline.js';
 import { RENDER_PRESETS } from '../src/budget.js';
 import { createFrameEncoder } from './frame-encoder.mjs';
-import { assertAudioCoversVideo, formatSeekSeconds, measureStreamSeconds } from './job-audio.mjs';
+import { measureStreamSeconds, planRenderMediaAudio } from './job-audio.mjs';
 import { prepareFileScene, readCameraKeys } from './file-scene.mjs';
 import { startAssetServer } from './asset-server.mjs';
 import { DEFAULT_PAGE_ENCODER_QUANTIZER, createFrameReceiver, installFrameReaderInPage, startFrameServer, startVideoEncoderInPage } from './gpu-frame-reader.mjs';
@@ -294,16 +294,18 @@ export async function renderMedia(values = process.argv.slice(2)) {
     if (kind === 'video') {
       const audioPath = plan.audio ? resolve(plan.audio) : null;
       if (options.audio && !existsSync(audioPath)) throw new Error('The selected audio file was not found.');
-      const audioArguments = audioPath && existsSync(audioPath) ? ['-ss', formatSeekSeconds(start), '-i', audioPath] : [];
-      if (audioArguments.length) {
+      let audioArguments = [];
+      let frameCount = videoFrameCount(fps, duration);
+      if (audioPath && existsSync(audioPath)) {
         // -shortest would cut the picture at the end of a shorter sound, so refuse before rendering anything.
-        const audioSeconds = await measureStreamSeconds(ffmpeg, audioPath, 'audio');
-        assertAudioCoversVideo(audioSeconds, start, videoFrameCount(fps, duration) / fps);
+        ({ audioArguments, frameCount } = await planRenderMediaAudio({
+          audioPath, startSeconds: start, fps, durationSeconds: duration,
+          measureAudioSeconds: path => measureStreamSeconds(ffmpeg, path, 'audio'),
+        }));
       }
       encoder = createFrameEncoder({ executable: ffmpeg, output, fps, format: captureFormat === 'raw' ? 'rawvideo' : captureFormat === 'webcodecs' ? 'h264' : captureFormat,
         width, height, backend: encoderBackend, audioArguments, maximumFrameBytes: 64 * 1024 * 1024,
         maximumOutputBytes: Number.MAX_SAFE_INTEGER });
-      const frameCount = videoFrameCount(fps, duration);
       if (captureFormat === 'webcodecs') frameReceiver.onChunk(chunk => encoder.writeChunk(chunk));
       const captureSequenceStarted = performance.now();
       for (let frame = 0; frame < frameCount; frame++) {

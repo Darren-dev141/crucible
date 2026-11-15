@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { normalizeJobSettings } from '../scripts/agent-render-jobs.mjs';
-import { assertAudioCoversVideo, audioInputArguments, formatSeekSeconds } from '../scripts/job-audio.mjs';
+import { assertAudioCoversVideo, audioInputArguments, formatSeekSeconds, planRenderMediaAudio } from '../scripts/job-audio.mjs';
 import { videoFrameCount } from '../src/film-timeline.js';
 
 function timelineRecipe(shotSeconds) {
@@ -56,9 +56,13 @@ test('audio shorter than the video after its offset is refused up front', () => 
   assert.equal(assertAudioCoversVideo(4.97, 0, 5), 4.97);
 });
 
-test('render-media measures the audio before it starts the encoder', async () => {
-  const source = await readFile(new URL('../scripts/render-media.mjs', import.meta.url), 'utf8');
-  const measureAt = source.indexOf('assertAudioCoversVideo(');
-  const encoderAt = source.indexOf('createFrameEncoder({ executable');
-  assert.ok(measureAt > 0 && encoderAt > 0 && measureAt < encoderAt, 'the audio check must run before the encoder starts');
+test('render-media audio plan refuses a short sound, formats the seek and counts frames', async () => {
+  const plan = (overrides, audioSeconds) => planRenderMediaAudio({
+    audioPath: 'score.wav', startSeconds: 0, fps: 10, durationSeconds: 0.1 + 0.2, measureAudioSeconds: async () => audioSeconds, ...overrides,
+  });
+  await assert.rejects(plan({ durationSeconds: 5 }, 3), /Audio has 3.00 s.*Shorten --duration.*score.wav/);
+  await assert.rejects(plan({ startSeconds: 2, durationSeconds: 5 }, 5), RangeError);
+  const tiny = await plan({ startSeconds: 1e-7 }, 10);
+  assert.deepEqual(tiny.audioArguments, ['-ss', '0.000000', '-i', 'score.wav']);
+  assert.equal(tiny.frameCount, 3);
 });

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, join, sep } from 'node:path';
 import { AUDIO_FILE_PATTERN } from '../src/agent-scene-capabilities.js';
+import { videoFrameCount } from '../src/film-timeline.js';
 
 // Audio for render jobs: local files in one configured folder, chosen by plain file name. The agent never supplies a
 // path, URL or ffmpeg argument; ffmpeg only receives the resolved path and a fixed protocol whitelist.
@@ -42,6 +43,24 @@ export function assertAudioCoversVideo(fileSeconds, offsetSeconds, videoSeconds,
     throw new RangeError(`Audio has ${availableSeconds.toFixed(2)} s after its offset but the video lasts ${videoSeconds.toFixed(2)} s.`);
   }
   return availableSeconds;
+}
+
+// ffmpeg prints decoded time in hundredths of a second, so that is the finest slack a command line check can honour.
+const COMMAND_LINE_TOLERANCE_SECONDS = 0.01;
+
+/**
+ * The audio input arguments and frame count for `render-media`. Refuses a sound that ends before the picture, because the
+ * encoder's -shortest would cut frames. `measureAudioSeconds` is injected so tests need no ffmpeg.
+ */
+export async function planRenderMediaAudio({ audioPath, startSeconds, fps, durationSeconds, measureAudioSeconds }) {
+  const frameCount = videoFrameCount(fps, durationSeconds);
+  const audioSeconds = await measureAudioSeconds(audioPath);
+  try {
+    assertAudioCoversVideo(audioSeconds, startSeconds, frameCount / fps, COMMAND_LINE_TOLERANCE_SECONDS);
+  } catch (error) {
+    throw new RangeError(`${error.message} Shorten --duration, lower --start, or pass a longer sound with --audio (this run used ${audioPath}).`);
+  }
+  return { audioArguments: ['-ss', formatSeekSeconds(startSeconds), '-i', audioPath], frameCount };
 }
 
 /** Input arguments for the encoder: the file is read at `offset` seconds and may only be opened as a plain file. */

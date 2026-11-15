@@ -85,8 +85,8 @@ Videos are capped at 60 s and 900 frames, so a 60 s video needs 15 fps or less.
 `file` is a plain name in that folder ending in `.wav`, `.mp3`, `.ogg` or `.flac` (no path, drive or protocol syntax); the file must be a regular file of up to 32 MiB without links.
 `offset` starts the sound that many seconds into the file. The sound is resampled to 48 kHz and encoded as AAC.
 A job whose file is shorter than the video after its offset fails before rendering. After encoding, the job decodes both streams of the MP4 and reports `metrics.sync`
-The `render-media` script applies the same rule to `--audio`: a sound shorter than the video after its start fails before the first frame instead of cutting the video. An offset is sent to ffmpeg as a plain decimal with six places, so `1e-7` counts as `0`.
 (`videoSeconds`, `audioSeconds`, `differenceSeconds`); a difference over 50 ms fails the job.
+The `render-media` script applies the same rule to `--audio`: a sound shorter than the video after its start fails before the first frame instead of cutting the video (the error names the file and what to change; the check allows 10 ms, the precision ffmpeg prints). An offset is sent to ffmpeg as a plain decimal with six places, so `1e-7` counts as `0`.
 ffmpeg only receives the resolved path with `-protocol_whitelist file`; no URL, argument or output path comes from the agent.
 
 **Joining parts.** A film longer than one job (60 s, 900 frames) is rendered as several video jobs. Do not join AAC parts: each carries encoder priming and padding, which leaves a dropout of about 5 ms at every join (issue #389).
