@@ -190,6 +190,7 @@ test('deadline aborts a cooperative callback and close detects an uncooperative 
   const failed = await terminal(controller, jobId);
   assert.equal(failed.state, 'failed');
   assert.match(failed.reason, /deadline/);
+  assert.match(failed.reason, /submit the job again/);
   await controller.close();
   const started = deferred();
   const finish = deferred();
@@ -201,7 +202,7 @@ test('deadline aborts a cooperative callback and close detects an uncooperative 
   const hungJob = await hung.submit(request());
   await started.promise;
   await assert.rejects(hung.close(), /did not settle/);
-  await assert.rejects(createAgentRenderJobs({ root, limits, run: writeImage }), /live process/);
+  await assert.rejects(createAgentRenderJobs({ root, limits, run: writeImage }), /live process.*own --jobs folder/);
   finish.resolve();
   assert.equal((await terminal(hung, hungJob.jobId)).state, 'cancelled');
   await hung.close();
