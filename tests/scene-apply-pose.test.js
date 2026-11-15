@@ -246,3 +246,45 @@ test('an edit made outside the game loop does not stick: the next frame sends th
     globalThis.cancelAnimationFrame = previous.cancel;
   }
 });
+
+test('a field edit leaves every earlier revision and checkpoint exactly as it was', () => {
+  const scene = createAgentScene(gridRecipe(), { maxNodes: 200 });
+  const original = scene.exportRecipe();
+  const checkpoint = scene.checkpoint();
+  const edits = [
+    { type: 'set-node', id: 'part3', translation: [9, 9, 9], label: 'moved' },
+    { type: 'set-material', id: 'wall', color: [0.1, 0.2, 0.3] },
+    { type: 'set-camera', fov: 33 },
+  ];
+  const revisions = [scene.revision];
+  for (const edit of edits) {
+    scene.apply([edit], { expectedRevision: scene.revision });
+    revisions.push(scene.revision);
+  }
+  assert.notDeepEqual(scene.exportRecipe(), original);
+  scene.restoreRevision(revisions[2], { expectedRevision: scene.revision });
+  const afterTwoEdits = scene.exportRecipe();
+  assert.equal(afterTwoEdits.camera.fov, original.camera.fov, 'the camera edit is undone');
+  assert.deepEqual(afterTwoEdits.materials.find(material => material.id === 'wall').color, [0.1, 0.2, 0.3]);
+  assert.deepEqual(afterTwoEdits.nodes.find(node => node.id === 'part3').translation, [9, 9, 9]);
+  scene.restore(checkpoint, { expectedRevision: scene.revision });
+  assert.deepEqual(scene.exportRecipe(), original, 'the checkpoint still holds the unedited recipe');
+});
+
+test('a field edit of a scene with relations matches a fresh build', () => {
+  const recipe = gridRecipe();
+  recipe.nodes[1].relations = [{ kind: 'attach', to: 'part0', side: '+x' }];
+  const scene = createAgentScene(recipe, { maxNodes: 200 });
+  scene.apply([{ type: 'set-node', id: 'part0', translation: [3, 0.5, 3] }], { expectedRevision: scene.revision });
+  const fresh = createAgentScene(scene.exportRecipe(), { maxNodes: 200 });
+  assert.deepEqual(sceneState(scene), sceneState(fresh));
+});
+
+test('a refused field edit leaves the scene alone', () => {
+  const scene = createAgentScene(gridRecipe(), { maxNodes: 200 });
+  const before = scene.exportRecipe();
+  assert.throws(() => scene.apply([{ type: 'set-node', id: 'missing', translation: [0, 0, 0] }], { expectedRevision: scene.revision }), /missing/);
+  assert.throws(() => scene.apply([{ type: 'set-node', id: 'part1', scale: [0, 1, 1] }], { expectedRevision: scene.revision }), /scale/);
+  assert.deepEqual(scene.exportRecipe(), before);
+  assert.equal(scene.revision, 0);
+});
