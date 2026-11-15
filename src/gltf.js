@@ -350,13 +350,13 @@ function validateDocument(document, limits, allowedExtensions) {
   let vertices = 0;
   let indices = 0;
   let morphBytes = 0;
-  for (const mesh of document.meshes ?? []) {
+  for (const [meshIndex, mesh] of (document.meshes ?? []).entries()) {
     const targetCount = morphCount(mesh);
     if (targetCount > MAX_STORED_MORPH_TARGETS) throw new Error('Morph target count exceeds 256.');
     validateDefaultWeights(mesh.weights, targetCount);
-    for (const primitive of mesh.primitives ?? []) {
+    for (const [primitiveIndex, primitive] of (mesh.primitives ?? []).entries()) {
       if (isLinePrimitive(primitive)) continue;
-      if ((primitive.mode ?? 4) !== 4) throw new Error('Only glTF TRIANGLES primitives are supported. POINTS, LINES, LINE_LOOP and LINE_STRIP are skipped with a warning.');
+      if ((primitive.mode ?? 4) !== 4) throw new Error(unsupportedModeMessage(primitive.mode, meshIndex, primitiveIndex));
       const position = document.accessors?.[primitive.attributes?.POSITION];
       if (!position || position.type !== 'VEC3' || !Number.isSafeInteger(position.count) || position.count < 3) {
         throw new Error('Each mesh primitive requires a valid POSITION accessor.');
@@ -528,6 +528,13 @@ function sumMeshoptViewBytes(document) {
 }
 
 const LINE_MODE_NAMES = ['POINTS', 'LINES', 'LINE_LOOP', 'LINE_STRIP'];
+const OTHER_MODE_NAMES = { 5: 'TRIANGLE_STRIP', 6: 'TRIANGLE_FAN' };
+
+function unsupportedModeMessage(mode, meshIndex, primitiveIndex) {
+  const name = OTHER_MODE_NAMES[mode];
+  const found = name ? `${name} (mode ${mode})` : `mode ${JSON.stringify(mode)}`;
+  return `Only glTF TRIANGLES primitives are supported, found ${found} in meshes[${meshIndex}].primitives[${primitiveIndex}]. Fix: re-export the mesh as triangles (mode 4).`;
+}
 
 /** One warning per mesh that has point or line primitives, which Crucible does not draw. */
 function skippedPrimitiveWarnings(document) {
@@ -613,8 +620,13 @@ function validateHierarchy(nodes) {
 
 function dataUriBytes(uri) {
   const comma = uri.indexOf(',');
-  if (comma < 0 || !uri.slice(0, comma).endsWith(';base64')) throw new Error('Embedded glTF resources must use base64 data URIs.');
-  const binary = atob(uri.slice(comma + 1));
+  if (comma < 0 || !uri.slice(0, comma).toLowerCase().endsWith(';base64')) throw new Error('Embedded glTF resources must use base64 data URIs.');
+  let binary;
+  try {
+    binary = atob(uri.slice(comma + 1));
+  } catch {
+    throw new Error('Invalid base64 in a glTF data URI. Fix: encode it with standard base64 (A-Z a-z 0-9 + /, no - or _) and keep it complete.');
+  }
   return Uint8Array.from(binary, character => character.charCodeAt(0));
 }
 

@@ -29,7 +29,7 @@ An explicit `baseUrl` overrides that directory.
 Relative external resources in a local glTF file require `baseUrl`.
 GLB files can contain their buffers and images without external resources.
 
-HTTP, HTTPS, blob URLs, and base64 data URIs are supported.
+HTTP, HTTPS, blob URLs, and base64 data URIs are supported. A data URI must hold standard base64 (no `-` or `_`); the marker may be in any case.
 External requests use bounded streaming fetches.
 The optional `signal` aborts those fetches.
 
