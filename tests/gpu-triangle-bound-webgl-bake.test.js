@@ -51,7 +51,7 @@ const bakeOptions = { samples: 1, bounces: 1, texelsPerUnit: 1, maxResolution: 8
 test('the WebGL2 light bake refuses a scene past the context bound with its count', async () => {
   await assert.rejects(bakeLightmapsAsync(cubeParts(cubesOverLimit), lamp, bakeOptions), {
     name: 'RangeError',
-    message: new RegExp(`^This GPU path trace takes at most ${DEVICE_TRIANGLE_LIMIT} triangles in total .*, got ${cubesOverLimit * CUBE_TRIANGLES}\. Simplify or drop meshes`),
+    message: new RegExp(`^This GPU path trace takes at most ${DEVICE_TRIANGLE_LIMIT} triangles in total .*, got ${cubesOverLimit * CUBE_TRIANGLES}\\. Simplify or drop meshes`),
   });
 });
 
