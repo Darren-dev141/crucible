@@ -241,12 +241,24 @@ export function parseHistory(text) {
 }
 
 /**
+ * The estimate of `sceneSizeFrom` counts triangles as vertices / 2, which is up to 1.5 times the real count of non-indexed geometry
+ * (vertices / 3), and it does not subtract the parts the tracer skips. So the submit check refuses only above this multiple of the
+ * cap; a scene between the cap and the margin goes through to the exact check made when the trace starts.
+ */
+export const TRIANGLE_ESTIMATE_SAFETY_FACTOR = 2;
+
+/**
  * The message of a path traced job the CPU tracer would refuse after it started, or undefined. The CPU tracer (the default
  * backend) flattens the scene and takes at most MAX_TRACE_TRIANGLES triangles in total; the count here is the estimate of
- * `sceneSizeFrom`, so the message says "about". The gpu and native backends have other bounds, checked when the trace starts.
+ * `sceneSizeFrom`, so the message says "about" and only scenes clearly over the cap are refused. The gpu and native backends have
+ * other bounds, checked when the trace starts. `canChooseBackend` is false when the caller cannot set renderer.backend (a runtime on
+ * SwiftShader, or a budget or quality job that picks the renderer), so the advice then names only ways that work.
  */
-export function pathTraceTriangleProblem(size, renderer) {
+export function pathTraceTriangleProblem(size, renderer, { canChooseBackend = true, picksRenderer = false } = {}) {
   if (!renderer || (renderer.backend !== undefined && renderer.backend !== 'cpu')) return undefined;
-  if (size.triangles <= MAX_TRACE_TRIANGLES) return undefined;
-  return `settings.renderer: this scene has about ${size.triangles} triangles and the cpu path tracer takes at most ${MAX_TRACE_TRIANGLES} in total. Simplify or drop meshes, or set renderer.backend to "gpu" or "native", which hold more.`;
+  if (size.triangles <= MAX_TRACE_TRIANGLES * TRIANGLE_ESTIMATE_SAFETY_FACTOR) return undefined;
+  const base = `settings.renderer: this scene has about ${size.triangles} triangles and the cpu path tracer takes at most ${MAX_TRACE_TRIANGLES} in total.`;
+  if (picksRenderer) return `${base} Simplify or drop meshes, or leave budget and quality out and pick the renderer yourself.`;
+  if (!canChooseBackend) return `${base} Simplify or drop meshes; this runtime has no GPU backend.`;
+  return `${base} Simplify or drop meshes, or set renderer.backend to "gpu" or "native", which hold more.`;
 }

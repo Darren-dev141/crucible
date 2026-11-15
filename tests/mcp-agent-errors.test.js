@@ -80,25 +80,40 @@ test('scene_render_status given a sessionId says jobs are addressed by jobId alo
 
 test('the other job tools give the same hint for sessionId', async context => {
   const client = await connect(context);
-  for (const name of ['scene_render_cancel', 'scene_render_result', 'scene_render_release']) {
+  const accepted = { scene_render_cancel: 'jobId', scene_render_result: 'jobId (and response_format)', scene_render_release: 'jobId' };
+  for (const [name, keys] of Object.entries(accepted)) {
     const result = await client.callTool({ name, arguments: { jobId: randomUUID(), sessionId: randomUUID() } });
     assert.equal(result.isError, true, name);
-    assert.match(result.content[0].text, new RegExp(`${name} takes jobId`), name);
+    assert.ok(result.content[0].text.includes(`${name} takes ${keys} only: remove sessionId.`), `${name}: ${result.content[0].text}`);
   }
 });
 
 test('a path traced job over the cpu triangle cap is refused at submit with the count', () => {
-  const problem = pathTraceTriangleProblem({ triangles: 520000 }, { type: 'pathTracer' });
-  assert.match(problem, /^settings\.renderer: this scene has about 520000 triangles and the cpu path tracer takes at most 400000 in total\./);
+  const problem = pathTraceTriangleProblem({ triangles: 820000 }, { type: 'pathTracer' });
+  assert.match(problem, /^settings\.renderer: this scene has about 820000 triangles and the cpu path tracer takes at most 400000 in total\./);
   assert.match(problem, /renderer\.backend to "gpu" or "native"/);
-  assert.match(pathTraceTriangleProblem({ triangles: 520000 }, { type: 'pathTracer', backend: 'cpu' }), /about 520000 triangles/);
+  assert.match(pathTraceTriangleProblem({ triangles: 820000 }, { type: 'pathTracer', backend: 'cpu' }), /about 820000 triangles/);
+});
+
+test('the advice names only ways that work for the caller', () => {
+  const cpuRuntime = pathTraceTriangleProblem({ triangles: 820000 }, { type: 'pathTracer' }, { canChooseBackend: false });
+  assert.match(cpuRuntime, /Simplify or drop meshes; this runtime has no GPU backend\./);
+  assert.doesNotMatch(cpuRuntime, /renderer\.backend/);
+  const budgeted = pathTraceTriangleProblem({ triangles: 820000 }, { type: 'pathTracer' }, { picksRenderer: true });
+  assert.match(budgeted, /leave budget and quality out and pick the renderer yourself/);
+  assert.doesNotMatch(budgeted, /renderer\.backend/);
+});
+
+test('a borderline estimate between the cap and the safety margin is left to the exact check at trace time', () => {
+  assert.equal(pathTraceTriangleProblem({ triangles: 575000 }, { type: 'pathTracer' }), undefined);
+  assert.equal(pathTraceTriangleProblem({ triangles: 800000 }, { type: 'pathTracer' }), undefined);
 });
 
 test('the submit check leaves small scenes, other backends and rasterized jobs alone', () => {
   assert.equal(pathTraceTriangleProblem({ triangles: 400000 }, { type: 'pathTracer' }), undefined);
-  assert.equal(pathTraceTriangleProblem({ triangles: 520000 }, { type: 'pathTracer', backend: 'gpu' }), undefined);
-  assert.equal(pathTraceTriangleProblem({ triangles: 520000 }, { type: 'pathTracer', backend: 'native' }), undefined);
-  assert.equal(pathTraceTriangleProblem({ triangles: 520000 }, undefined), undefined);
+  assert.equal(pathTraceTriangleProblem({ triangles: 820000 }, { type: 'pathTracer', backend: 'gpu' }), undefined);
+  assert.equal(pathTraceTriangleProblem({ triangles: 820000 }, { type: 'pathTracer', backend: 'native' }), undefined);
+  assert.equal(pathTraceTriangleProblem({ triangles: 820000 }, undefined), undefined);
 });
 
 test('a review deadline says how far it got and how many shots to ask for', () => {

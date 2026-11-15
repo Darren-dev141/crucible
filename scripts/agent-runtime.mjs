@@ -1441,7 +1441,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             const { quality, ...base } = settings;
             ({ settings: jobSettings, report: qualityReport } = applyQuality({ quality, base, backend, nativeTracer: Boolean((await nativeTracerLocator.find()).tracer), estimateOf }));
           }
-          const triangleProblem = pathTraceTriangleProblem(size, jobSettings?.renderer);
+          const triangleProblem = pathTraceTriangleProblem(size, jobSettings?.renderer, { canChooseBackend: backend !== 'cpu', picksRenderer: settings?.budget !== undefined || settings?.quality !== undefined });
           if (triangleProblem) throw new RangeError(triangleProblem);
           const estimate = estimateOf(jobSettings);
           estimateForNextJob = estimate;
