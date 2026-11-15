@@ -49,19 +49,13 @@ export function layerTextureReferences(definition) {
 
 const MAXIMUM_IOR = MATERIAL_LAYER_SCALAR_RANGES.ior[1];
 
-// glTF allows any ior of 1 or more (exporters write 1000 for a surface that reflects like a mirror), so a high value is kept at the top of the range instead of refusing the file.
-function isIorAboveRange(extension) {
-  return typeof extension?.ior === 'number' && extension.ior > MAXIMUM_IOR;
-}
-
-/** One warning per material whose KHR_materials_ior is above what the renderers support and was kept at the top of the range. */
+// glTF allows any ior of 1 or more (exporters write 1000 for a mirror), so a high value is kept at the top of the range instead of refusing the file.
+/** One warning per material whose KHR_materials_ior is above the supported range and was kept at its top. */
 export function clampedIorWarnings(document) {
   const warnings = [];
-  (document.materials ?? []).forEach((definition, index) => {
-    const extension = definition?.extensions?.KHR_materials_ior;
-    if (!isIorAboveRange(extension)) return;
-    const label = typeof definition.name === 'string' && definition.name ? `"${definition.name.slice(0, 64)}" (material ${index})` : `material ${index}`;
-    warnings.push(`The ior of ${label} is ${extension.ior}; it was set to ${MAXIMUM_IOR}, the highest the renderers support.`);
+  document.materials?.forEach((definition, index) => {
+    const ior = definition?.extensions?.KHR_materials_ior?.ior;
+    if (ior > MAXIMUM_IOR) warnings.push(`The ior of material ${index} is ${ior}; it was set to ${MAXIMUM_IOR}.`);
   });
   return warnings;
 }

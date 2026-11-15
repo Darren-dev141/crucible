@@ -547,7 +547,7 @@ test('an ior above the supported range loads at the top of the range and says so
     },
   }));
   assert.equal(asset.parts[0].material.ior, 2.5);
-  assert.equal(asset.warnings.filter(warning => /ior of "Glass" \(material 0\) is 1000; it was set to 2.5/.test(warning)).length, 1);
+  assert.equal(asset.warnings.filter(warning => /ior of material 0 is 1000; it was set to 2.5/.test(warning)).length, 1);
   const inRange = await parseGltf(triangleDocument({
     edit: document => {
       document.extensionsUsed = ['KHR_materials_ior'];
