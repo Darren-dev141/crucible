@@ -924,7 +924,7 @@ export class CrucibleRenderer {
     if (!this.benchmark && !this.multisampleFramebuffer) this.allocateFrameTargets(this.canvas.width, this.canvas.height);
   }
 
-  /** Resolves once every program started by the constructor has linked, polling without blocking the main thread, then finishes construction. Needs deferProgramLink. */
+  /** Resolves once every program started by the constructor has linked, polling without blocking the main thread, then finishes construction. Needs deferProgramLink. After dispose() it resolves at once without finishing construction. */
   async programsReady() {
     if (this.disposed || !this.pendingConstruction) return;
     const context = this.context;
@@ -944,7 +944,7 @@ export class CrucibleRenderer {
    * stops there; the driver's thread keeps building while this waits in short timers, then the draw runs again. The last
    * draw is complete and leaves every program, target and texture that frame uses ready, so the next frame costs no more than
    * any other. Call it while the canvas is hidden or another world is on screen. Past `timeoutMilliseconds` it draws the
-   * frame at once and resolves true when it never had to, false otherwise.
+   * frame at once and resolves true when it never had to, false otherwise. On a disposed renderer it resolves false without drawing.
    */
   async prepareFrame(frame, { timeoutMilliseconds = 6000 } = {}) {
     await this.programsReady();
@@ -1913,7 +1913,7 @@ export class CrucibleRenderer {
   }
 
   resize() {
-    // A lost context answers every parameter query with null, so there is no size limit to plan against; the context restore path rebuilds the targets.
+    // A lost context answers every parameter query with null, so there is no size limit to plan against. This class has no restore path: the caller disposes the renderer and builds a new one when the context comes back.
     if (this.context.isContextLost()) return;
     const plan = planRenderSize({ width: Math.max(1, this.canvas.clientWidth), height: Math.max(1, this.canvas.clientHeight), pixelRatio: this.pixelRatio, samples: this.samples, memoryBudgetMiB: this.memoryBudgetMiB, geometryBytes: this.geometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !this.benchmark, depth: this.depth, maximumSize: Math.min(this.context.getParameter(this.context.MAX_RENDERBUFFER_SIZE), this.context.getParameter(this.context.MAX_TEXTURE_SIZE)) });
     const { width, height } = plan;
@@ -2822,6 +2822,8 @@ export class CrucibleRenderer {
     const context = this.context;
     const started = [...Object.values(this.pendingConstruction?.pending ?? {}), ...(this.pendingEnvironmentPrograms?.values() ?? [])];
     for (const { program, shaders } of started) {
+      // Reading the link status waits for a link still in flight; deleting a program mid-link leaves a GL error that the next renderer on this context sees (#74).
+      context.getProgramParameter(program, context.LINK_STATUS);
       shaders.forEach((shader) => context.deleteShader(shader));
       context.deleteProgram(program);
     }
