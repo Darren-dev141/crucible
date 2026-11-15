@@ -102,6 +102,25 @@ const VENDOR_FILES = Object.freeze({
   '/vendor/rapier.js': { resolve: require => join(dirname(require.resolve('@dimforge/rapier3d-compat')), 'rapier.mjs'), type: 'application/javascript; charset=utf-8' },
 });
 
+/** Checks the launch paths that need no job folder; the CLI runs it before serving so a bad value exits with its message. */
+export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg', audio }) {
+  if (browser !== undefined && (typeof browser !== 'string' || !existsSync(browser))) {
+    throw new Error('The configured browser executable does not exist.');
+  }
+  if (assets !== undefined && (typeof assets !== 'string' || !isAbsolute(assets))) {
+    throw new TypeError('Asset root must be an explicit absolute directory path.');
+  }
+  if (packs !== undefined && (typeof packs !== 'string' || !isAbsolute(packs))) {
+    throw new TypeError('Packs root must be an explicit absolute directory path.');
+  }
+  if (typeof ffmpeg !== 'string' || !ffmpeg || (ffmpeg !== 'ffmpeg' && (!isAbsolute(ffmpeg) || !existsSync(ffmpeg)))) {
+    throw new TypeError('FFmpeg must be on PATH or configured with an existing absolute executable path.');
+  }
+  if (audio !== undefined) {
+    createAudioLibrary(audio);
+  }
+}
+
 export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', browser: browserPath, memory = 192, assets: assetRoot, packs: packsRoot,
   jobs: jobRoot, ffmpeg = 'ffmpeg', audio: audioRoot, gpuQueue, openPage = openInDefaultBrowser, addons: addonSet = { addons: [], skipped: [] },
   previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url) } = {}) {
@@ -114,15 +133,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   if (!Number.isInteger(memory) || memory < 32 || memory > MAXIMUM_MEMORY_MIB) {
     throw new RangeError(`memory must be an integer from 32 to ${MAXIMUM_MEMORY_MIB} MiB.`);
   }
-  if (browserPath !== undefined && (typeof browserPath !== 'string' || !existsSync(browserPath))) {
-    throw new Error('The configured browser executable does not exist.');
-  }
-  if (assetRoot !== undefined && (typeof assetRoot !== 'string' || !isAbsolute(assetRoot))) {
-    throw new TypeError('Asset root must be an explicit absolute directory path.');
-  }
-  if (packsRoot !== undefined && (typeof packsRoot !== 'string' || !isAbsolute(packsRoot))) {
-    throw new TypeError('Packs root must be an explicit absolute directory path.');
-  }
+  validateLaunchPaths({ browser: browserPath, assets: assetRoot, packs: packsRoot, ffmpeg });
   jobRoot = resolveJobRoot(jobRoot);
   const importMapScript = addonSet.addons.length === 0 ? '' : `<script type="importmap">${JSON.stringify(addonImportMap(packageMetadata.exports))}</script>`;
   // The one inline script is the import map; its hash is allowed so script-src stays 'self'. No addons, no hash.
@@ -130,9 +141,6 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   const registeredByAddon = {};
   const refusedAddons = [];
   const audioLibrary = audioRoot === undefined ? undefined : createAudioLibrary(audioRoot);
-  if (typeof ffmpeg !== 'string' || !ffmpeg || (ffmpeg !== 'ffmpeg' && (!isAbsolute(ffmpeg) || !existsSync(ffmpeg)))) {
-    throw new TypeError('FFmpeg must be on PATH or configured with an existing absolute executable path.');
-  }
   // One unit of GPU work (a look, a review, a bake, a render job) waits for the person's own GPU queue when --gpu-queue is set.
   // The server takes the card before it enters its own call queue, so a long wait never blocks other calls, and a unit that
   // runs while the server already holds the card (a look during a render job) joins that hold instead of queueing against itself.
@@ -1349,6 +1357,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       }));
     },
     restore(input) {
+      const targets = ['checkpointId', 'revision', 'branch'].filter(field => input[field] !== undefined);
+      if (targets.length > 1) {
+        return Promise.reject(new TypeError(`scene_restore: pass exactly one of checkpointId, revision or branch; got ${targets.join(' and ')}.`));
+      }
       return enqueue(async () => {
         await requirePreviewRenderer();
         if (input.branch !== undefined) {

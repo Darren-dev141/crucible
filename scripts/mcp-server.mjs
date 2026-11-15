@@ -860,7 +860,7 @@ const renderSettings = z.strictObject({
   animation: z.strictObject({ clip: z.number().int().min(0), start: z.number().min(0).max(3600).optional() }).optional(),
   motion: z.strictObject({ start: z.number().min(0).max(3600).optional() }).optional(),
   rendererTime: z.strictObject({ start: z.number().min(0).max(3600).optional(), rate: z.number().min(-16).max(16).optional() }).optional(),
-  renderer: z.looseObject({ type: z.literal('pathTracer'), backend: z.enum(['cpu', 'gpu', 'native']).optional() }).meta({ description: 'Path tracer. Also samples, bounces, denoise, seed, maxSeconds, noiseThreshold: scene_capabilities pathTracer.' }).pipe(z.strictObject({ type: z.literal('pathTracer'), backend: z.enum(['cpu', 'gpu', 'native']).optional(), samples: z.number().optional(), bounces: z.number().optional(), denoise: z.union([z.boolean(), z.enum(['wavelet', 'oidn', 'none'])]).optional(), seed: z.number().optional(), maxSeconds: z.number().optional(), noiseThreshold: z.number().optional() })).optional(),
+  renderer: z.looseObject({ type: z.literal('pathTracer'), backend: z.enum(['cpu', 'gpu', 'native']).optional() }).meta({ description: 'Path tracer. Also samples, bounces, denoise, seed, maxSeconds, noiseThreshold: scene_capabilities topic jobs, key pathTracer.' }).pipe(z.strictObject({ type: z.literal('pathTracer'), backend: z.enum(['cpu', 'gpu', 'native']).optional(), samples: z.number().optional(), bounces: z.number().optional(), denoise: z.union([z.boolean(), z.enum(['wavelet', 'oidn', 'none'])]).optional(), seed: z.number().optional(), maxSeconds: z.number().optional(), noiseThreshold: z.number().optional() })).optional(),
   quality: z.enum(['draft', 'realtime', 'realtime-high', 'final']).optional().describe('What the render is for; picks the renderer. Not with renderer or budget. scene_capabilities jobs.'),
   budget: z.strictObject({ secondsPerFrame: z.number().optional(), framesPerSecond: z.number().optional(), memoryMiB: z.number().optional() }).optional().describe('Pick renderer, samples and size to fit; not with renderer. scene_capabilities jobs.'),
   timeline: z.strictObject({ start: z.number().min(0).max(60).optional() }).optional().describe('Play the recipe timeline from start (default 0); it owns the motion clock, so leave motion and animation out.'),
@@ -1048,7 +1048,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     return { content: [{ type: 'image', data, mimeType }, { type: 'text', text: JSON.stringify(shown) }], structuredContent: shown };
   });
   register('scene_checkpoint', 'Save a private recipe snapshot. Up to 16 are kept per scene; past that the oldest is evicted.', z.strictObject(sessionFields), { ...edit, destructiveHint: false }, async argumentsValue => jsonResult(await runtime.checkpoint(argumentsValue)));
-  register('scene_restore', 'Restore a checkpoint atomically using the current revision. The checkpoint remains available and revision increments. With revision (last 4 kept), undo with no checkpoint. With branch, keep that branch (one revision) and drop all branches.', z.strictObject({ ...sessionFields, checkpointId: restoreCheckpointId, revision: z.number().int().min(0).optional(), ...restoreBranchField, expectedRevision }), edit, async argumentsValue => jsonResult(await runtime.restore(argumentsValue)));
+  register('scene_restore', 'Restore a checkpoint atomically using the current revision. The checkpoint remains available and revision increments. Pass exactly one of checkpointId, revision or branch. With revision (last 4 kept), undo with no checkpoint. With branch, keep that branch (one revision) and drop all branches.', z.strictObject({ ...sessionFields, checkpointId: restoreCheckpointId, revision: z.number().int().min(0).optional(), ...restoreBranchField, expectedRevision }), edit, async argumentsValue => jsonResult(await runtime.restore(argumentsValue)));
   register('scene_release_checkpoint', 'Release one checkpoint slot. Released or foreign checkpoints fail.', z.strictObject(checkpointFields), destroy, async argumentsValue => jsonResult(await runtime.releaseCheckpoint(argumentsValue)));
   register('scene_export_recipe', 'Read a detached canonical JSON recipe for reproduction.', z.strictObject(sessionFields), readOnly, async argumentsValue => jsonResult(await runtime.exportRecipe(argumentsValue)));
   register('scene_export_glb', 'Write the active scene as a GLB file in the configured jobs folder, under a server-chosen name (the result has the path, byte count and SHA-256). Needs --jobs. Exports the current pose with pattern and imported textures, skins, morph weights and IK as posed; motionTime seeks authored motion first. For an imported asset, clip adds that source clip (translation, rotation, scale and morph weight tracks) on the source skeleton, which needs no animation, node overrides or motion in the scene. At most eight files are kept, oldest removed first; the GLB is at most 32 MiB.', z.strictObject({ ...sessionFields, clip: z.number().int().min(0).max(255).optional().describe('Imported assets only: index of the source clip to write.'), motionTime: z.number().min(0).max(3600).optional().describe('Seek authored motion (and IK) to this time before exporting. Leaves the preview there, like scene_look.'), maxTextureSize: z.number().int().min(1).max(4096).optional().describe('Largest texture side in pixels. Defaults to 2048.') }), edit, async argumentsValue => jsonResult(await runtime.exportGlb(argumentsValue)));
@@ -1072,6 +1072,8 @@ export async function runCheckUpdateCli({ version = packageMetadata.version } = 
   console.log(await describeUpdateCheck({ currentVersion: version }));
 }
 
+export const ACCEPTED_CLI_OPTIONS = MCP_OPTION_NAMES;
+
 export async function runMcpCli({ argumentsValue = process.argv.slice(2),
   previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), version = packageMetadata.version } = {}) {
   const options = { backend: 'gpu', memory: 192 };
@@ -1091,15 +1093,21 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
   const addonSet = resolveAddons({ folder: options.addons, names: allowedAddonNames, version });
   for (const { name, reason } of addonSet.skipped) console.error(`Crucible addon ${name} skipped: ${reason}`);
   options.addons = addonSet;
+  for (const flag of ['branches', 'relations', 'findings']) {
+    if (options[flag] !== undefined && !['on', 'off'].includes(options[flag])) {
+      throw new Error(`--${flag} must be on or off, got "${options[flag]}".`);
+    }
+  }
   if (!['cpu', 'gpu'].includes(options.backend) || !Number.isInteger(options.memory) || options.memory < 32 || options.memory > MAXIMUM_MEMORY_MIB) {
     throw new Error(`Backend must be cpu or gpu, and memory must be an integer from 32 to ${MAXIMUM_MEMORY_MIB} MiB.`);
   }
   // Checked here, not in the runtime factory: the SDK calls the factory only when the first client connects.
   options.jobs = resolveJobRoot(options.jobs);
+  const { createAgentRuntime, validateLaunchPaths } = await import('./agent-runtime.mjs');
+  validateLaunchPaths(options);
   setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
   // Not awaited: the check fills in while the client connects and never delays or fails the start.
   const updateCheck = startUpdateCheck({ currentVersion: version });
-  const { createAgentRuntime } = await import('./agent-runtime.mjs');
   const handle = serveStdio(() => createAgentMcpServer(createAgentRuntime({ ...options, previewUrl }), { version, branches: options.branches !== 'off', relations: options.relations !== 'off', findings: options.findings !== 'off', updateAvailable: updateCheck.current }), {
     transport: new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 2 * 1024 * 1024 }),
     onerror: error => console.error(`Crucible MCP error: ${error.message}`),
