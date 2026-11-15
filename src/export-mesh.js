@@ -1,6 +1,8 @@
 // OBJ (with MTL) and binary STL export of the same parts `exportGlb` takes, with world transforms applied.
 // Both formats carry triangles only: no lights, cameras, animation, skins, morph weights or textures.
 
+import { requireOneOf } from './export-checks.js';
+
 export const MAX_MESH_EXPORT_TRIANGLES = 1_000_000;
 const MAX_NAME_LENGTH = 64;
 const STL_HEADER_TEXT = 'Crucible binary STL';
@@ -177,6 +179,10 @@ function mtlBlock(name, material) {
  * Colors in the MTL are the linear base colors of the parts, with roughness and metallic as `Pr` and `Pm`
  * and the opacity of a mask, blend or add material as `d`.
  */
+function checkAttribute(part, name, expectedLength) {
+  requireOneOf('OBJ', `part ${part.name} geometry.${name} length`, part.geometry[name]?.length ?? 0, [0, expectedLength]);
+}
+
 export function exportObj(parts, options = {}) {
   checkParts(parts, 'OBJ');
   const mtlFilename = options.mtlFilename ?? 'model.mtl';
@@ -202,13 +208,15 @@ export function exportObj(parts, options = {}) {
     for (let vertex = 0; vertex < vertexCount; vertex++) {
       lines.push(`v ${formatNumber(world[vertex * 3])} ${formatNumber(world[vertex * 3 + 1])} ${formatNumber(world[vertex * 3 + 2])}`);
     }
-    const uvs = part.geometry.uvs?.length === vertexCount * 2 ? part.geometry.uvs : null;
+    checkAttribute(part, 'uvs', vertexCount * 2);
+    checkAttribute(part, 'normals', vertexCount * 3);
+    const uvs = part.geometry.uvs?.length ? part.geometry.uvs : null;
     if (uvs) {
       for (let vertex = 0; vertex < vertexCount; vertex++) {
         lines.push(`vt ${formatNumber(uvs[vertex * 2])} ${formatNumber(uvs[vertex * 2 + 1])}`);
       }
     }
-    const normals = part.geometry.normals?.length === vertexCount * 3 ? worldNormals(part.geometry.normals, matrix) : null;
+    const normals = part.geometry.normals?.length ? worldNormals(part.geometry.normals, matrix) : null;
     if (normals) {
       for (let vertex = 0; vertex < vertexCount; vertex++) {
         lines.push(`vn ${formatNumber(normals[vertex * 3])} ${formatNumber(normals[vertex * 3 + 1])} ${formatNumber(normals[vertex * 3 + 2])}`);

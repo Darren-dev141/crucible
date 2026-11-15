@@ -198,3 +198,12 @@ test('the triangle limit is enforced before any output is built', () => {
   assert.throws(() => exportStl([{ geometry }]), /limited to 1000000 triangles/);
   assert.throws(() => exportObj([{ geometry }]), /limited to 1000000 triangles/);
 });
+
+test('OBJ rejects uvs and normals whose length does not match the vertex count', () => {
+  const [part] = sceneParts();
+  const vertexCount = part.geometry.positions.length / 3;
+  const shortUvs = new Float32Array(vertexCount * 2 - 2);
+  assert.throws(() => exportObj([{ ...part, geometry: { ...part.geometry, uvs: shortUvs } }]), /geometry\.uvs/);
+  const shortNormals = new Float32Array(vertexCount * 3 - 3);
+  assert.throws(() => exportObj([{ ...part, geometry: { ...part.geometry, normals: shortNormals } }]), /geometry\.normals/);
+});
