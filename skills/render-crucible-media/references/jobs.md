@@ -9,7 +9,7 @@ This is the [Render job settings](#render-job-settings) reference. Read the open
 
 Every recipe is the arguments of `scene_render_submit`. `sessionId` may be left out. `expectedRevision` is the
 revision `scene_inspect` returned. Required in `settings`: `kind` (`image`, `stills` or `video`), `width`, `height`
-(64 to 1920 each and at most 1920x1080 pixels together, so 1080x1920 fits and 1920x1920 fails; video sizes must be
+(image jobs 64 to 3840 each and at most 3840x2160 pixels together, so 2880x1620 fits; stills and video 64 to 1920 each and at most 1920x1080, so 1080x1920 fits and 1920x1920 fails; video sizes must be
 even). Defaults: 24 fps and one second.
 `tests/render-skill-examples.test.js` checks that these blocks stay valid JSON with known settings fields.
 

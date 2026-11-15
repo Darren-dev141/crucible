@@ -134,9 +134,15 @@ export const BAKE_PRESET_PATH_WORK = 5_000_000;
  * the scene unchanged.
  */
 export const BAKE_EXPLICIT_PATH_WORK_LIMIT = 24_000_000;
-/** Render job output: each side up to 1920 and never more pixels than 1920x1080 (portrait 1080x1920 fits). */
-export const MAXIMUM_JOB_SIDE = 1920;
-export const MAXIMUM_JOB_PIXELS = 1920 * 1080;
+/**
+ * Render job output. An `image` job takes each side up to 3840 and never more pixels than 3840x2160 (so 2880x1620
+ * fits); `stills` and `video` jobs keep each side up to 1920 and at most 1920x1080 pixels (portrait 1080x1920 fits).
+ * A frame that the memory budget cannot hold at the size asked for is refused, naming the --memory it needs.
+ */
+export const MAXIMUM_JOB_SIDE = 3840;
+export const MAXIMUM_JOB_PIXELS = 3840 * 2160;
+export const MAXIMUM_SEQUENCE_JOB_SIDE = 1920;
+export const MAXIMUM_SEQUENCE_JOB_PIXELS = 1920 * 1080;
 /**
  * Largest --memory value in MiB the MCP server accepts. Measured: a 1920x1080 frame needs about 175 MiB of targets
  * (planRenderSize estimate, 4 samples), Node RSS peaks under 180 MiB, so 384 leaves about 200 MiB for scene textures and geometry.

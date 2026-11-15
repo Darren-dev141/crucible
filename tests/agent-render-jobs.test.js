@@ -5,7 +5,8 @@ import { watch, writeFileSync } from 'node:fs';
 import { tmpdir, constants, setPriority } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
-import { createAgentRenderJobs, jobDeadlineMs } from '../scripts/agent-render-jobs.mjs';
+import { createAgentRenderJobs, jobDeadlineMs, frameByteLimitFor, oversizeFrameBudgetError } from '../scripts/agent-render-jobs.mjs';
+import { estimateFrameBytes } from '../src/budget.js';
 
 setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
 // close() waits this long for an aborted job to settle. It is a liveness bound, not a speed target: under load the
@@ -218,6 +219,33 @@ test('1920x1080 and 1080x1920 jobs are admitted', async context => {
   await controller.close();
 });
 
+test('an image job takes up to 3840x2160 and the frame byte limit grows with its pixels', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage });
+  for (const [width, height] of [[2880, 1620], [3840, 2160], [2160, 3840]]) {
+    const { jobId } = await controller.submit({ ...request(), settings: { kind: 'image', width, height } });
+    assert.equal((await terminal(controller, jobId)).settings.height, height);
+  }
+  await assert.rejects(controller.submit({ ...request(), settings: { kind: 'video', width: 1920, height: 1081 } }), /1920x1080 \(only an image job goes up to 3840x2160\)/);
+  assert.equal(frameByteLimitFor(1920, 1080, 12), 12);
+  assert.equal(frameByteLimitFor(2880, 1620, 12), 36);
+  assert.equal(frameByteLimitFor(3840, 2160, 12), 48);
+  await controller.close();
+});
+
+test('a frame over 1920x1080 that the memory budget shrinks is refused with the memory it needs', () => {
+  const plan = { samples: 4, hdr: false, depth: false, estimatedBytes: estimateFrameBytes(1920, 1080, 4) + 20 * 1024 ** 2 };
+  const requested = { width: 2880, height: 1620 };
+  const rendered = { width: 1920, height: 1080 };
+  const fits = oversizeFrameBudgetError({ requested, rendered, plan, memoryMiB: 192, maximumMemoryMiB: 384 });
+  assert.match(fits.message, /2880x1620 was reduced to 1920x1080 by --memory 192.*needs about \d+ MiB\. Fix: start the server with --memory \d+ or more/);
+  const needed = Number(/--memory (\d+) or more/.exec(fits.message)[1]);
+  assert.ok(needed > 192 && needed <= 384, String(needed));
+  assert.match(oversizeFrameBudgetError({ requested: { width: 3840, height: 2160 }, rendered, plan, memoryMiB: 192, maximumMemoryMiB: 256 }).message, /over the 256 MiB ceiling.*smaller size/);
+  assert.equal(oversizeFrameBudgetError({ requested, rendered: requested, plan, memoryMiB: 384, maximumMemoryMiB: 384 }), undefined);
+  assert.equal(oversizeFrameBudgetError({ requested: { width: 1920, height: 1080 }, rendered: { width: 960, height: 540 }, plan, memoryMiB: 384, maximumMemoryMiB: 384 }), undefined);
+});
+
 test('validation enforces range, geometry-independent storage limits and one pending frame', async context => {
   const root = await temporary(context);
   let calls = 0;
@@ -228,9 +256,12 @@ test('validation enforces range, geometry-independent storage limits and one pen
   } });
   for (const settings of [
     { kind: 'video', width: 65, height: 64 },
-    { kind: 'image', width: 1921, height: 64 },
-    { kind: 'image', width: 1920, height: 1081 },
-    { kind: 'image', width: 1920, height: 1920 },
+    { kind: 'image', width: 3841, height: 64 },
+    { kind: 'image', width: 3840, height: 2161 },
+    { kind: 'image', width: 3840, height: 3840 },
+    { kind: 'stills', width: 1921, height: 64 },
+    { kind: 'stills', width: 1920, height: 1081 },
+    { kind: 'video', width: 2880, height: 1620 },
     { kind: 'video', width: 64, height: 64, fps: 61 },
     { kind: 'video', width: 64, height: 64, duration: 61 },
   ]) await assert.rejects(controller.submit({ ...request(), settings }));

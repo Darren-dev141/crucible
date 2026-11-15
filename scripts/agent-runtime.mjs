@@ -34,7 +34,7 @@ import { TEXTURE_SEQUENCE_CAPABILITIES } from '../src/texture-sequence-limits.js
 import { writeWebBuild } from './web-export.mjs';
 import { gameAssetIds } from '../src/game-assets.js';
 import { resolveJobRoot } from './agent-job-root.mjs';
-import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings } from './agent-render-jobs.mjs';
+import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError } from './agent-render-jobs.mjs';
 import { RENDER_QUALITY_NOTE, applyQuality, tierReport } from './agent-render-quality.mjs';
 import { RENDER_BUDGET_NOTE, chooseBudgetSettings, parseBudget } from './agent-render-budget.mjs';
 import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
@@ -660,6 +660,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       const width = settings.kind === 'video' ? Math.floor(created.render.width / 2) * 2 : created.render.width;
       const height = settings.kind === 'video' ? Math.floor(created.render.height / 2) * 2 : created.render.height;
       if (width < 64 || height < 64) throw new Error('Render budget reduced the job below its minimum output size.');
+      const oversizeError = oversizeFrameBudgetError({ requested: { width: settings.width, height: settings.height }, rendered: { width, height },
+        plan: created.render, memoryMiB: memory, maximumMemoryMiB: MAXIMUM_MEMORY_MIB });
+      if (oversizeError) throw oversizeError;
       await jobPage.setViewportSize({ width, height });
       session = await jobPage.context().newCDPSession(jobPage);
       const region = settings.region;
@@ -669,6 +672,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       if (region && (region.x + region.width > width || region.y + region.height > height)) {
         throw new Error(`The region lies outside the rendered frame, which the memory budget reduced to ${width}x${height}.`);
       }
+      const frameByteLimit = frameByteLimitFor(settings.width, settings.height, MAXIMUM_JOB_FRAME_BYTES);
       const outputWidth = region?.width ?? width;
       const outputHeight = region?.height ?? height;
       const format = settings.format ?? 'png';
@@ -785,7 +789,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           }
           if (traced.report.nativeSession) (metrics.nativeSessionRoutes ??= []).push(traced.report.nativeSession.path);
           const tracedBytes = Buffer.from(traced.data, 'base64');
-          if (tracedBytes.length > MAXIMUM_JOB_FRAME_BYTES) throw new Error('Path traced frame exceeded 12 MiB.');
+          if (tracedBytes.length > frameByteLimit) throw new Error(`Path traced frame exceeded ${frameByteLimit / 1024 ** 2} MiB.`);
           if (encoder) {
             await encoder.writeFrame(tracedBytes);
           } else {
@@ -828,7 +832,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             ...(settings.kind === 'video' ? { quality: 95 } : { optimizeForSpeed: true }) });
           const captureBytes = Buffer.from(captured.data, 'base64');
           metrics.captureSeconds += (performance.now() - captureStarted) / 1000;
-          if (captureBytes.length > MAXIMUM_JOB_FRAME_BYTES) throw new Error('Captured job frame exceeded 12 MiB.');
+          if (captureBytes.length > frameByteLimit) throw new Error(`Captured job frame exceeded ${frameByteLimit / 1024 ** 2} MiB.`);
           signal.throwIfAborted();
           return captureBytes;
         }
@@ -849,7 +853,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           const encodedBytes = encodeRenderOutput({ format, pixels, width: read.width, height: read.height, pass,
             hasAlpha: settings.transparent === true, depthRange: RENDER_PASS_DEPTH_RANGE });
           metrics.captureSeconds += (performance.now() - captureStarted) / 1000;
-          if (encodedBytes.length > MAXIMUM_JOB_FRAME_BYTES * HIGH_PRECISION_FRAME_FACTOR) throw new Error('Rendered frame exceeded the high-precision size limit.');
+          if (encodedBytes.length > frameByteLimit * HIGH_PRECISION_FRAME_FACTOR) throw new Error('Rendered frame exceeded the high-precision size limit.');
           signal.throwIfAborted();
           return encodedBytes;
         }
@@ -881,7 +885,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             }
             const encodedBytes = encodeMultilayerExr({ width: beautyRead.width, height: beautyRead.height, beauty: beautyRead.pixels, passes: passPixels, hasAlpha: settings.transparent === true, depthRange: RENDER_PASS_DEPTH_RANGE });
             metrics.captureSeconds += (performance.now() - captureStarted) / 1000;
-            if (encodedBytes.length > MAXIMUM_JOB_FRAME_BYTES * HIGH_PRECISION_FRAME_FACTOR) throw new Error('Rendered frame exceeded the high-precision size limit.');
+            if (encodedBytes.length > frameByteLimit * HIGH_PRECISION_FRAME_FACTOR) throw new Error('Rendered frame exceeded the high-precision size limit.');
             await writeArtifact(`${stem}.exr`, encodedBytes);
           } else {
           await writeArtifact(`${stem}.${artifactExtension}`, bytes);

@@ -15,7 +15,7 @@ before you promise a size or a sound track.
 
 ## Job limits
 
-- Width and height 64 to 1920 each, within the memory budget. A job that does not fit is reduced; the result reports
+- Width and height 64 to 1920 each (an image job up to 3840, at most 3840x2160), within the memory budget. A video or stills job that does not fit is reduced, and an image job larger than 1920x1080 is refused with the --memory it needs; the result reports
   the actual dimensions, so say them.
 - Video: at most 60 s and 900 frames (60 s needs 15 fps or less), even dimensions, shots up to 64 and 60 s total.
 - Time allowed: 60 s plus 2 s per frame (more above 1024x576), at most 30 minutes. A path traced still has its own

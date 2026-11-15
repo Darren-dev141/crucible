@@ -31,7 +31,7 @@ For object images, `--assembly 1` explodes the model. The default value `0` asse
 
 Each option requires a value. Dimensions range from 64 to 4096 pixels.
 Memory ranges from 32 to 1024 MiB. Duration ranges from 0.1 to 120 seconds.
-MCP render jobs (`scene_render_submit`) take up to 1920x1080 (each side up to 1920, at most that many pixels) and `--memory` up to 384 MiB. A 1920x1080 frame needs about 175 MiB of targets, so use `--memory 256` for it. A job gets 60 s plus 2 s per frame (more for frames above 1024x576), at most 30 minutes; the video encoder waits 30 s to drain and to finish.
+MCP render jobs (`scene_render_submit`) take up to 1920x1080 (each side up to 1920, at most that many pixels), and an image job up to 3840x2160 (measured: 2880x1620 of a plain scene needs `--memory 364`, under the 384 ceiling) and `--memory` up to 384 MiB. A 1920x1080 frame needs about 175 MiB of targets, so use `--memory 256` for it. A job gets 60 s plus 2 s per frame (more for frames above 1024x576), at most 30 minutes; the video encoder waits 30 s to drain and to finish.
 
 The video encoder can use `--encoder cpu` or `--encoder gpu` independently of the renderer backend.
 The hardware encoder requires NVENC. A failed encoder stops the export and reports its error.
