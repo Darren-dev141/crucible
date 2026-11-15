@@ -323,3 +323,55 @@ test('netcode over a WebSocket pair syncs a client to a host', () => {
   assert.ok(distance(server.netcode.getEntityState('p').position, client.netcode.getEntityState('p').position) < 0.3);
   assert.ok(server.netcode.getEntityState('p').position[0] > 5);
 });
+
+// ----- Restarted peers (#1262) -----
+
+function runFrames(network, peers, frames) {
+  for (let frame = 0; frame < frames; frame += 1) {
+    network.advance(FRAME_MILLISECONDS);
+    for (const peer of peers) peer.runtime.step(FRAME_MILLISECONDS);
+  }
+}
+
+test('a client restarted on the same peer id gets a full snapshot and its inputs from sequence 1 apply', () => {
+  const network = createLoopbackNetwork({ latencyMilliseconds: 40 });
+  const server = createPeer({ role: 'authority', authority: 'server', transport: network.createTransport('server') });
+  server.netcode.addEntity('a', { owner: 'client-a', tag: 'player' });
+  const clientTransport = network.createTransport('client-a');
+  const moveRight = () => ({ moveX: 1, moveZ: 0 });
+  const firstClient = createPeer({ role: 'client', serverId: 'server', transport: clientTransport, localEntityId: 'a', readInput: moveRight });
+  runFrames(network, [server, firstClient], 100);
+  assert.ok(firstClient.netcode.stats.snapshotsReceived > 0);
+  firstClient.netcode.dispose();
+
+  const secondClient = createPeer({ role: 'client', serverId: 'server', transport: clientTransport, localEntityId: 'a', readInput: moveRight });
+  const serverXBefore = server.netcode.getEntityState('a').position[0];
+  runFrames(network, [server, secondClient], 100);
+  assert.ok(secondClient.netcode.stats.snapshotsReceived > 20, `snapshots received ${secondClient.netcode.stats.snapshotsReceived}`);
+  assert.ok(secondClient.netcode.stats.missingBaseSnapshots < 5, `missing bases ${secondClient.netcode.stats.missingBaseSnapshots}`);
+  assert.ok(secondClient.netcode.tick > 90);
+  assert.ok(secondClient.netcode.entityIds.includes('a'));
+  const serverXAfter = server.netcode.getEntityState('a').position[0];
+  assert.ok(serverXAfter - serverXBefore > 0.5, `the restarted client's inputs moved the entity by ${serverXAfter - serverXBefore}`);
+});
+
+test('a restarted authority on the same peer id resyncs its clients without a reload', () => {
+  const network = createLoopbackNetwork({ latencyMilliseconds: 40 });
+  const serverTransport = network.createTransport('server');
+  const firstServer = createPeer({ role: 'authority', authority: 'server', transport: serverTransport });
+  firstServer.netcode.addEntity('a', { owner: 'client-a', tag: 'player' });
+  const moveRight = () => ({ moveX: 1, moveZ: 0 });
+  const client = createPeer({ role: 'client', serverId: 'server', transport: network.createTransport('client-a'), localEntityId: 'a', readInput: moveRight });
+  runFrames(network, [firstServer, client], 300);
+  assert.ok(client.netcode.tick > 250);
+  firstServer.netcode.dispose();
+
+  const secondServer = createPeer({ role: 'authority', authority: 'server', transport: serverTransport });
+  secondServer.netcode.addEntity('a', { owner: 'client-a', tag: 'player' });
+  runFrames(network, [secondServer, client], 100);
+  assert.ok(secondServer.netcode.tick <= 100);
+  assert.ok(Math.abs(client.netcode.tick - secondServer.netcode.tick) < 10, `client tick ${client.netcode.tick}, server tick ${secondServer.netcode.tick}`);
+  const serverX = secondServer.netcode.getEntityState('a').position[0];
+  const clientX = client.netcode.getEntityState('a').position[0];
+  assert.ok(Math.abs(serverX - clientX) < 1, `client x ${clientX} vs server x ${serverX}`);
+});

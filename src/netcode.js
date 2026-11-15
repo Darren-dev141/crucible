@@ -374,20 +374,39 @@ function validateNetcodeOptions(options) {
 
 // ----- The authority side -----
 
+const SESSION_ID_LENGTH_LIMIT = 64;
+
+// A random id for one run of a client or authority. A restart on the same peer id gets a new one, so the other side
+// can tell a new run from a late message of the old one.
+function createSessionId() {
+  // Fixed width, so the byte count of a run does not depend on the draw.
+  const randomPart = Math.floor(Math.random() * 0xffffffff).toString(36).padStart(7, '0');
+  return `${Date.now().toString(36)}-${randomPart}`;
+}
+
 function createAuthority(settings, stats) {
   const { transport, steps } = settings;
   const entities = new Map(); // id -> { owner, tag, state }
   const peers = new Map(); // peer id -> { queue, lastQueuedSequence, lastProcessedSequence, acknowledgedTick }
   const history = new Map(); // tick -> Map(id -> quantised entity)
+  const sessionId = createSessionId();
   let tick = 0;
 
   function peerRecord(peerId) {
     let record = peers.get(peerId);
     if (record) return record;
     if (peers.size >= NETCODE_LIMITS.maximumPeers) return null;
-    record = { queue: [], lastQueuedSequence: 0, lastProcessedSequence: 0, acknowledgedTick: null };
+    record = { queue: [], lastQueuedSequence: 0, lastProcessedSequence: 0, acknowledgedTick: null, session: null };
     peers.set(peerId, record);
     return record;
+  }
+
+  // A client that restarted on the same peer id starts over at sequence 1 with no snapshots.
+  function resetPeerRecord(record) {
+    record.queue.length = 0;
+    record.lastQueuedSequence = 0;
+    record.lastProcessedSequence = 0;
+    record.acknowledgedTick = null;
   }
 
   function receiveMessage(peerId, message) {
@@ -397,7 +416,12 @@ function createAuthority(settings, stats) {
       stats.rejectedMessages += 1;
       return;
     }
-    if (Number.isInteger(message.acknowledgedTick) && message.acknowledgedTick >= (record.acknowledgedTick ?? -1)) {
+    if (typeof message.session === 'string' && message.session.length <= SESSION_ID_LENGTH_LIMIT) {
+      if (record.session !== null && record.session !== message.session) resetPeerRecord(record);
+      record.session = message.session;
+    }
+    // An ack beyond this run's tick belongs to an earlier run of the authority and cannot name a base it has.
+    if (Number.isInteger(message.acknowledgedTick) && message.acknowledgedTick <= tick && message.acknowledgedTick >= (record.acknowledgedTick ?? -1)) {
       record.acknowledgedTick = message.acknowledgedTick;
     }
     for (const entry of inputs) {
@@ -468,6 +492,7 @@ function createAuthority(settings, stats) {
     const removed = baseEntities ? [...baseEntities.keys()].filter(id => !snapshot.has(id)) : [];
     return {
       type: 'snapshot',
+      session: sessionId,
       tick,
       base,
       lastProcessedInput: record.lastProcessedSequence,
@@ -541,6 +566,8 @@ function createClient(settings, stats) {
   const samples = new Map(); // id -> [{ time, state }]
   const pendingInputs = []; // { sequence, input }, not yet confirmed by a snapshot
   let stepSeconds = null;
+  const sessionId = createSessionId();
+  let authoritySession = null;
   let latestTick = -1;
   let inputSequence = 0;
   let predicted = null;
@@ -561,6 +588,18 @@ function createClient(settings, stats) {
     }
   }
 
+  // The authority restarted on the same peer id: its ticks start over, so everything held from the old run is dropped
+  // and the next snapshot is asked for in full.
+  function resetForNewAuthority() {
+    latestTick = -1;
+    receivedStates.clear();
+    samples.clear();
+    pendingInputs.length = 0;
+    predicted = null;
+    renderTime = null;
+    stats.authorityRestarts += 1;
+  }
+
   function readSnapshot(message) {
     if (!isPlainObject(message) || message.type !== 'snapshot' || !Number.isSafeInteger(message.tick) || message.tick < 0) return null;
     if (message.base !== null && !Number.isSafeInteger(message.base)) return null;
@@ -576,6 +615,10 @@ function createClient(settings, stats) {
     if (!message) {
       stats.rejectedMessages += 1;
       return;
+    }
+    if (typeof message.session === 'string' && message.session.length <= SESSION_ID_LENGTH_LIMIT) {
+      if (authoritySession !== null && authoritySession !== message.session) resetForNewAuthority();
+      authoritySession = message.session;
     }
     if (message.tick <= latestTick) {
       stats.staleSnapshots += 1;
@@ -634,6 +677,7 @@ function createClient(settings, stats) {
     }
     transport.send(settings.serverId, {
       type: 'input',
+      session: sessionId,
       acknowledgedTick: latestTick >= 0 ? latestTick : null,
       inputs: pendingInputs.slice(-settings.inputRedundancy).map(({ sequence, input: pending }) => ({ sequence, input: pending })),
     });
@@ -686,6 +730,7 @@ export function createNetcode(options) {
     snapshotsReceived: 0,
     staleSnapshots: 0,
     missingBaseSnapshots: 0,
+    authorityRestarts: 0,
     reconciliations: 0,
     lastCorrection: 0,
     maximumCorrection: 0,

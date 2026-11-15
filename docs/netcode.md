@@ -41,6 +41,8 @@ Each fixed step the client samples `readInput`, applies it to its predicted enti
 
 Every `snapshotEveryTicks` fixed steps (default 2) the authority builds one snapshot of all entities, quantised to integers (`positionStep` 0.01, `rotationStep` 0.001, `velocityStep` 0.01, `variableStep` 0.01) and sends each peer a delta against the last snapshot that peer acknowledged. A peer that has acknowledged nothing, or whose base is too old, gets a full snapshot. A lost snapshot is repaired by the next one, since the delta base only moves forward on acknowledgement. Stale and out-of-order snapshots are dropped.
 
+A restart is recognised by a run id that every input and snapshot carries. A client that restarts on the same peer id gets a full snapshot, and its inputs count from sequence 1 again. When the authority restarts on the same peer id, a client drops its old snapshots, samples and pending inputs, resyncs from a full snapshot and counts it in `authorityRestarts`.
+
 ## Prediction, reconciliation and interpolation
 
 When a snapshot arrives the client takes the authoritative state of its entity, drops the inputs the authority has already applied (`lastProcessedInput`) and replays the rest through `simulate`. If the prediction was right the result does not move; if not, the entity is corrected in one step (`stats.lastCorrection`, `stats.maximumCorrection`). Smooth a big correction in your drawing code if the look needs it.
@@ -76,7 +78,7 @@ A transport is a plain object `{ id, peers(), send(peerId, message), receive(cal
 
 `NETCODE_LIMITS` holds the hard bounds: 256 entities, 32 peers, 16 variables per entity, names up to 64 characters, 8 inputs per message, 64 queued inputs per peer, 64 snapshots of history. Network input is untrusted: a bad message is counted in `stats.rejectedMessages` and ignored, never thrown. Option and call errors say what to pass.
 
-`stats` reports `snapshotsSent`, `fullSnapshotsSent`, `bytesSent`, `inputsProcessed`, `snapshotsReceived`, `staleSnapshots`, `missingBaseSnapshots`, `reconciliations`, `lastCorrection`, `maximumCorrection` and `rejectedMessages`.
+`stats` reports `snapshotsSent`, `fullSnapshotsSent`, `bytesSent`, `inputsProcessed`, `snapshotsReceived`, `staleSnapshots`, `missingBaseSnapshots`, `authorityRestarts`, `reconciliations`, `lastCorrection`, `maximumCorrection` and `rejectedMessages`.
 
 ## Sample game and relay
 
