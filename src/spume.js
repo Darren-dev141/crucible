@@ -215,6 +215,8 @@ function perpendicularAxes(direction) {
  */
 export function buildSprayGeometry(cache, frameIndex, { radius = 0.014, shutter = 1 / 60, kinds = ['spray', 'foam'], maxPoints = 12000 } = {}) {
   if (!(shutter >= 0 && shutter <= 1)) throw new RangeError('Spray shutter must be between 0 and 1 second.');
+  if (!Number.isInteger(maxPoints) || maxPoints < 1) throw new RangeError(`Spray maxPoints must be a whole number of at least 1, such as 12000; got ${maxPoints}.`);
+  if (!Number.isFinite(radius) || radius <= 0) throw new RangeError(`Spray radius must be a positive number of metres, such as 0.014; got ${radius}.`);
   const spray = cache.spray;
   if (!spray) return null;
   const [first, count] = spray.index[frameIndex];

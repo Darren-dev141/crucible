@@ -145,3 +145,13 @@ test('whitewater becomes octahedra filtered by kind and capped evenly', async ()
   assert.equal(capped.positions.length / 18, 1);
   assert.throws(() => buildSprayGeometry(cache, 1, { kinds: ['mist'] }), /Unknown spray kind/);
 });
+
+test('spray options that would build no or broken droplets are refused by name', async () => {
+  const cache = await loadSpumeCache(syntheticCache());
+  for (const maxPoints of [0, -1, 1.5, Number.NaN]) {
+    assert.throws(() => buildSprayGeometry(cache, 1, { maxPoints }), /maxPoints/, `maxPoints ${maxPoints}`);
+  }
+  for (const radius of [0, -0.1, Number.NaN, Infinity]) {
+    assert.throws(() => buildSprayGeometry(cache, 1, { radius }), /radius/, `radius ${radius}`);
+  }
+});
