@@ -91,6 +91,18 @@ const danglingCases = [
   ['accessor bufferView out of range', document => { document.accessors[0].bufferView = 9; }, /accessors\[0\]\.bufferView.*9/s],
   ['scene nodes not an array', document => { document.scenes[0].nodes = 5; }, /scenes\[0\]\.nodes.*array/],
   ['node null', document => { document.nodes = [null]; }, /nodes\[0\].*object/],
+  ['material null', document => { document.materials = [null]; }, /materials\[0\].*object/],
+  ['bufferView null', document => { document.bufferViews = [null]; }, /bufferViews\[0\].*object/],
+  ['image null', document => { document.images = [{ uri: 'a.png' }, null]; }, /images\[1\].*object/],
+  ['texture null', document => { document.textures = [null]; }, /textures\[0\].*object/],
+  ['accessors not an array', document => { document.accessors = {}; }, /accessors.*array/],
+  ['meshes not an array', document => { document.meshes = 5; }, /meshes.*array/],
+  ['nodes not an array', document => { document.nodes = 'x'; }, /nodes.*array/],
+  ['skin null', document => { document.skins = [null]; }, /skins\[0\].*object/],
+  ['animation null', document => { document.animations = [null]; }, /animations\[0\].*object/],
+  ['buffer null', document => { document.buffers = [null]; }, /buffers\[0\].*object/],
+  ['buffers not an array', document => { document.buffers = 5; }, /buffers.*array/],
+  ['materials not an array', document => { document.materials = 5; }, /materials.*array/],
   ['accessor bufferView null', document => { document.accessors[0].bufferView = null; }, /accessors\[0\]\.bufferView/],
 ];
 for (const [name, change, expected] of danglingCases) {
@@ -165,3 +177,15 @@ test('semverSatisfies ignores prerelease and build metadata of the running versi
   assert.equal(semverSatisfies('0.21.0-rc.1+abc', '<0.21.0'), false);
   assert.equal(semverSatisfies('not-a-version', '>=0.19.0'), null);
 });
+
+const stillLoadingCases = [
+  ['a null materials array', document => { document.materials = null; delete document.meshes[0].primitives[0].material; }],
+  ['a null entry in samplers', document => { document.samplers = [null]; }],
+  ['a non-object entry in cameras', document => { document.cameras = [5]; }],
+];
+for (const [name, change] of stillLoadingCases) {
+  test(`${name} still loads as before`, async () => {
+    const parsed = await parseGltf(triangleJson(change));
+    assert.ok(parsed);
+  });
+}

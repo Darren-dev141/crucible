@@ -7,12 +7,11 @@ function requireIndex(value, listName, list, fieldPath) {
 }
 
 function requireObject(value, fieldPath) {
-  if (!value || typeof value !== 'object') throw new Error(`Invalid glTF ${fieldPath}: expected an object.`);
+  if (!value || typeof value !== 'object') throw new Error(`Invalid glTF ${fieldPath}: expected an object. Fix: remove the entry or fix the exporter.`);
 }
 
 function validateMeshReferences(document) {
   (document.meshes ?? []).forEach((mesh, meshIndex) => {
-    requireObject(mesh, `meshes[${meshIndex}]`);
     if (!Array.isArray(mesh.primitives)) throw new Error(`Invalid glTF meshes[${meshIndex}].primitives: expected an array.`);
     mesh.primitives.forEach((primitive, primitiveIndex) => {
       const path = `meshes[${meshIndex}].primitives[${primitiveIndex}]`;
@@ -24,7 +23,6 @@ function validateMeshReferences(document) {
 
 function validateAccessorReferences(document) {
   (document.accessors ?? []).forEach((accessor, accessorIndex) => {
-    requireObject(accessor, `accessors[${accessorIndex}]`);
     if (accessor.bufferView !== undefined) requireIndex(accessor.bufferView, 'bufferViews', document.bufferViews, `accessors[${accessorIndex}].bufferView`);
   });
 }
@@ -38,15 +36,22 @@ function validateSceneReferences(document) {
   });
 }
 
-function validateNodeObjects(document) {
-  (document.nodes ?? []).forEach((node, nodeIndex) => requireObject(node, `nodes[${nodeIndex}]`));
+const ENTRY_ARRAYS = ['nodes', 'meshes', 'accessors', 'bufferViews', 'buffers', 'materials', 'textures', 'images', 'skins', 'animations'];
+
+function validateEntryObjects(document) {
+  for (const arrayName of ENTRY_ARRAYS) {
+    const entries = document[arrayName];
+    if (entries === undefined || entries === null) continue;
+    if (!Array.isArray(entries)) throw new Error(`Invalid glTF ${arrayName}: expected an array of objects. Fix: remove the field or fix the exporter.`);
+    entries.forEach((entry, entryIndex) => requireObject(entry, `${arrayName}[${entryIndex}]`));
+  }
 }
 
 /** Throws an error naming the field for each dangling reference the loader would otherwise trip over. */
 export function validateDocumentReferences(document) {
   if (!document || typeof document !== 'object' || Array.isArray(document)) throw new Error('glTF JSON must be an object. Fix: pass a glTF 2.0 document.');
+  validateEntryObjects(document);
   validateMeshReferences(document);
   validateAccessorReferences(document);
-  validateNodeObjects(document);
   validateSceneReferences(document);
 }
