@@ -4,6 +4,7 @@ import { createSceneGraph } from './scene-graph.js';
 import { currentFormatName } from './legacy-names.js';
 import { invalidField, withFieldPrefix } from './field-error.js';
 import { applyProjection, validateCameraShift, CAMERA_LENS_FIELDS } from './camera.js';
+import { checkLocalVolumePartNames } from './local-volume-resolve.js';
 import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, agentEnvironmentMap, VOLUME_FOG_FIELDS } from './agent-look.js';
 import { postStepSupport } from './shader-registry.js';
 import { agentSceneModule, agentSceneModuleLoaded } from './agent-scene-modules.js';
@@ -985,6 +986,7 @@ function normalizeRecipe(input, limits) {
     throw invalidField('camera.fStop', recipe.camera.fStop, 'a camera without effects.depthOfField.blur above 0; set blur to 0 or remove fStop');
   }
   checkLightLinkNames(recipe);
+  if (recipe.environment.localVolumes) checkLocalVolumePartNames(recipe.environment.localVolumes, recipe.nodes.filter(node => node.geometry !== undefined).map(node => node.id));
   if (recipe.effects?.distortion || recipe.effects?.flash) agentSceneModule('postSteps').checkAirStepNodes(recipe);
   if (Object.hasOwn(recipe, 'motion')) {
     recipe.motion = recipe.motion === null || recipe.motion === undefined ? null : agentSceneModule('motion').normalizeAgentMotion(recipe.motion, recipe);

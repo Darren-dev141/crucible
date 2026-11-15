@@ -2,6 +2,7 @@
 // part becomes an oriented box: the part's local bounding box carried through its matrix, so a rotated room is still a tight box.
 // A volume that fits the closed mesh keeps the part: the CPU path tracer walks the mesh itself (path-tracer-volume.js,
 // prepareMeshVolume) and the rasterizer draws it into a depth buffer first (mesh-volume-pass.js).
+import { missingPartMessage } from './local-volume-resolve.js';
 import { findVolumeGrid } from './volume-grid.js';
 import { findVolumeGridSequence, volumeGridFrameIndex } from './volume-grid-sequence.js';
 
@@ -49,7 +50,6 @@ export function countOpenEdges(positions, indices, tolerance) {
   return countMeshEdgeProblems(positions, indices, tolerance).open;
 }
 
-const LISTED_PART_NAMES = 12;
 const boundsByGeometry = new WeakMap();
 
 function localBounds(geometry) {
@@ -122,9 +122,7 @@ function bindLocalVolumeGrids(volumes, label, time) {
 function findPart(parts, name, label) {
   const part = parts.find(candidate => candidate.name === name);
   if (part) return part;
-  const names = parts.map(candidate => candidate.name).filter(Boolean);
-  const listed = names.slice(0, LISTED_PART_NAMES).join(', ');
-  throw new RangeError(`${label}.part "${name}" names no part in the scene${listed ? `; parts: ${listed}${names.length > LISTED_PART_NAMES ? ', ...' : ''}` : ''}`);
+  throw new RangeError(missingPartMessage(label, name, parts.map(candidate => candidate.name)));
 }
 
 /**

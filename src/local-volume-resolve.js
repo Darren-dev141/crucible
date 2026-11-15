@@ -12,6 +12,8 @@ export const LOCAL_VOLUME_FIELDS = Object.freeze(['shape', 'part', 'fit', 'cente
 // The fields only a grid volume takes (#1045), and the steps its denser march may take (the shader's grid loop is bounded by the same number).
 export const LOCAL_VOLUME_GRID_FIELDS = Object.freeze(['grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy']);
 export const LOCAL_VOLUME_MAXIMUM_STEPS = 32;
+export const ONE_GRID_VOLUME_MESSAGE = 'At most one volume in a scene takes shape "grid" for now; merge the grids into one file';
+const LISTED_PART_NAMES = 12;
 
 function resolveLocalVolume(input, label, resolveGrid) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError(`${label} must be an object`);
@@ -64,5 +66,21 @@ function resolveLocalVolume(input, label, resolveGrid) {
 export function resolveLocalVolumesWith(resolveGrid, input, label = 'localVolumes') {
   if (!Array.isArray(input)) throw new TypeError(`${label} must be an array of volumes`);
   if (input.length > MAX_LOCAL_VOLUMES) throw new RangeError(`${label} holds at most ${MAX_LOCAL_VOLUMES} volumes, got ${input.length}`);
-  return input.map((volume, index) => resolveLocalVolume(volume, `${label}[${index}]`, resolveGrid));
+  const volumes = input.map((volume, index) => resolveLocalVolume(volume, `${label}[${index}]`, resolveGrid));
+  if (volumes.filter(volume => volume.shape === 'grid').length > 1) throw new RangeError(ONE_GRID_VOLUME_MESSAGE);
+  return volumes;
+}
+
+/** The message for a part name no part of the scene carries, listing the names that exist. */
+export function missingPartMessage(label, name, partNames) {
+  const names = partNames.filter(Boolean);
+  const listed = names.slice(0, LISTED_PART_NAMES).join(', ');
+  return `${label}.part "${name}" names no part in the scene${listed ? `; parts: ${listed}${names.length > LISTED_PART_NAMES ? ', ...' : ''}` : ''}`;
+}
+
+/** Throws when a mesh volume of the resolved list names a part the scene lacks. partNames are the IDs of the nodes that have geometry. */
+export function checkLocalVolumePartNames(volumes, partNames, label = 'environment.localVolumes') {
+  volumes.forEach((volume, index) => {
+    if (volume.shape === 'mesh' && !partNames.includes(volume.part)) throw new RangeError(missingPartMessage(`${label}[${index}]`, volume.part, partNames));
+  });
 }

@@ -47,7 +47,7 @@ const LOOK_RANGES = {
   light: { position: [-1e6, 1e6], direction: [-1e6, 1e6], color: [0, 1], intensity: [0, 1e5] },
   sun: { direction: [-1e6, 1e6], color: [0, 1000], intensity: [0, 100] },
   environment: {
-    skyTop: [0, 1], skyBottom: [0, 1], fogColor: [0, 1], fogDensity: [0, 10], volumeFogDensity: [0, 1000],
+    skyTop: [0, 1], skyBottom: [0, 1], fogColor: [0, 1], fogDensity: [0, 10], volumeFogDensity: [0, 10],
     ambientIntensity: [0, 100], fillIntensity: [0, 100], environmentIntensity: [0, 100], environmentRotation: [-100, 100],
     sunElevation: [-90, 90], sunRotation: [-360, 360], turbidity: [1, 10], groundAlbedo: [0, 1], aerialPerspective: [0, 4], ozone: [0, 10],
   },
