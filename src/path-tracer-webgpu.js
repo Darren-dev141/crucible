@@ -168,7 +168,7 @@ function createParameterTemplate(scene, camera, options, uploaded, emitterCount)
   const { sun } = scene.lights;
   const { environment } = scene;
   floats.set([...camera.eye, 0], 0);
-  floats.set([...camera.forward, 0], 4);
+  floats.set([...camera.forward, camera.clipStart ?? 0], 4);
   floats.set([...camera.right, 0], 8);
   floats.set([...camera.above, 0], 12);
   floats.set([...(sun?.direction ?? [0, 1, 0]), 0], 16);
