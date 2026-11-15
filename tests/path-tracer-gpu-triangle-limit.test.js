@@ -73,7 +73,7 @@ test('with the device bound the crowd flattens, skins and packs into tables that
   // The last vertex of the first avatar sits on the upper joint, which moved 0.5 along x.
   const lastVertex = (QUADS_ACROSS + 1) * (QUADS_UP + 1) - 1;
   assert.ok(Math.abs(scene.positions[lastVertex * 3] - (QUADS_ACROSS * 0.01 + 0.5)) < 1e-4);
-  const triangles = packTriangles(scene);
+  const triangles = packTriangles(scene, { secondUvSet: true });
   assert.equal(triangles.height, Math.ceil((CROWD_TRIANGLES * TRIANGLE_TEXELS) / DATA_TEXTURE_WIDTH));
   assert.ok(triangles.height <= 16384);
   assert.ok(packNodes(scene.bvh).height <= triangles.height);

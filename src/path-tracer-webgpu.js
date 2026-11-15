@@ -116,7 +116,7 @@ function atlasWords(atlas) {
   return new Uint32Array(atlas.data.buffer, atlas.data.byteOffset, Math.floor(atlas.data.byteLength / 4));
 }
 
-function uploadScene(device, scene, requestedLightSelection = 'uniform') {
+export function uploadScene(device, scene, requestedLightSelection = 'uniform') {
   const atlas = packAtlas(scene.materials);
   const lights = packLights(scene.lights);
   // With the light tree the node table follows the light table in the same buffer; treeBase is the vector index of its first node.
@@ -145,7 +145,7 @@ function uploadScene(device, scene, requestedLightSelection = 'uniform') {
   if (largeScene) device.pushErrorScope('out-of-memory');
   const buffers = [
     createStorageBuffer(device, packNodes(scene.bvh).data, 'bvh nodes'),
-    createStorageBuffer(device, packTriangles(scene).data, 'triangles'),
+    createStorageBuffer(device, packTriangles(scene, { secondUvSet: true }).data, 'triangles'),
     createStorageBuffer(device, materialsWithSubsurface, 'materials'),
     createStorageBuffer(device, lightsWithTree, 'lights'),
     createStorageBuffer(device, atlasWords(atlas), 'texture atlas'),
