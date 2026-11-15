@@ -46,7 +46,7 @@ export function packLocalVolumes(volumes, buffers) {
     if (packedShape === PACKED_SHAPE_MESH) buffers.meshParts.push({ part: volume.part, label: `environment.localVolumes[${index}]` });
     if (volume.shape !== 'grid') {
       buffers.grid[at + 1] = volume.shadowDetail ? 1 : 0;
-      buffers.grid[at + 2] = volume.castShadow === false ? 0 : 1;
+      buffers.grid[at + 2] = volume.castShadow === true ? 1 : 0;
     }
     if (volume.shape === 'grid') {
       if (buffers.gridVolume) throw new RangeError(ONE_GRID_VOLUME_MESSAGE);

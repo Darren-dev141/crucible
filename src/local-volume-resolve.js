@@ -46,7 +46,7 @@ function resolveLocalVolume(input, label, resolveGrid) {
     scatter: finiteRange(input.scatter ?? 0, 0, 1, `${label}.scatter`),
     lightsScene: resolveFlag(input.lightsScene, `${label}.lightsScene`),
     shadowDetail: resolveFlag(input.shadowDetail, `${label}.shadowDetail`),
-    castShadow: input.castShadow === undefined ? true : resolveFlag(input.castShadow, `${label}.castShadow`),
+    castShadow: resolveFlag(input.castShadow, `${label}.castShadow`),
     scatterOctaves: resolveScatterOctaves(input.scatterOctaves, `${label}.scatterOctaves`),
     blur: finiteRange(input.blur ?? 1, 0, 1, `${label}.blur`),
     noiseAmount: finiteRange(input.noiseAmount ?? 0, 0, 1, `${label}.noiseAmount`),

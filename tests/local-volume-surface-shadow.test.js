@@ -1,4 +1,4 @@
-// A local volume casts the key light's shadow on opaque surfaces (#1047): castShadow, on by default, dims the sun's direct light at a surface by the optical depth the volume
+// A local volume casts the key light's shadow on opaque surfaces (#1047): castShadow, off by default so the default frame does not change, dims the sun's direct light at a surface by the optical depth the volume
 // puts between it and the sun. The CPU path tracer does it exactly; the rasterizer's post pass scales the finished colour by a share (the raster test checks that).
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,10 +6,12 @@ import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes } from 
 import { createLocalVolumeSurfaceShadow } from '../src/path-tracer-volume.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 
-const SMOKE = { shape: 'box', center: [0, 2, 0], size: [4, 2, 4], density: 0.6, falloff: 0.3, absorption: [0.7, 0.8, 1], noiseAmount: 0.6, noiseScale: 2, steps: 16 };
+const SMOKE = { castShadow: true, shape: 'box', center: [0, 2, 0], size: [4, 2, 4], density: 0.6, falloff: 0.3, absorption: [0.7, 0.8, 1], noiseAmount: 0.6, noiseScale: 2, steps: 16 };
 const SUN_TOWARD = [0.6, 1, 0].map(component => component / Math.hypot(0.6, 1, 0));
 
-test('castShadow defaults to true and takes only true or false', () => {
+test('castShadow defaults to false and takes only true or false', () => {
+  const { castShadow: _castShadow, ...withoutFlag } = SMOKE;
+  assert.equal(resolveLocalVolumes([withoutFlag])[0].castShadow, false);
   assert.equal(resolveLocalVolumes([SMOKE])[0].castShadow, true);
   assert.equal(resolveLocalVolumes([{ ...SMOKE, castShadow: false }])[0].castShadow, false);
   for (const bad of ['no', 0, null]) {
@@ -19,8 +21,9 @@ test('castShadow defaults to true and takes only true or false', () => {
 
 test('the packed grid vector carries the flag in its third component for a box', () => {
   const buffers = createLocalVolumeBuffers();
-  packLocalVolumes(resolveLocalVolumes([SMOKE, { ...SMOKE, castShadow: false }]), buffers);
-  assert.deepEqual([buffers.grid[2], buffers.grid[6]], [1, 0]);
+  const { castShadow: _castShadow, ...withoutFlag } = SMOKE;
+  packLocalVolumes(resolveLocalVolumes([SMOKE, { ...SMOKE, castShadow: false }, withoutFlag]), buffers);
+  assert.deepEqual([buffers.grid[2], buffers.grid[6], buffers.grid[10]], [1, 0, 0]);
 });
 
 test('a point under the smoke is dimmed along the sun, a point the sun reaches past it is not, and castShadow false takes the volume out', () => {
@@ -62,6 +65,14 @@ function columnMean(values, column) {
   for (let row = 12; row < 20; row++) total += values[(row * SIZE + column) * 3 + 1];
   return total / 8;
 }
+
+test('a volume without the flag leaves the frame bit for bit as castShadow false draws it', async () => {
+  const { castShadow: _castShadow, ...withoutFlag } = SMOKE;
+  const byDefault = await floorFrom(withoutFlag);
+  const off = await floorFrom({ ...SMOKE, castShadow: false });
+  assert.deepEqual(Array.from(byDefault), Array.from(off));
+  assert.equal(createLocalVolumeSurfaceShadow(resolveLocalVolumes([withoutFlag])), null);
+});
 
 test('the floor under a noisy smoke box is darker than the open floor, and castShadow false leaves it as it was', async () => {
   const shadowed = await floorFrom(SMOKE);
