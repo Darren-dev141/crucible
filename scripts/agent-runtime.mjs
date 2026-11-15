@@ -101,7 +101,7 @@ const VENDOR_FILES = Object.freeze({
 });
 
 export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', browser: browserPath, memory = 192, assets: assetRoot, packs: packsRoot,
-  jobs: jobRoot, ffmpeg = 'ffmpeg', audio: audioRoot, openPage = openInDefaultBrowser, addons: addonSet = { addons: [], skipped: [] },
+  jobs: jobRoot, ffmpeg = 'ffmpeg', audio: audioRoot, gpuQueue, openPage = openInDefaultBrowser, addons: addonSet = { addons: [], skipped: [] },
   previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url) } = {}) {
   if (!['gpu', 'cpu'].includes(backend)) {
     throw new RangeError('backend must be gpu or cpu.');
@@ -130,6 +130,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   const audioLibrary = audioRoot === undefined ? undefined : createAudioLibrary(audioRoot);
   if (typeof ffmpeg !== 'string' || !ffmpeg || (ffmpeg !== 'ffmpeg' && (!isAbsolute(ffmpeg) || !existsSync(ffmpeg)))) {
     throw new TypeError('FFmpeg must be on PATH or configured with an existing absolute executable path.');
+  }
+  // One unit of GPU work (a look, a review, a bake, a render job) waits for the person's own GPU queue when --gpu-queue is set.
+  function gpuUnit(weight, work, options) {
+    return gpuQueue ? gpuQueue.run(weight, work, options) : work();
   }
   let phase = 'idle';
   let browserInstance;
@@ -189,7 +193,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (!jobRoot) throw new Error('Configure --jobs with an absolute output directory before submitting render jobs.');
     if (!jobsPromise && closing) throw new Error('The agent runtime is closing or closed.');
     // A failed creation is not kept: the next call tries again instead of repeating the first error until restart.
-    jobsPromise ??= createAgentRenderJobs({ root: jobRoot, run: runJob }).catch(error => {
+    jobsPromise ??= createAgentRenderJobs({ root: jobRoot, run: job => gpuUnit('heavy', () => runJob(job), { signal: job.signal }) }).catch(error => {
       jobsPromise = undefined;
       throw error;
     });
@@ -1008,7 +1012,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         await requirePreviewRenderer();
         await boot();
         const sessionId = randomUUID();
-        const result = await evaluate('create', { recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) }, page, recipe?.bake ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
+        const createInput = { recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) };
+        const result = recipe?.bake
+          ? await gpuUnit('heavy', () => evaluate('create', createInput, page, BAKE_EVALUATION_TIMEOUT_MS))
+          : await evaluate('create', createInput, page, EVALUATION_TIMEOUT_MS);
         registerCreatedScene(sessionId, result, Boolean(recipe?.bake));
         return result;
       });
@@ -1084,7 +1091,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         const motions = (input.operations ?? []).filter(operation => operation.type === 'set-motion').map(operation => operation.motion);
         const gameAssets = await gameAssetNeeds(input);
         const placedValue = gameAssets?.recipe ?? input.operations;
-        const applied = await invoke('apply', { ...input, ...(await motionSources(motions, placedValue)), ...(await placedAssetData(placedValue)), ...(gameAssets ? { assetNeeds: gameAssets.recipe } : {}) }, rebakes ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
+        const applyInput = { ...input, ...(await motionSources(motions, placedValue)), ...(await placedAssetData(placedValue)), ...(gameAssets ? { assetNeeds: gameAssets.recipe } : {}) };
+        const applied = rebakes
+          ? await gpuUnit('heavy', () => invoke('apply', applyInput, BAKE_EVALUATION_TIMEOUT_MS))
+          : await invoke('apply', applyInput, EVALUATION_TIMEOUT_MS);
         if (bakeAfter ?? hadBake) bakedSessionIds.add(input.sessionId);
         else bakedSessionIds.delete(input.sessionId);
         return applied;
@@ -1108,7 +1118,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         let stepHeight = height;
         for (let step = 0; ; step++) {
           await page.setViewportSize({ width: stepWidth, height: stepHeight });
-          result = await invoke('look', lookRequest);
+          result = await gpuUnit('light', () => invoke('look', lookRequest));
           if (Buffer.byteLength(result.data, 'base64') <= MAXIMUM_IMAGE_BYTES) break;
           if (step === LOOK_MAXIMUM_STEP_DOWNS) {
             throw new Error(`The PNG exceeds the 1 MiB image response budget even at ${stepWidth}x${stepHeight}. Simplify the scene's high-frequency textures or request a smaller preview.`);
@@ -1178,7 +1188,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       let settings;
       try { settings = normalizeReview(input); }
       catch (error) { return Promise.reject(error); }
-      return enqueue(async () => {
+      return enqueue(() => gpuUnit('light', async () => {
         await requirePreviewRenderer();
         requireSession(settings.sessionId);
         const snapshot = await invoke('snapshot', settings);
@@ -1305,7 +1315,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         }
         output.metadata.elapsedSeconds = (performance.now() - started) / 1000;
         return output;
-      });
+      }));
     },
     restore(input) {
       return enqueue(async () => {

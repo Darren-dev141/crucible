@@ -36,6 +36,8 @@ npx -y --package @codepawlhq/crucible crucible-mcp --backend gpu --memory 192
 | `--browser` | Path to a Chrome or Chromium executable | Use a browser other than the installed Google Chrome. |
 | `--assets` | Absolute path to a folder of GLB files | Lets the agent place those models. |
 | `--jobs` | Absolute path to a private folder | Turns on the render job tools for PNG, image sequences and MP4. |
+| `--gpu-queue` | Absolute path to a queue command, or a JSON array such as `["bash","/path/queue.sh"]` | Looks, reviews, bakes and render jobs wait for your own GPU queue before they use the card. Details in [the MCP guide](../mcp.md). |
+| `--gpu-queue-wait` | Seconds, 1 to 3600 | Longest wait for the queue. The default is 600. |
 | `--ffmpeg` | Absolute path to FFmpeg | Sets the encoder for MP4 jobs. FFmpeg on `PATH` works without it. |
 | `--audio` | Absolute path to a folder of sound files | Lets video jobs add sound. |
 

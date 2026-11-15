@@ -8,6 +8,8 @@ export const MCP_OPTION_FLAGS = Object.freeze([
   { name: '--assets', value: '<absolute GLB directory>' },
   { name: '--packs', value: '<absolute folder of data-only packs>' },
   { name: '--jobs', value: '<absolute private output directory>', note: 'required for render jobs' },
+  { name: '--gpu-queue', value: '<absolute executable, or JSON array ["bash","/path/queue.sh"]>', note: 'optional: a command that runs the program it is given once the GPU has room; looks, reviews, bakes and render jobs wait for it' },
+  { name: '--gpu-queue-wait', value: '<1..3600 seconds>', note: 'longest wait for the queue to grant the GPU, default 600' },
   { name: '--ffmpeg', value: '<absolute executable>', note: 'default is ffmpeg on PATH' },
   { name: '--audio', value: '<absolute folder of .wav, .mp3, .ogg or .flac files for video jobs>' },
   { name: '--branches', value: 'on|off', note: 'default on' },
