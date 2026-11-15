@@ -3,7 +3,7 @@ import { open, readdir, realpath, lstat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { AGENT_ASSET_LIMITS, assetBytesLimitMessage } from '../src/agent-asset-limits.js';
-import { MAXIMUM_CATALOG_LOOK_BYTES } from '../src/look-catalog.js';
+import { MAXIMUM_CATALOG_ENVIRONMENT_BYTES, MAXIMUM_CATALOG_LOOK_BYTES } from '../src/look-catalog.js';
 import { imageLimitProblem } from '../src/image-header.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 
@@ -27,15 +27,17 @@ function lookFileKind(filename, bytes) {
   const isHdr = /\.hdr$/i.test(filename);
   const isCube = /\.cube$/i.test(filename);
   if (!isHdr && !isCube) return null;
-  if (bytes.length > MAXIMUM_CATALOG_LOOK_BYTES) {
+  const limitBytes = isHdr ? MAXIMUM_CATALOG_ENVIRONMENT_BYTES : MAXIMUM_CATALOG_LOOK_BYTES;
+  if (bytes.length > limitBytes) {
     const kindName = isHdr ? 'An .hdr catalog file' : 'A .cube catalog file';
-    throw new SkippableCatalogFileError(`${kindName} is at most ${MAXIMUM_CATALOG_LOOK_BYTES / 1048576} MiB; this one is ${(bytes.length / 1048576).toFixed(1)} MiB. Shrink it, for example to a 1k or 2k HDRI or a smaller LUT.`);
+    const advice = isHdr ? 'Use a 2k or smaller HDRI.' : 'Use a smaller LUT, for example 33 points on a side.';
+    throw new SkippableCatalogFileError(`${kindName} is at most ${limitBytes / 1048576} MiB; this one is ${(bytes.length / 1048576).toFixed(1)} MiB. ${advice}`);
   }
   if (isHdr) {
     if (!/^#\?(?:RADIANCE|RGBE)/.test(bytes.toString('latin1', 0, 10))) throw new Error('An .hdr catalog file must be a Radiance file starting with #?RADIANCE or #?RGBE.');
     return 'environment';
   }
-  if (!bytes.toString('utf8').includes('LUT_3D_SIZE')) throw new Error('A .cube catalog file must be a 3D look (LUT_3D_SIZE) of at most 4 MiB.');
+  if (!bytes.toString('utf8').includes('LUT_3D_SIZE')) throw new Error('A .cube catalog file must be a 3D look (LUT_3D_SIZE).');
   return 'look';
 }
 
@@ -200,9 +202,9 @@ async function readSiblingImage(directory, glbName, uri, segments) {
 /**
  * Reads one catalog file (GLB, image, .hdr or .cube) inside a real directory: its bytes, kind and content ID. `filename` may be a
  * relative path with forward slashes. A GLB whose images point at files beside it gets those images embedded, so the ID binds
- * the self-contained bytes.
+ * the self-contained bytes. `enforceImageLimits: false` skips the sequence frame pixel limits, for an image that is never a frame.
  */
-export async function readCatalogFile(directory, filename) {
+export async function readCatalogFile(directory, filename, { enforceImageLimits = true } = {}) {
   const path = join(directory, filename);
   const original = await lstat(path);
   if (!original.isFile() || original.isSymbolicLink()) {
@@ -237,8 +239,8 @@ export async function readCatalogFile(directory, filename) {
     const imageFormat = lookKind ? null : imageKind(bytes);
     if (imageFormat && !IMAGE_EXTENSIONS[imageFormat].test(filename)) throw new Error('Image extension must match its PNG, JPEG or WebP content.');
     // The header gives the size, so an oversized frame is refused here, before the preview page decodes its pixels.
-    const imageProblem = imageFormat ? imageLimitProblem(bytes, filename, TEXTURE_SEQUENCE_LIMITS) : null;
-    if (imageProblem) throw new SkippableCatalogFileError(`${imageProblem} Resize it before adding it to the --assets folder.`);
+    const imageProblem = imageFormat && enforceImageLimits ? imageLimitProblem(bytes, filename, TEXTURE_SEQUENCE_LIMITS) : null;
+    if (imageProblem) throw new SkippableCatalogFileError(`${imageProblem} Resize it before adding it to the --assets or --packs folder.`);
     if (!imageFormat && !lookKind && !/\.glb$/i.test(filename)) throw new Error('Catalog files must be GLB, PNG, JPEG, WebP, HDR or CUBE, with a matching extension.');
     let document = null;
     if (!imageFormat && !lookKind) {

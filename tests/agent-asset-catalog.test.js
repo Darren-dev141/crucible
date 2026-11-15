@@ -257,17 +257,31 @@ function pngHeaderOnly(width, height) {
   return header;
 }
 
-test('an .hdr over 4 MiB and a .cube over 4 MiB are skipped with a reason and the other assets stay listed (#1313)', async context => {
+test('an .hdr over 8 MiB and a .cube over 4 MiB are skipped with their own advice and the other assets stay listed (#1313)', async context => {
   const { directory } = await fixture(context);
-  const fourMebibytes = 4 * 1024 * 1024;
+  const mebibyte = 1024 * 1024;
   const radiance = await readFile(new URL('../assets/looks/studio-softbox.hdr', import.meta.url));
-  await writeFile(join(directory, 'huge.hdr'), Buffer.concat([radiance, Buffer.alloc(fourMebibytes)]));
-  await writeFile(join(directory, 'huge.cube'), Buffer.concat([Buffer.from('LUT_3D_SIZE 2\n'), Buffer.alloc(fourMebibytes)]));
+  await writeFile(join(directory, 'huge.hdr'), Buffer.concat([radiance, Buffer.alloc(8 * mebibyte)]));
+  await writeFile(join(directory, 'huge.cube'), Buffer.concat([Buffer.from('LUT_3D_SIZE 2\n'), Buffer.alloc(4 * mebibyte)]));
   await writeFile(join(directory, 'room.hdr'), radiance);
   const listing = (await createAgentAssetCatalog(directory)).list();
   assert.deepEqual(listing.assets.map(asset => asset.name).sort(), ['cube.glb', 'room.hdr']);
   assert.deepEqual(listing.skipped.map(entry => entry.name).sort(), ['huge.cube', 'huge.hdr']);
-  for (const entry of listing.skipped) assert.match(entry.reason, /at most 4 MiB; this one is 4\.\d MiB/);
+  const reasons = Object.fromEntries(listing.skipped.map(entry => [entry.name, entry.reason]));
+  assert.match(reasons['huge.hdr'], /at most 8 MiB; this one is 8\.\d MiB\. Use a 2k or smaller HDRI\./);
+  assert.doesNotMatch(reasons['huge.hdr'], /LUT/);
+  assert.match(reasons['huge.cube'], /at most 4 MiB; this one is 4\.\d MiB\. Use a smaller LUT/);
+  assert.doesNotMatch(reasons['huge.cube'], /HDRI/);
+});
+
+test('a 2k HDRI of the size Poly Haven ships is listed, so the advice in the message is a size the catalog accepts (#1313)', async context => {
+  const { directory } = await fixture(context);
+  const radiance = await readFile(new URL('../assets/looks/studio-softbox.hdr', import.meta.url));
+  const studioSmall2kBytes = 6673807;
+  await writeFile(join(directory, 'studio-2k.hdr'), Buffer.concat([radiance, Buffer.alloc(studioSmall2kBytes - radiance.length)]));
+  const listing = (await createAgentAssetCatalog(directory)).list();
+  assert.ok(listing.assets.some(asset => asset.name === 'studio-2k.hdr' && asset.kind === 'environment'));
+  assert.equal('skipped' in listing, false);
 });
 
 test('a catalog with nothing skipped has no skipped field (#1313)', async context => {
