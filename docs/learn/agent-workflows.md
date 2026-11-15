@@ -346,7 +346,7 @@ The status call shows the progress and, when the job is done, the file and the t
 }
 ```
 
-The result call returns the path of the file in the jobs folder. The agent reads the PNG from that path with its own file tool. The path below starts with `<jobs>`, which stands for the folder that you gave to `--jobs`:
+The result call returns the path of the file in the jobs folder. The default `concise` answer leaves out `sha256` and the resource counters; the answer below is the `detailed` one (`response_format: "detailed"`). The agent reads the PNG from that path with its own file tool. The path below starts with `<jobs>`, which stands for the folder that you gave to `--jobs`:
 
 ```json
 {

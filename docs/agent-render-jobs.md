@@ -9,7 +9,7 @@ Release `0.6.0` includes five MCP tools for asynchronous image and video renderi
 3. Create a scene and inspect its current revision.
 4. Submit `scene_render_submit` with the session ID, current revision and render settings.
 5. Poll `scene_render_status` until the job reaches a terminal state.
-6. Read `scene_render_result` after completion to obtain output paths and SHA-256 hashes.
+6. Read `scene_render_result` after completion to obtain output paths, and SHA-256 hashes with `response_format: "detailed"`.
 7. Release unwanted outputs with `scene_render_release`.
 
 For MP4 jobs, FFmpeg must be on PATH or configured with `--ffmpeg` and an absolute executable path.

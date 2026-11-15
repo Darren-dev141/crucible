@@ -1,0 +1,1 @@
+- The smokes `film-timeline`, `object-motion-blur` and `path-tracer` ask `scene_render_result` for the detailed answer, and the render docs and skill say file digests come with `response_format: "detailed"` (#1304).
