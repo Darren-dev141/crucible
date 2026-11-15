@@ -162,7 +162,10 @@ cookTest('the packer rejects lens values the kernel cannot use, naming the field
   assert.throws(() => resolveThinLensParameters({ apertureRadius: 0.01, focalDistance: 0 }, {}, caller), /`focalDistance` must be a distance along the view axis above 0/);
   assert.throws(() => resolveThinLensParameters({}, { apertureBlades: 2 }, caller), /`apertureBlades` must be 0 for a round aperture or a whole number from 3 to 64/);
   assert.throws(() => resolveThinLensParameters({}, { apertureRotation: Infinity }, caller), /`apertureRotation` must be a finite number of radians/);
-  assert.deepEqual(resolveThinLensParameters({}, {}, caller), { apertureRadius: 0, focalDistance: 10, apertureBlades: 0, apertureRotation: 0 });
+  // Cook since codepawl/cook#19 also returns apertureRatio (1 by default) for anamorphic bokeh.
+  const { apertureRatio = 1, ...defaultLens } = resolveThinLensParameters({}, {}, caller);
+  assert.deepEqual(defaultLens, { apertureRadius: 0, focalDistance: 10, apertureBlades: 0, apertureRotation: 0 });
+  assert.equal(apertureRatio, 1);
 });
 
 // Pixels along the middle row whose value lies between 5 and 95 percent of the row's brightest: the width of the edge.
