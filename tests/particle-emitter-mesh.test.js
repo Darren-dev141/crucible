@@ -91,6 +91,14 @@ test('normalSpeed sends surface points straight out along the face normal', () =
   }
 });
 
+test('normalSpeed from vertices moves at the stated speed on a scaled mesh', () => {
+  const centres = emittedCentres({ from: 'vertices', normalSpeed: 3 }, {}, 0.5);
+  for (const centre of centres) {
+    const distanceOutOfWall = distanceBeyondWall(centre);
+    assert.ok(Math.abs(distanceOutOfWall - 1.5) < 1e-3, `point ${centre} is ${distanceOutOfWall} m out of the wall, not the 1.5 m that speed 3 for half a second gives`);
+  }
+});
+
 test('the same seed gives identical bytes, another seed gives other points, and more particles keep the earlier ones', () => {
   const bytesOf = system => {
     const scene = createAgentScene(recipe({ emitter: { shape: 'mesh', mesh: 'wall', from: 'volume' }, ...system }));
