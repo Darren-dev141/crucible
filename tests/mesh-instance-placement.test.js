@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { box, sphere } from '../src/geometry.js';
 import { createAgentScene } from '../src/agent-scene.js';
-import { expandInstancedNodes } from '../src/mesh-instances.js';
+import { expandInstancedNodes, realizedGeometry } from '../src/mesh-instances.js';
 
 const base = { id: 'rock', geometry: 'rockA', material: 'stone' };
 const surfaceGeometry = sphere(16, 8);
@@ -181,4 +181,22 @@ test('realize merges instances into one mesh per material in expandInstancedNode
   const afterEdit = scene.apply([{ type: 'set-node', id: 'fence', translation: [0, 1, 0] }], { expectedRevision: scene.revision });
   assert.equal(afterEdit, 1);
   assert.equal(scene.parts.length, 1);
+});
+
+test('the same realize spec gets the same geometry record, and different specs never share one (#1546)', () => {
+  const surface = sphere(8, 6);
+  const realizeOptions = { maxNodes: 4096, resolveSurface: () => surface };
+  const realizeBase = instances => {
+    const geometries = [];
+    expandInstancedNodes([{ ...base, instances: { ...instances, realize: true } }], realizeOptions, geometries);
+    return geometries.at(-1).base;
+  };
+  const scatter = count => ({ scatter: { count, min: [0, 0, 0], max: [1, 1, 1] } });
+  const first = realizeBase(scatter(3));
+  assert.deepEqual(realizeBase(scatter(3)), first);
+  const other = realizeBase(scatter(4));
+  assert.notDeepEqual(other, first);
+  assert.equal(realizedGeometry(JSON.stringify(first)).positions.length, 3 * surface.positions.length);
+  assert.equal(realizedGeometry(JSON.stringify(other)).positions.length, 4 * surface.positions.length);
+  assert.deepEqual(realizeBase(scatter(3)), first);
 });
