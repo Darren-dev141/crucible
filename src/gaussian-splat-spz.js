@@ -203,7 +203,7 @@ function createSpzReader(bytes, header) {
     writeRotation(rotations, index, bytes, rotationsOffset + index * rotationBytes, version);
   }
   function result() {
-    return { count, positions, colors, scales, rotations, bounds: { minimum, maximum } };
+    return { count, positions, colors, scales, rotations, bounds: { minimum, maximum }, skipped: { count: 0, fields: [] } };
   }
   return { readRange, result };
 }
