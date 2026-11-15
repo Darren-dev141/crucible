@@ -107,7 +107,7 @@ async function importedBindings(source) {
 }
 
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
-  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0 } = {}) {
+  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, disposeGate, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0 } = {}) {
   const events = [];
   const sandboxTimers = new Set();
   const viewports = [];
@@ -132,8 +132,17 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     context() { return { newCDPSession: async () => ({
       send: async () => ({ usedSize: heapSize }), detach: async () => { events.push('detach'); },
     }) }; }
-    async evaluate(callback, { method, input }) {
+    async evaluate(callback, argument) {
+      // The render job disposes its private session with a bare session id instead of a method call.
+      const { method, input } = typeof argument === 'string' ? { method: 'dispose', input: { sessionId: argument } } : argument;
       events.push(`${this.privateTarget ? 'private' : 'source'}:${method}`);
+      if (method === hangMethod && !this.privateTarget) return new Promise(() => {});
+      if (method === 'create' && this.privateTarget && failPrivateCreate) {
+        failPrivateCreate = false;
+        throw new Error('Injected private create failure');
+      }
+      if (method === 'dispose' && disposeGate) await disposeGate;
+      if (method === 'resume' && failResume) throw new Error('Injected resume failure');
       if (method === 'create' && this.privateTarget && blockPrivateCreate) return new Promise((resolve, reject) => { this.rejectShot = reject; });
       if (method === 'create') return { sessionId: input.sessionId, revision: 0 };
       if (method === 'exportRecipe') return { recipe: exportedRecipe, revision: 1 };
@@ -393,14 +402,85 @@ runTest('a failed runtime starts fresh for the next scene, while other calls sti
   const { runtime, sessionId, disconnectBrowser } = await reviewRuntimeHarness();
   try {
     disconnectBrowser();
-    await assert.rejects(runtime.inspect({ sessionId }), /browser disconnected/);
+    await assert.rejects(runtime.inspect({ sessionId }), /browser disconnected.*scene_create/s);
     assert.equal((await runtime.capabilities()).phase, 'failed');
-    await assert.rejects(runtime.inspect({ sessionId }), /The agent runtime is failed/);
+    await assert.rejects(runtime.inspect({ sessionId }), /The agent runtime is failed.*scenes.*lost.*scene_create.*scene_create_asset.*no server restart/s);
     const fresh = await runtime.create({ recipe: { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] } });
     assert.notEqual(fresh.sessionId, sessionId);
     assert.equal((await runtime.capabilities()).phase, 'ready');
     assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
     await assert.rejects(runtime.apply({ sessionId }), /session|scene/i);
+  } finally { await runtime.close(); }
+});
+
+const FRESH_RECIPE = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] };
+
+runTest('a scene page that times out fails the runtime with the recovery hint, and the next scene starts fresh (#1256)', async () => {
+  const { runtime, sessionId } = await reviewRuntimeHarness({ hangMethod: 'inspect', deadlineMs: 40 });
+  try {
+    await assert.rejects(runtime.inspect({ sessionId }), error => /exceeded.*scene_create.*no server restart/s.test(error.message) && !/must be closed/.test(error.message));
+    assert.equal((await runtime.capabilities()).phase, 'failed');
+    const fresh = await runtime.create({ recipe: FRESH_RECIPE });
+    assert.equal((await runtime.capabilities()).phase, 'ready');
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a failed resume after a render job fails the runtime, and the next scene starts fresh (#1256)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ failResume: true, failPrivateCreate: true,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    await assert.rejects(runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {} }), /Preview recovery failed after render job/);
+    assert.equal((await runtime.capabilities()).phase, 'failed');
+    const fresh = await runtime.create({ recipe: FRESH_RECIPE });
+    assert.equal((await runtime.capabilities()).phase, 'ready');
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a job still unwinding when the runtime restarts does not fail the new runtime (#1256)', async () => {
+  let runJob;
+  let openGate;
+  const disposeGate = new Promise(resolve => { openGate = resolve; });
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId, disconnectBrowser, events } = await reviewRuntimeHarness({ failPrivateCreate: true, disposeGate,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    const settled = runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {} }).catch(error => error);
+    while (!events.includes('private:dispose')) await new Promise(resolve => setImmediate(resolve));
+    disconnectBrowser();
+    await assert.rejects(runtime.inspect({ sessionId }), /browser disconnected/);
+    const fresh = await runtime.create({ recipe: FRESH_RECIPE });
+    openGate();
+    assert.match((await settled).message, /Injected private create failure/);
+    assert.equal((await runtime.capabilities()).phase, 'ready');
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { openGate(); await runtime.close(); }
+});
+
+runTest('runJob starts the render clock once, after the page handoff has finished (#1256)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ suspendDelayMs: 60, failPrivateCreate: true,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    const startedAt = performance.now();
+    const clockCalls = [];
+    await assert.rejects(runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {},
+      startRenderClock: () => clockCalls.push(performance.now() - startedAt) }), /Injected private create failure/);
+    assert.equal(clockCalls.length, 1);
+    assert.ok(clockCalls[0] >= 55, `the clock started ${clockCalls[0]} ms in, before the 60 ms handoff ended`);
   } finally { await runtime.close(); }
 });
 

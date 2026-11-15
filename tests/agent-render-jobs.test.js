@@ -650,6 +650,13 @@ test('the elapsed deadline starts when rendering starts, so queue wait does not 
   await controller.close();
 });
 
+test('the queue wait must be a finite whole number of milliseconds within the bound (#1256)', async context => {
+  const root = await temporary(context);
+  for (const queueWaitMs of [Number.NaN, -1, 0, 1.5, 5 * 60 * 1000 + 1]) {
+    await assert.rejects(createAgentRenderJobs({ root, limits: { ...limits, queueWaitMs }, async run() {} }), /queueWaitMs must be within 1 and 300000/);
+  }
+});
+
 test('a job that waits past the queue bound fails with its own message (#1256)', async context => {
   const root = await temporary(context);
   const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 5000, queueWaitMs: 30 }, async run({ signal }) {
