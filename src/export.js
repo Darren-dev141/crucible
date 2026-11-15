@@ -61,6 +61,7 @@ function validateGeometry(geometry) {
   }
   if (geometry.colors !== undefined) validateFloatChannel(geometry.colors, count, 'GLB colors', true);
   if (geometry.uvs !== undefined) validateFloatChannel(geometry.uvs, count / 3 * 2, 'GLB UVs');
+  if (geometry.lightUvs !== undefined) validateFloatChannel(geometry.lightUvs, count / 3 * 2, 'GLB lightUvs');
   if (!(geometry.indices instanceof Uint32Array) || geometry.indices.length === 0 || geometry.indices.length % 3 !== 0) {
     throw new TypeError('GLB indices require a nonempty Uint32Array of triangles.');
   }
@@ -167,7 +168,7 @@ function textureReference(textureWriter, descriptor, channel) {
  */
 function writeLightMap(writer, textureWriter, material, gltfMaterial) {
   if (!material.lightMap || material.emissiveMap || (material.emission ?? 0) !== 0) return;
-  const tint = material.color.map(channel => channel * (1 - material.metallic));
+  const tint = Array.from(material.color, channel => channel * (1 - material.metallic));
   gltfMaterial.emissiveFactor = tint;
   gltfMaterial.emissiveTexture = { index: textureWriter.textureIndex(material.lightMap, 'lightMap'), texCoord: 1 };
   const strength = material.lightMapScale ?? 1;

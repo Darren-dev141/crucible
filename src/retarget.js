@@ -258,6 +258,9 @@ function prepareRig(rig, label, overrides) {
 export function prepareRigGeometry(rig, label) {
   const joints = rig.joints;
   const root = decomposeMatrix(rig.rootMatrix ? Float64Array.from(rig.rootMatrix) : mat4.create());
+  if (!root.scale.every(axisScale => Number.isFinite(axisScale) && axisScale > 0)) {
+    throw new RangeError(`${label} rig rootMatrix needs a finite, nonzero scale on every axis. Pass an invertible matrix.`);
+  }
   const prepared = {
     joints,
     indexByName: new Map(joints.map((joint, index) => [joint.name, index])),
