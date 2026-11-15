@@ -68,6 +68,16 @@ export const frameControlScript = `
     for (let ancestor = panel; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
       if (getComputedStyle(ancestor).position === 'fixed') ancestor.classList.add('crucible-panel');
     }
+    // Examples also set slider.value in code (a playing timeline, a starting value), which fires no event.
+    const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    Object.defineProperty(slider, 'value', {
+      configurable: true,
+      get() { return nativeValue.get.call(slider); },
+      set(newValue) {
+        nativeValue.set.call(slider, newValue);
+        refresh();
+      },
+    });
     slider.addEventListener('input', refresh);
     slider.addEventListener('change', refresh);
     refresh();

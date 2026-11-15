@@ -23,6 +23,14 @@ function fakeElement(properties = {}) {
   };
 }
 
+// Stands in for HTMLInputElement.prototype: the value lives in a backing field, like the browser's own accessor.
+function nativeValueHolder() {
+  return Object.defineProperty({}, 'value', {
+    get() { return this.stored; },
+    set(newValue) { this.stored = newValue; },
+  });
+}
+
 function runControlScript({ sliderProperties, fixedSlider = false }) {
   const body = fakeElement();
   const panel = fakeElement({ parentElement: body });
@@ -48,22 +56,23 @@ function runControlScript({ sliderProperties, fixedSlider = false }) {
     const builtPanelIsFixed = element.style.cssText?.includes('position:fixed');
     return { position: sliderIsFixed || builtPanelIsFixed ? 'fixed' : 'absolute' };
   };
-  const run = new Function('document', 'getComputedStyle', 'MutationObserver', 'addEventListener', frameControlScript);
-  run(frame, computeStyle, FakeObserver, () => {});
+  const FakeInput = { prototype: nativeValueHolder() };
+  const run = new Function('document', 'getComputedStyle', 'MutationObserver', 'addEventListener', 'HTMLInputElement', frameControlScript);
+  run(frame, computeStyle, FakeObserver, () => {}, FakeInput);
   const added = [{ addedNodes: [{}] }];
   observerCallback(added);
   return { slider, panel, created, observerCallback, added };
 }
 
 test('the shared slider script adds a value label and a fill that follow the slider', () => {
-  const { slider, panel, created } = runControlScript({ sliderProperties: { min: '3', max: '64', step: '1', value: '12' } });
+  const { slider, panel, created } = runControlScript({ sliderProperties: { min: '3', max: '64', step: '1', stored: '12' } });
   const value = created[0];
   assert.equal(slider.dataset.crucibleRange, 'true');
   assert.equal(value.textContent, '12');
   assert.equal(slider.style.values['--fill'], '15%');
   assert.ok(panel.classList.contains('crucible-control'));
 
-  slider.value = '64';
+  slider.stored = '64';
   slider.listeners.input();
   assert.equal(value.textContent, '64');
   assert.equal(slider.style.values['--fill'], '100%');
@@ -71,14 +80,14 @@ test('the shared slider script adds a value label and a fill that follow the sli
 });
 
 test('the value label is linked to the slider', () => {
-  const { slider, created } = runControlScript({ sliderProperties: { min: '0', max: '1', step: '0.05', value: '0.35' } });
+  const { slider, created } = runControlScript({ sliderProperties: { min: '0', max: '1', step: '0.05', stored: '0.35' } });
   assert.ok(slider.id.length > 0, 'the slider gets an id');
   assert.equal(created[0].htmlFor, slider.id);
   assert.equal(created[0].textContent, '0.35');
 });
 
 test('running the script again adds no second label', () => {
-  const { created, observerCallback, added } = runControlScript({ sliderProperties: { min: '0', max: '10', step: '1', value: '4' } });
+  const { created, observerCallback, added } = runControlScript({ sliderProperties: { min: '0', max: '10', step: '1', stored: '4' } });
   observerCallback(added);
   observerCallback(added);
   assert.equal(created.length, 1);
@@ -86,7 +95,7 @@ test('running the script again adds no second label', () => {
 
 test('a slider that is itself fixed is moved into a fixed panel that carries its name', () => {
   const { slider, created } = runControlScript({
-    sliderProperties: { min: '0', max: '1', step: '0.1', value: '0.5', attributes: { 'aria-label': 'Trees per square metre' } },
+    sliderProperties: { min: '0', max: '1', step: '0.1', stored: '0.5', attributes: { 'aria-label': 'Trees per square metre' } },
     fixedSlider: true,
   });
   const panel = created.find(element => element.style.cssText?.includes('position:fixed'));
@@ -95,6 +104,16 @@ test('a slider that is itself fixed is moved into a fixed panel that carries its
   assert.equal(slider.style.position, 'static');
   assert.ok(panel.classList.contains('crucible-panel'));
   assert.ok(panel.children.some(child => child.textContent === 'Trees per square metre'), 'the panel shows the slider name');
+});
+
+test('setting slider.value in code updates the label, the fill and aria-valuetext', () => {
+  const { slider, created } = runControlScript({ sliderProperties: { min: '0', max: '10', step: '1', stored: '2' } });
+  assert.equal(created[0].textContent, '2');
+  slider.value = '8';
+  assert.equal(created[0].textContent, '8');
+  assert.equal(slider.style.values['--fill'], '80%');
+  assert.equal(slider.attributes['aria-valuetext'], '8');
+  assert.equal(slider.value, '8');
 });
 
 test('the shared slider style covers hover and focus-visible in both browser engines', () => {
