@@ -297,26 +297,53 @@ export function extrudeIndividual(edit, mask, options) {
  * region normal (negative depth pushes in).
  */
 export function insetRegion(edit, mask, options) {
+  return insetEach(connectedRegions(edit, maskedFaces(edit, mask)), edit, options);
+}
+
+// Insets each group of faces, clamping the thickness per group; reports the smallest thickness used and whether any clamped.
+function insetEach(groups, edit, options) {
   const capFaces = [];
   const sideFaces = [];
-  for (const region of connectedRegions(edit, maskedFaces(edit, mask))) {
-    const result = insetFaces(edit, region, options);
+  let thickness = options.thickness;
+  for (const group of groups) {
+    const result = insetFaces(edit, group, options);
     capFaces.push(...result.capFaces);
     sideFaces.push(...result.sideFaces);
+    thickness = Math.min(thickness, result.thickness);
   }
-  return { capFaces, sideFaces };
+  return { capFaces, sideFaces, thickness, clamped: thickness < options.thickness };
 }
 
 /** Inset every selected face on its own, as Blender's inset with "individual". */
 export function insetIndividual(edit, mask, options) {
-  const capFaces = [];
-  const sideFaces = [];
-  for (const face of maskedFaces(edit, mask)) {
-    const result = insetFaces(edit, [face], options);
-    capFaces.push(...result.capFaces);
-    sideFaces.push(...result.sideFaces);
+  return insetEach(maskedFaces(edit, mask).map(face => [face]), edit, options);
+}
+
+const subtractPoints = (first, second) => [first[0] - second[0], first[1] - second[1], first[2] - second[2]];
+
+// The inner faces must keep at least this share of their area, or the inset has reached the limit of the region.
+const INSET_MINIMUM_AREA_RATIO = 1e-3;
+
+// Bisect for the largest thickness below `failing` whose inner faces survive, to 3 significant digits and just inside.
+function largestInsetThickness(capsSurvive, failing) {
+  // Scan up first: a crossed-over inset can look valid again further out, so plain bisection could land on it.
+  const scanSteps = 64;
+  let low = 0;
+  let high = failing;
+  for (let scan = 1; scan <= scanSteps; scan++) {
+    const amount = failing * scan / scanSteps;
+    if (!capsSurvive(amount)) {
+      high = amount;
+      break;
+    }
+    low = amount;
   }
-  return { capFaces, sideFaces };
+  for (let step = 0; step < 40; step++) {
+    const middle = (low + high) / 2;
+    if (capsSurvive(middle)) low = middle;
+    else high = middle;
+  }
+  return Number((low * 0.999).toPrecision(3));
 }
 
 function insetFaces(edit, faces, { thickness, depth = 0 }) {
@@ -335,6 +362,7 @@ function insetFaces(edit, faces, { thickness, depth = 0 }) {
     const end = point(edge.to);
     return normalize(cross(edge.normal, [end[0] - start[0], end[1] - start[1], end[2] - start[2]]));
   };
+  const duplicateMoves = [];
   for (const [vertex, duplicate] of duplicateOf) {
     const before = incoming.get(vertex);
     const after = outgoing.get(vertex);
@@ -343,13 +371,46 @@ function insetFaces(edit, faces, { thickness, depth = 0 }) {
     const inward = normalize(sum);
     // Even thickness: divide by the cosine between the corner bisector and each edge's inward direction.
     const cosine = Math.max(0.25, ...directions.map(value => value[0] * inward[0] + value[1] * inward[1] + value[2] * inward[2]));
-    const distance = thickness / cosine;
-    position[duplicate * 3] += inward[0] * distance;
-    position[duplicate * 3 + 1] += inward[1] * distance;
-    position[duplicate * 3 + 2] += inward[2] * distance;
+    duplicateMoves.push({ duplicate, inward, cosine, origin: point(duplicate) });
+  }
+  const placeDuplicates = amount => {
+    for (const { duplicate, inward, cosine, origin } of duplicateMoves) {
+      const distance = amount / cosine;
+      position[duplicate * 3] = origin[0] + inward[0] * distance;
+      position[duplicate * 3 + 1] = origin[1] + inward[1] * distance;
+      position[duplicate * 3 + 2] = origin[2] + inward[2] * distance;
+    }
+  };
+  const capNormals = capFaces.map(face => faceNormalVector(edit, face));
+  const capsSurvive = amount => {
+    placeDuplicates(amount);
+    // Past the limit a rim face turns its back to the region (the corners crossed over each other) or a cap shrinks to nothing.
+    const rimsFaceOutward = sideFaces.every(face => {
+      const rim = faceNormalVector(edit, face);
+      return rim[0] * normal[0] + rim[1] * normal[1] + rim[2] * normal[2] > 0;
+    });
+    // The inner copy of every boundary edge must keep its direction; a reversed one means opposite corners crossed.
+    const edgesKeepDirection = boundary.every(edge => {
+      const outer = subtractPoints(point(edge.to), point(edge.from));
+      const inner = subtractPoints(point(duplicateOf.get(edge.to)), point(duplicateOf.get(edge.from)));
+      return outer[0] * inner[0] + outer[1] * inner[1] + outer[2] * inner[2] > 0;
+    });
+    return rimsFaceOutward && edgesKeepDirection && capFaces.every((face, index) => {
+      const moved = faceNormalVector(edit, face);
+      const original = capNormals[index];
+      const shrunk = moved[0] * original[0] + moved[1] * original[1] + moved[2] * original[2];
+      const originalSquared = original[0] ** 2 + original[1] ** 2 + original[2] ** 2;
+      return shrunk > INSET_MINIMUM_AREA_RATIO * originalSquared;
+    });
+  };
+  // Past the limit of the faces the inner faces collapse or flip and the rim folds, so stop at the largest thickness that holds.
+  let usedThickness = thickness;
+  if (!capsSurvive(thickness)) {
+    usedThickness = largestInsetThickness(capsSurvive, thickness);
+    placeDuplicates(usedThickness);
   }
   if (depth !== 0) moveVertices(edit, faceVertexSet(edit, capFaces), normal.map(value => value * depth));
-  return { capFaces, sideFaces };
+  return { capFaces, sideFaces, thickness: usedThickness, clamped: usedThickness < thickness };
 }
 
 /** Delete the selected faces, then edges and vertices that no face uses any more. */

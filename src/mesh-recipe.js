@@ -616,6 +616,8 @@ function runEdit(current, edit, index, { resolveCutter, limits }) {
     case 'inset_individual': {
       const inset = edit.op === 'inset_region' ? insetRegion(editable, mask, edit) : insetIndividual(editable, mask, edit);
       created = { capFaces: inset.capFaces, sideFaces: inset.sideFaces, sideTag: 'rim' };
+      result.thickness = inset.thickness;
+      if (inset.clamped) result.clamped = true;
       break;
     }
     case 'delete':

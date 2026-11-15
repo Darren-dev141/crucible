@@ -141,14 +141,32 @@ function profileWeights(profile, t) {
   return [1 - Math.sin(angle) ** exponent, 1 - Math.cos(angle) ** exponent];
 }
 
+// A profile of exactly 1 puts every ring point on the original corner, so the shape is unchanged and faces have no area.
+// The largest profile used is just under it, a near-square corner with real faces.
+const MAXIMUM_PROFILE = 0.99;
+const REACH_SAMPLES = 64;
+
+// How far, as a multiple of the width, the profile reaches into the solid beyond a flat chamfer. A concave profile
+// (below 0.25) swings deeper than the slide points, so the width clamp divides by this to keep the cut inside the solid.
+function profileDepthReach(profile) {
+  let reach = 1;
+  for (let sample = 1; sample < REACH_SAMPLES; sample++) {
+    const [startWeight, endWeight] = profileWeights(profile, sample / REACH_SAMPLES);
+    reach = Math.max(reach, startWeight + endWeight);
+  }
+  return reach;
+}
+
 /**
  * Bevel the selected edges. Options: width (distance from the edge into each face), segments (1 is a flat chamfer),
- * profile (0.5 round, 0.25 flat, 1 square, below 0.25 concave), clampOverlap (shrink width so slides stay within half
+ * profile (0.5 round, 0.25 flat, 1 square but capped at 0.99, below 0.25 concave), clampOverlap (shrink width so slides stay within half
  * of their edge).
  * Returns { mesh, width, clamped, bevelEdges, stripFaces, cornerFaces, filledCorners }. Strip faces get `<name>.strip`,
  * corner fills `<name>.corner`; the faces around keep their tags.
  */
-export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile = 0.5, clampOverlap = true, name = 'bevel' }) {
+export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile: requestedProfile = 0.5, clampOverlap = true, name = 'bevel' }) {
+  const profile = Math.min(requestedProfile, MAXIMUM_PROFILE);
+  const profileReach = profileDepthReach(profile);
   const table = edgeFaces(mesh);
   const beveled = selectEdges(mesh, edgeRule, table);
   let bevelCount = 0;
@@ -192,7 +210,7 @@ export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile = 0.5,
       const need = slideNeeds.get(key) ?? { vertex, slideEdge, sine: Infinity, edgeLength: length(along) };
       need.sine = Math.min(need.sine, sine);
       slideNeeds.set(key, need);
-      if (clampOverlap) effectiveWidth = Math.min(effectiveWidth, CLAMP_FRACTION * need.edgeLength * sine);
+      if (clampOverlap) effectiveWidth = Math.min(effectiveWidth, CLAMP_FRACTION * need.edgeLength * sine / profileReach);
     }
   }
   if (clampOverlap) {
@@ -202,7 +220,7 @@ export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile = 0.5,
       const origin = positionOf(corner.vertex);
       const first = length(subtract(positionOf(otherEnd(corner.incoming, corner.vertex)), origin));
       const second = length(subtract(positionOf(otherEnd(corner.outgoing, corner.vertex)), origin));
-      effectiveWidth = Math.min(effectiveWidth, CLAMP_FRACTION * Math.min(first, second));
+      effectiveWidth = Math.min(effectiveWidth, CLAMP_FRACTION * Math.min(first, second) / profileReach);
     }
   }
   const clamped = effectiveWidth < width;
@@ -478,5 +496,5 @@ export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile = 0.5,
       cornerFaces++;
     }
   }
-  return { mesh: builder.build(), width: effectiveWidth, clamped, bevelEdges: bevelCount, stripFaces, cornerFaces, filledCorners };
+  return { mesh: builder.build(), width: effectiveWidth, profile, profileClamped: profile < requestedProfile, clamped, bevelEdges: bevelCount, stripFaces, cornerFaces, filledCorners };
 }
