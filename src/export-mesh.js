@@ -172,6 +172,11 @@ function mtlBlock(name, material) {
   return lines.join('\n');
 }
 
+function checkAttributeLength(values, expectedLength, label, partName) {
+  if (!values?.length || values.length === expectedLength) return;
+  throw new RangeError(`OBJ export part ${partName} has ${values.length} values in ${label}; expected ${expectedLength} (one per vertex). Fix the array length, or remove ${label} to export without it.`);
+}
+
 /**
  * Returns `{ obj, mtl }` as text. The OBJ names the MTL by `mtlFilename` (default `model.mtl`); save both files side by side.
  * Colors in the MTL are the linear base colors of the parts, with roughness and metallic as `Pr` and `Pm`
@@ -202,13 +207,15 @@ export function exportObj(parts, options = {}) {
     for (let vertex = 0; vertex < vertexCount; vertex++) {
       lines.push(`v ${formatNumber(world[vertex * 3])} ${formatNumber(world[vertex * 3 + 1])} ${formatNumber(world[vertex * 3 + 2])}`);
     }
-    const uvs = part.geometry.uvs?.length === vertexCount * 2 ? part.geometry.uvs : null;
+    checkAttributeLength(part.geometry.uvs, vertexCount * 2, 'geometry.uvs', part.name);
+    checkAttributeLength(part.geometry.normals, vertexCount * 3, 'geometry.normals', part.name);
+    const uvs = part.geometry.uvs?.length ? part.geometry.uvs : null;
     if (uvs) {
       for (let vertex = 0; vertex < vertexCount; vertex++) {
         lines.push(`vt ${formatNumber(uvs[vertex * 2])} ${formatNumber(uvs[vertex * 2 + 1])}`);
       }
     }
-    const normals = part.geometry.normals?.length === vertexCount * 3 ? worldNormals(part.geometry.normals, matrix) : null;
+    const normals = part.geometry.normals?.length ?worldNormals(part.geometry.normals, matrix) : null;
     if (normals) {
       for (let vertex = 0; vertex < vertexCount; vertex++) {
         lines.push(`vn ${formatNumber(normals[vertex * 3])} ${formatNumber(normals[vertex * 3 + 1])} ${formatNumber(normals[vertex * 3 + 2])}`);

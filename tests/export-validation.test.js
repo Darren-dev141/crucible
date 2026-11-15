@@ -30,6 +30,28 @@ test('GLB light map emissive factor is a JSON array when the color is a Float32A
   assert.ok(Array.isArray(json.materials[0].emissiveFactor));
 });
 
+function texturedPart(textureFields, materialFields = {}) {
+  const part = firstPart();
+  const image = { width: 2, height: 2, data: new Uint8ClampedArray(16).fill(255) };
+  const geometry = { ...part.geometry, uvs: new Float32Array(part.geometry.positions.length / 3 * 2) };
+  return { ...part, geometry, material: { ...part.material, map: { image, ...textureFields }, ...materialFields } };
+}
+
+test('GLB export rejects sampler values that are not glTF enums and names the field', () => {
+  for (const field of ['wrapS', 'wrapT', 'magFilter', 'minFilter']) {
+    assert.throws(() => exportGlb([texturedPart({ [field]: 1234 })]), new RegExp(field));
+  }
+  assert.throws(() => exportGlb([texturedPart({ magFilter: 9987 })]), /magFilter/);
+  assert.doesNotThrow(() => exportGlb([texturedPart({ wrapS: 33071, wrapT: 33648, magFilter: 9728, minFilter: 9987 })]));
+});
+
+test('GLB export rejects a boxMapAxis outside 0, 1 and 2', () => {
+  for (const boxMapAxis of [3, -1, 1.5, '1']) {
+    assert.throws(() => exportGlb([texturedPart({}, { boxMapScale: 1, boxMapAxis })]), /boxMapAxis/);
+  }
+  assert.doesNotThrow(() => exportGlb([texturedPart({}, { boxMapScale: 1, boxMapAxis: 2 })]));
+});
+
 test('GLB export rejects empty, non-finite and unsorted animation keyframes', () => {
   const part = firstPart();
   const make = keyframes => ({ name: 'c', tracks: [{ target: part.name, property: 'translation', keyframes }] });

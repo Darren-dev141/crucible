@@ -78,7 +78,7 @@ A texture bake introduces a separate asset pipeline and cannot preserve the same
 
 ## Textures
 
-`material.map`, `normalMap`, `metallicRoughnessMap`, `occlusionMap` and `emissiveMap` are renderer texture descriptors: `{ image, wrapS, wrapT, minFilter, magFilter, flipY }`.
+`material.map`, `normalMap`, `metallicRoughnessMap`, `occlusionMap` and `emissiveMap` are renderer texture descriptors: `{ image, wrapS, wrapT, minFilter, magFilter, flipY }`. The sampler fields must be glTF enums (wrap 10497, 33071 or 33648; magFilter 9728 or 9729; minFilter 9728, 9729 or 9984 to 9987) and `boxMapAxis` must be 0, 1 or 2, or the export throws.
 Each distinct image is written once, and samplers and textures are shared between channels.
 An image that `loadGltf` or `parseGltf` decoded from a JPEG, PNG or WebP file, and that was not scaled to fit `maxTexturePixels`, is written with its source bytes and MIME type, so an imported asset exports at about the size it came in at (a WebP image goes out through `EXT_texture_webp`, marked required).
 Every other image (a pattern bake, a copy, an `{ width, height, data }` image, a texture with `flipY: true`, a scaled one) is written as an embedded PNG, as RGB when it has no transparent texel.

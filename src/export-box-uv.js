@@ -46,6 +46,9 @@ function remapped(source, perVertex, sourceOf) {
 
 /** `scale` is the part matrix's column lengths: the shader projects scaled object positions. */
 export function boxProjectedGeometry(geometry, scale, boxMapScale, boxMapAxis) {
+  if (![0, 1, 2].includes(boxMapAxis)) {
+    throw new RangeError(`GLB material.boxMapAxis is ${boxMapAxis}; use 0, 1 or 2 (the axis the box map projects along).`);
+  }
   const { positions, indices } = geometry;
   const triangleCount = indices.length / 3;
   const newIndexByKey = new Map();

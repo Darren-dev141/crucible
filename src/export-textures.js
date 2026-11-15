@@ -6,6 +6,14 @@ const ABSOLUTE_MAX_TEXTURE_SIZE = 16384;
 const WRAP_DEFAULT = 10497;
 const MIN_FILTER_DEFAULT = 9987;
 const MAG_FILTER_DEFAULT = 9729;
+const VALID_WRAPS = [10497, 33071, 33648];
+const VALID_MAG_FILTERS = [9728, 9729];
+const VALID_MIN_FILTERS = [9728, 9729, 9984, 9985, 9986, 9987];
+
+function checkSamplerValue(value, validValues, field, channel) {
+  if (validValues.includes(value)) return value;
+  throw new RangeError(`GLB ${channel} texture ${field} is ${value}; use one of ${validValues.join(', ')} (glTF sampler enums).`);
+}
 
 function pixelsOf(image, channel) {
   const width = image?.naturalWidth ?? image?.width;
@@ -78,12 +86,12 @@ export function createTextureWriter(writer, maxTextureSize = DEFAULT_MAX_TEXTURE
     return { sampler, extensions: { EXT_texture_webp: { source } } };
   }
 
-  function samplerIndex(descriptor) {
+  function samplerIndex(descriptor, channel) {
     const sampler = {
-      magFilter: descriptor.magFilter ?? MAG_FILTER_DEFAULT,
-      minFilter: descriptor.minFilter ?? MIN_FILTER_DEFAULT,
-      wrapS: descriptor.wrapS ?? WRAP_DEFAULT,
-      wrapT: descriptor.wrapT ?? WRAP_DEFAULT,
+      magFilter: checkSamplerValue(descriptor.magFilter ?? MAG_FILTER_DEFAULT, VALID_MAG_FILTERS, 'magFilter', channel),
+      minFilter: checkSamplerValue(descriptor.minFilter ?? MIN_FILTER_DEFAULT, VALID_MIN_FILTERS, 'minFilter', channel),
+      wrapS: checkSamplerValue(descriptor.wrapS ?? WRAP_DEFAULT, VALID_WRAPS, 'wrapS', channel),
+      wrapT: checkSamplerValue(descriptor.wrapT ?? WRAP_DEFAULT, VALID_WRAPS, 'wrapT', channel),
     };
     const key = JSON.stringify(sampler);
     if (!samplerIndices.has(key)) {
@@ -98,7 +106,7 @@ export function createTextureWriter(writer, maxTextureSize = DEFAULT_MAX_TEXTURE
     textureIndex(descriptor, channel) {
       if (![0, 1].includes(descriptor.uvChannel ?? 0)) throw new RangeError(`GLB ${channel} uses UV channel ${descriptor.uvChannel}; only channels 0 and 1 are supported.`);
       const source = imageIndex(descriptor, channel);
-      const sampler = samplerIndex(descriptor);
+      const sampler = samplerIndex(descriptor, channel);
       const key = `${source}:${sampler}`;
       if (!textureIndices.has(key)) {
         textureIndices.set(key, document.textures.length);
