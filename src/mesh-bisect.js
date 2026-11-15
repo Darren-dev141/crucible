@@ -1,5 +1,5 @@
 import { facePolygons, buildPolygonMesh } from './mesh-polygons.js';
-import { requireNumberInRange, requireVector3 } from './modeling-limits.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 export const MAX_BISECT_DISTANCE = 1e3;
 
@@ -179,12 +179,9 @@ function capPolygon(loop, tag) {
  * has four faces. Faces get `<name>.inner` or `<name>.outer` by side.
  */
 export function bisectPlane(mesh, { point, normal, distance = 1e-4, clearInner = false, clearOuter = false, fill = false, name = 'bisect' }) {
-  requireVector3('bisectPlane', 'point', point, '[0, 0, 0]');
-  requireVector3('bisectPlane', 'normal', normal, '[0, 0, 1]');
-  requireNumberInRange('bisectPlane', 'distance', distance, { minimum: 0, maximum: MAX_BISECT_DISTANCE, example: 1e-4 });
-  if (normal.every(component => component === 0)) {
-    throw new RangeError('bisectPlane: normal was [0, 0, 0]; pass a direction with at least one nonzero number, such as [0, 0, 1].');
-  }
+  requireFiniteInRange('bisectPlane', 'point', point, -1e6, 1e6);
+  requireFiniteInRange('bisectPlane', 'normal', normal, -1e6, 1e6);
+  requireFiniteInRange('bisectPlane', 'distance', distance, 0, MAX_BISECT_DISTANCE);
   const planeNormal = unit(normal);
   const { signs, offsets } = planeSigns(mesh, point, planeNormal, distance);
   const extraPositions = [];

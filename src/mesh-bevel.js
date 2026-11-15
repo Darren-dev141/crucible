@@ -2,7 +2,7 @@ import { editMesh } from './mesh-edit.js';
 import { faceNormals } from './mesh-normals.js';
 import { selectFaces } from './mesh-select.js';
 import { MeshBuilder } from './mesh-stack.js';
-import { requireNumberInRange, requireWholeNumberInRange } from './modeling-limits.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 export const MAX_BEVEL_SEGMENTS = 16;
 export const MAX_BEVEL_WIDTH = 1e6;
@@ -169,9 +169,7 @@ function profileDepthReach(profile) {
  * corner fills `<name>.corner`; the faces around keep their tags.
  */
 export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile: requestedProfile = 0.5, clampOverlap = true, name = 'bevel' } = {}) {
-  requireNumberInRange('bevelEdges', 'width', width, { minimum: 0, exclusiveMinimum: true, maximum: MAX_BEVEL_WIDTH, example: 0.1 });
-  requireWholeNumberInRange('bevelEdges', 'segments', segments, { minimum: 1, maximum: MAX_BEVEL_SEGMENTS, example: 3 });
-  requireNumberInRange('bevelEdges', 'profile', requestedProfile, { minimum: 0, maximum: 1, example: 0.5 });
+requireFiniteInRange('bevelEdges', 'width', width, 0, MAX_BEVEL_WIDTH);  requireFiniteInRange('bevelEdges', 'segments', segments, 1, MAX_BEVEL_SEGMENTS, true);  requireFiniteInRange('bevelEdges', 'profile', requestedProfile, 0, 1);
   const profile = Math.min(requestedProfile, MAXIMUM_PROFILE);
   const profileReach = profileDepthReach(profile);
   const table = edgeFaces(mesh);

@@ -1,4 +1,4 @@
-import { requireNumberInRange, requireWholeNumberInRange } from './modeling-limits.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 // Polyline curves as plain arrays of [x, y, z]: fillet rounds the corners with circular arcs and resample places points
 // at equal arc length with the direction of travel at each one. Both are deterministic and bounded.
@@ -54,7 +54,7 @@ export function curveLength(points, closed = false) {
  * An open curve puts the first and last sample on its ends (count at least 2); a closed one spreads them around the loop.
  */
 export function resampleCurve(points, count, closed = false) {
-  requireWholeNumberInRange('resampleCurve', 'count', count, { minimum: closed ? 1 : 2, maximum: MAX_RESAMPLE_COUNT, example: closed ? 8 : 5 });
+  requireFiniteInRange('resampleCurve', 'count', count, closed ? 1 : 2, MAX_RESAMPLE_COUNT, true);
   const segments = segmentsOf(points, closed);
   const total = segments.reduce((sum, segment) => sum + segment.length, 0);
   if (!(total > MINIMUM_LENGTH)) throw new RangeError('The curve has no length.');
@@ -105,26 +105,14 @@ function filletCorner(previous, corner, next, radius, arcSegments) {
   return arc;
 }
 
-function rejectCoincidentNeighbours(points, closed) {
-  const pairCount = closed ? points.length : points.length - 1;
-  for (let index = 0; index < pairCount; index++) {
-    const next = (index + 1) % points.length;
-    if (lengthOf(subtract(points[next], points[index])) < MINIMUM_LENGTH) {
-      throw new RangeError(`filletCurve: points ${index} and ${next} are the same point; remove the duplicate so every segment has length.`);
-    }
-  }
-}
-
 /**
  * Round every interior corner (every corner of a closed curve) with a circular arc of the given radius, drawn in
  * `arcSegments` straight pieces. A radius that does not fit between neighbouring corners is reduced to fit.
  */
 export function filletCurve(points, radius, arcSegments, closed = false) {
-  requireNumberInRange('filletCurve', 'radius', radius, { minimum: 0, exclusiveMinimum: true, maximum: MAX_FILLET_RADIUS, example: 0.25 });
-  requireWholeNumberInRange('filletCurve', 'arcSegments', arcSegments, { minimum: 1, maximum: MAX_FILLET_ARC_SEGMENTS, example: 8 });
+  requireFiniteInRange('filletCurve', 'radius', radius, 1e-9, MAX_FILLET_RADIUS);
   const result = [];
   const count = points.length;
-  rejectCoincidentNeighbours(points, closed);
   for (let index = 0; index < count; index++) {
     const isEnd = !closed && (index === 0 || index === count - 1);
     if (isEnd) {
