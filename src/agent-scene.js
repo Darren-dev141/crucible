@@ -22,6 +22,7 @@ export { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS };
  * shares geometry buffers with the live scene, so four cost little; their geometry still counts in the allocation budget.
  */
 export const REVISION_HISTORY_LIMIT = 4;
+const FIELD_EDIT_OPERATIONS = new Set(['set-node', 'set-material', 'set-camera']);
 export { normalizeAgentLook, resolveAgentShadow } from './agent-look.js';
 import { OWN_SECTIONS as NULLABLE_SECTION_OPERATIONS } from './agent-apply-report.js';
 export { describeApplication } from './agent-apply-report.js';
@@ -91,15 +92,29 @@ function resolveLimits(input) {
 }
 
 // Copy only JSON data. Reject accessors before reading them and bound traversal before serialization.
+function assertWithinRecipeBytes(bytes, maximum) {
+  if (bytes > maximum) {
+    throw new RangeError('JSON exceeds maxRecipeBytes. Reduce the input.');
+  }
+}
+
 function copiedJson(input, maximum) {
   let bytes = 0;
   const ancestors = new Set();
   const encoder = new TextEncoder();
+  // Recipes repeat the same keys and ids thousands of times, so each distinct string is measured once.
+  const stringBytes = new Map();
+  function jsonStringBytes(text) {
+    let size = stringBytes.get(text);
+    if (size === undefined) {
+      size = encoder.encode(JSON.stringify(text)).length;
+      stringBytes.set(text, size);
+    }
+    return size;
+  }
   function charge(count) {
     bytes += count;
-    if (bytes > maximum) {
-      throw new RangeError('JSON exceeds maxRecipeBytes. Reduce the input.');
-    }
+    assertWithinRecipeBytes(bytes, maximum);
   }
   function copy(value, depth) {
     if (depth > 64) {
@@ -117,7 +132,7 @@ function copiedJson(input, maximum) {
       if (value.length > maximum) {
         throw new RangeError('JSON exceeds maxRecipeBytes.');
       }
-      charge(encoder.encode(JSON.stringify(value)).length);
+      charge(jsonStringBytes(value));
       return value;
     }
     if (!value || typeof value !== 'object' || ancestors.has(value)) {
@@ -134,6 +149,7 @@ function copiedJson(input, maximum) {
     charge(2);
     const result = array ? [] : {};
     const keys = Reflect.ownKeys(value);
+    let entryCount = 0;
     for (const key of keys) {
       if (array && key === 'length') continue;
       if (typeof key !== 'string' || key === '__proto__') {
@@ -146,7 +162,11 @@ function copiedJson(input, maximum) {
       if (array && key !== String(result.length)) {
         throw new TypeError('JSON arrays must be dense without extra fields.');
       }
-      charge(array ? 1 : encoder.encode(JSON.stringify(key)).length + 2);
+      // Commas are counted exactly (one between entries) so this running size equals the serialized size
+      // that normalizeRecipe checks after a field edit; both paths then accept and refuse the same recipes.
+      const separatorBytes = entryCount === 0 ? 0 : 1;
+      entryCount += 1;
+      charge(array ? separatorBytes : jsonStringBytes(key) + 1 + separatorBytes);
       result[key] = copy(descriptor.value, depth + 1);
     }
     if (array && result.length !== value.length) {
@@ -929,8 +949,8 @@ function linkedMaterial(liveMaterial, lightMask, wrappers) {
   return byMask.get(lightMask);
 }
 
-function normalizeRecipe(input, limits) {
-  let recipe = copiedJson(input, limits.maxRecipeBytes);
+function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
+  let recipe = alreadyCopied ? input : copiedJson(input, limits.maxRecipeBytes);
   knownKeys(recipe, ['format', 'schemaVersion', 'geometries', 'materials', 'nodes', 'armatures', 'camera', 'environment', 'effects', 'shadow', 'motion', 'physics', 'cloth', 'timeline', 'particles', 'bake', 'postPasses', 'game'], 'recipe');
   recipe.format = currentFormatName(recipe.format);
   if (recipe.format !== 'crucible.scene' || recipe.schemaVersion !== 1) {
@@ -1016,6 +1036,11 @@ function normalizeRecipe(input, limits) {
   if (Object.hasOwn(recipe, 'game')) {
     if (recipe.game === null) delete recipe.game;
     else recipe.game = agentSceneModule('game').normalizeGameSetup(recipe.game, recipe.nodes);
+  }
+  if (alreadyCopied) {
+    // The input was checked JSON and each step above returns checked JSON, so only the size can have grown.
+    assertWithinRecipeBytes(new TextEncoder().encode(JSON.stringify(recipe)).length, limits.maxRecipeBytes);
+    return recipe;
   }
   recipe = copiedJson(recipe, limits.maxRecipeBytes);
   return recipe;
@@ -1460,9 +1485,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     return records;
   }
 
-  function stage(inputRecipe, preferred = null, removedNodes = new Set(), removedMaterials = new Set()) {
+  function stage(inputRecipe, preferred = null, removedNodes = new Set(), removedMaterials = new Set(), inputIsOwnedJson = false) {
     releasedRevisionCount = 0;
-    const recipe = normalizeRecipe(inputRecipe, limits);
+    const recipe = normalizeRecipe(inputRecipe, limits, { alreadyCopied: inputIsOwnedJson });
     const placedRuntime = recipe.nodes.some(node => node.asset)
       ? agentSceneModule('assets').expandAssetPlacements(recipe, options.assets, limits, assetOutputCache, recipe.nodes.some(node => node.asset?.drive) ? agentSceneModule('drive').createAssetDrive : null)
       : NO_ASSETS;
@@ -2101,7 +2126,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           }
         }
       }
-      return commit(stage(candidate, null, removedNodes, removedMaterials), true);
+      // Plain field edits put only values the operation copy already checked into the candidate, so the recipe is not copied and checked a second time.
+      const onlyFieldEdits = operations.every(operation => FIELD_EDIT_OPERATIONS.has(operation.type));
+      return commit(stage(candidate, null, removedNodes, removedMaterials, onlyFieldEdits), true);
     },
     inspect(options = {}) {
       knownKeys(options, ['ids', 'limit', 'includeBounds', 'path'], 'inspection');
