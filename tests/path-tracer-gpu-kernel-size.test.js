@@ -36,8 +36,9 @@ for (const [name, variant] of Object.entries(VARIANTS)) {
 }
 
 // Measured source sizes in KB (plain 45.3, subsurface 50.3, texelBake 45.5, blueNoise 45.3, importance 45.3, tree 49.5, radianceCache 47.4,
-// everything 56.4); each limit leaves about 1.5 KB. The plain kernel measured 27 s cold at 46 KB.
-const SIZE_LIMIT_KILOBYTES = { plain: 47, subsurface: 52, texelBake: 47, blueNoise: 47, importance: 47, tree: 51, radianceCache: 49, everything: 58 };
+// everything 56.4); each limit leaves about 1.5 KB. The plain kernel measured 27 s cold at 46 KB. Per-map UV sets (#1300) grew every kernel by
+// 1.2 KB and the limits by 1 KB; the demo room measured 23.7 s cold at 47.3 KB (2026-11-15, RTX 3060).
+const SIZE_LIMIT_KILOBYTES = { plain: 48, subsurface: 53, texelBake: 48, blueNoise: 48, importance: 48, tree: 52, radianceCache: 50, everything: 59 };
 
 for (const [name, variant] of Object.entries(VARIANTS)) {
   test(`the ${name} kernel stays under its source size`, () => {

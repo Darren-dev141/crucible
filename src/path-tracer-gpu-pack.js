@@ -57,22 +57,27 @@ export function packNodes(bvh) {
   return table;
 }
 
-const GPU_MAP_FIELDS = ['texture', 'normalTexture', 'surfaceTexture', 'emissiveTexture'];
+// Material texel 5, third channel: a bit per map that is set when the map reads TEXCOORD_1 (bit 0 base colour, 1 normal, 2 surface, 3 emissive).
+export const UV_SET_SLOT = 22;
+const GPU_MAP_UV_BITS = [['texture', 1], ['normalTexture', 2], ['surfaceTexture', 4], ['emissiveTexture', 8]];
 
-/**
- * The UV set the GPU kernels read for a material. They interpolate one UV pair per triangle corner, so every map of a
- * material shares it: the base colour's set, or the first map's when there is no base colour. A material that mixes sets
- * reads its other maps with that set too; the CPU tracer reads each map with its own.
- */
-export function materialUvSet(material) {
-  const first = GPU_MAP_FIELDS.map(field => material[field]).find(Boolean);
-  return first?.uvSet === 1 ? 1 : 0;
+/** The bit mask of the maps of a material that read TEXCOORD_1; 0 when every map reads TEXCOORD_0. */
+export function materialUvSetMask(material) {
+  let mask = 0;
+  for (const [field, bit] of GPU_MAP_UV_BITS) {
+    if (material[field]?.uvSet === 1) mask |= bit;
+  }
+  return mask;
 }
 
-/** Nine texels per triangle in leaf order: corner and material, two edges, three normals with u, three colours with v. */
+/**
+ * Ten texels per triangle in leaf order: corner and material, two edges, three normals with u, three colours with v, then the second
+ * UV set. TEXCOORD_0 always sits in the w of the normal and colour texels. TEXCOORD_1 sits in texel 9 (u and v of the first two corners)
+ * and in the w of the two edge texels (u and v of the third corner), which no kernel reads as geometry. A scene without a second set
+ * leaves those floats at 0 and no material asks for them.
+ */
 export function packTriangles(scene) {
   const { positions, normals, uvs, uvs1, colors, indices, triangleMaterial, bvh } = scene;
-  const secondSetMaterials = uvs1 ? scene.materials?.map(materialUvSet) : null;
   const order = bvh.triangleOrder;
   const table = createTable(order.length * TRIANGLE_TEXELS);
   const { data } = table;
@@ -80,7 +85,6 @@ export function packTriangles(scene) {
     const triangle = order[slot];
     const base = slot * TRIANGLE_TEXELS * 4;
     const corners = [indices[triangle * 3], indices[triangle * 3 + 1], indices[triangle * 3 + 2]];
-    const uvSource = secondSetMaterials?.[triangleMaterial[triangle]] === 1 ? uvs1 : uvs;
     for (let axis = 0; axis < 3; axis++) {
       const origin = positions[corners[0] * 3 + axis];
       data[base + axis] = origin;
@@ -94,11 +98,21 @@ export function packTriangles(scene) {
         data[base + (3 + corner) * 4 + axis] = normals[vertex * 3 + axis];
         data[base + (6 + corner) * 4 + axis] = colors[vertex * 3 + axis];
       }
-      data[base + (3 + corner) * 4 + 3] = uvSource[vertex * 2];
-      data[base + (6 + corner) * 4 + 3] = uvSource[vertex * 2 + 1];
+      data[base + (3 + corner) * 4 + 3] = uvs[vertex * 2];
+      data[base + (6 + corner) * 4 + 3] = uvs[vertex * 2 + 1];
     }
+    if (uvs1) packSecondUvSet(data, base, uvs1, corners);
   }
   return table;
+}
+
+function packSecondUvSet(data, base, uvs1, corners) {
+  data[base + 9 * 4] = uvs1[corners[0] * 2];
+  data[base + 9 * 4 + 1] = uvs1[corners[0] * 2 + 1];
+  data[base + 9 * 4 + 2] = uvs1[corners[1] * 2];
+  data[base + 9 * 4 + 3] = uvs1[corners[1] * 2 + 1];
+  data[base + 4 + 3] = uvs1[corners[2] * 2];
+  data[base + 8 + 3] = uvs1[corners[2] * 2 + 1];
 }
 
 /** Shelf-packs the distinct material textures into one RGBA8 atlas; returns where each one went. */
@@ -179,6 +193,7 @@ export function packMaterials(materials, atlas, shadowOnlyParts = null) {
       data[base + 17 + fieldIndex] = textureFlags(texture);
       data.set([place.x, place.y, texture.width, texture.height], base + (6 + fieldIndex) * 4);
     });
+    data[base + UV_SET_SLOT] = materialUvSetMask(material);
     if (shadowOnlyParts?.[index] === 1) data[base + SHADOW_ONLY_SLOT] = 1;
   });
   return table;

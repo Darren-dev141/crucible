@@ -4,7 +4,9 @@ import test from 'node:test';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { buildTraceScene } from '../src/path-tracer-scene.js';
 import { cookModule, cookTest } from './support/cook.js';
-import { materialUvSet, packTriangles } from '../src/path-tracer-gpu-pack.js';
+import { materialUvSetMask, packAtlas, packMaterials, packTriangles, UV_SET_SLOT } from '../src/path-tracer-gpu-pack.js';
+import { buildFragmentSource, TRIANGLE_TEXELS } from '../src/path-tracer-gpu-shader.js';
+import { MEGAKERNEL_SOURCE } from '../src/path-tracer-webgpu-kernel.js';
 
 // A 2 by 1 image: red on the left half, green on the right half.
 const RED_GREEN = { data: new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255]), width: 2, height: 1 };
@@ -77,13 +79,52 @@ test('a lightUvs array of the wrong length is refused', () => {
   assert.throws(() => buildTraceScene([part]), /lightUvs/);
 });
 
-test('the GPU triangle table reads the second set for a material whose base colour names it', () => {
-  const second = buildTraceScene([mixedPart(1)]);
-  const first = buildTraceScene([mixedPart(0)]);
-  assert.equal(materialUvSet(second.materials[0]), 1);
-  assert.equal(materialUvSet(first.materials[0]), 0);
-  assert.equal(packTriangles(second).data[3 * 4 + 3], 0.75);
-  assert.equal(packTriangles(first).data[3 * 4 + 3], 0.25);
+test('the GPU triangle table keeps both UV sets and the material mask names the maps on the second', () => {
+  const mixed = buildTraceScene([mixedPart(1)]);
+  const plain = buildTraceScene([mixedPart(0)]);
+  assert.equal(materialUvSetMask(mixed.materials[0]), 1);
+  assert.equal(materialUvSetMask(plain.materials[0]), 0);
+  for (const scene of [mixed, plain]) {
+    const { data } = packTriangles(scene);
+    const slot = 0;
+    const base = slot * TRIANGLE_TEXELS * 4;
+    assert.equal(data[base + 3 * 4 + 3], 0.25);
+    assert.equal(data[base + 6 * 4 + 3], 0.5);
+    assert.deepEqual(Array.from(data.subarray(base + 9 * 4, base + 9 * 4 + 4)), [0.75, 0.5, 0.75, 0.5]);
+    assert.equal(data[base + 4 + 3], 0.75);
+    assert.equal(data[base + 8 + 3], 0.5);
+  }
+});
+
+test('the GPU material record sets one bit per map that reads TEXCOORD_1', () => {
+  const part = mixedPart(0);
+  part.material.normalMap.uvChannel = 1;
+  const scene = buildTraceScene([part]);
+  assert.equal(materialUvSetMask(scene.materials[0]), 2);
+  const atlas = packAtlas(scene.materials);
+  const table = packMaterials(scene.materials, atlas);
+  assert.equal(table.data[UV_SET_SLOT], 2);
+  const bothSets = mixedPart(1);
+  assert.equal(materialUvSetMask(buildTraceScene([bothSets]).materials[0]), 1);
+});
+
+test('a scene without a second UV set packs zeros and an empty mask', () => {
+  const part = mixedPart(0);
+  delete part.geometry.lightUvs;
+  const scene = buildTraceScene([part]);
+  const { data } = packTriangles(scene);
+  const base = 0;
+  assert.deepEqual(Array.from(data.subarray(base + 9 * 4, base + 9 * 4 + 4)), [0, 0, 0, 0]);
+  assert.equal(packMaterials(scene.materials, packAtlas(scene.materials)).data[UV_SET_SLOT], 0);
+});
+
+test('both GPU kernels pick the UV set of each map from the material mask', () => {
+  for (const source of [buildFragmentSource(), MEGAKERNEL_SOURCE]) {
+    assert.match(source, /mapReadsSecondUvSet\(flagsTwo\.z, 1\)/);
+    assert.match(source, /mapReadsSecondUvSet\(flagsTwo\.z, 2\)/);
+    assert.match(source, /mapReadsSecondUvSet\(flagsTwo\.z, 4\)/);
+    assert.match(source, /mapReadsSecondUvSet\(flagsTwo\.z, 8\)/);
+  }
 });
 
 test('a map on TEXCOORD_1 without lightUvs is refused with a message that says what to set', () => {

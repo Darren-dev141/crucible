@@ -18,7 +18,7 @@ export const PATH_STATE_VECTORS = 9;
 const buildCommonSource = ({ hasVolume = false } = {}) => /* wgsl */ `
 const PI: f32 = 3.14159265358979;
 const TWO_PI: f32 = 6.28318530717959;
-const TRIANGLE_TEXELS: i32 = 9;
+const TRIANGLE_TEXELS: i32 = 10;
 const MATERIAL_TEXELS: i32 = 10;
 const LIGHT_TEXELS: i32 = 6;
 const STACK_SIZE: i32 = 128;
@@ -263,6 +263,11 @@ fn applyNormalMap(rectangle: vec4<f32>, flags: f32, scale: vec2<f32>, edgeOne: v
   hitNormal = mapped / mappedLength;
 }
 
+// True when bit \`bit\` of the material's TEXCOORD_1 mask (material texel 5, third channel) is set.
+fn mapReadsSecondUvSet(mask: f32, bit: i32) -> bool {
+  return (i32(mask) / bit) % 2 == 1;
+}
+
 // Fills the hit globals from the triangle in nearestSlot; returns the alpha of the colour map.
 fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
   let base = nearestSlot * TRIANGLE_TEXELS;
@@ -275,6 +280,8 @@ fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
   let colorOneData = triangles[base + 6];
   let colorTwoData = triangles[base + 7];
   let colorThreeData = triangles[base + 8];
+  let secondSetCorners = triangles[base + 9];
+  let secondSetThird = vec2<f32>(triangles[base + 1].w, triangles[base + 2].w);
   let secondWeight = nearestU;
   let thirdWeight = nearestV;
   let firstWeight = 1.0 - secondWeight - thirdWeight;
@@ -285,6 +292,7 @@ fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
   hitNormal = normal / select(normalLength, 1.0, normalLength == 0.0);
   let vertexColor = firstWeight * colorOneData.xyz + secondWeight * colorTwoData.xyz + thirdWeight * colorThreeData.xyz;
   let uv = firstWeight * vec2<f32>(normalOneData.w, colorOneData.w) + secondWeight * vec2<f32>(normalTwoData.w, colorTwoData.w) + thirdWeight * vec2<f32>(normalThreeData.w, colorThreeData.w);
+  let secondUv = firstWeight * secondSetCorners.xy + secondWeight * secondSetCorners.zw + thirdWeight * secondSetThird;
   hitMaterialIndex = i32(cornerData.w);
   let material = hitMaterialIndex * MATERIAL_TEXELS;
   let colorMetallic = materials[material];
@@ -306,23 +314,24 @@ fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
   var alpha = 1.0;
   let mapRectangle = materials[material + 6];
   if (mapRectangle.z > 0.0) {
-    let texel = sampleAtlas(mapRectangle, flagsOne.y, uv);
+    let texel = sampleAtlas(mapRectangle, flagsOne.y, select(uv, secondUv, mapReadsSecondUvSet(flagsTwo.z, 1)));
     hitColor *= texel.rgb;
     alpha = texel.a;
   }
   let emissiveRectangle = materials[material + 9];
-  if (emissiveRectangle.z > 0.0) { hitEmission *= sampleAtlas(emissiveRectangle, flagsTwo.x, uv).rgb; }
+  if (emissiveRectangle.z > 0.0) { hitEmission *= sampleAtlas(emissiveRectangle, flagsTwo.x, select(uv, secondUv, mapReadsSecondUvSet(flagsTwo.z, 8))).rgb; }
   let surfaceRectangle = materials[material + 8];
   if (surfaceRectangle.z > 0.0) {
-    let texel = sampleAtlas(surfaceRectangle, flagsOne.w, uv);
+    let texel = sampleAtlas(surfaceRectangle, flagsOne.w, select(uv, secondUv, mapReadsSecondUvSet(flagsTwo.z, 4)));
     hitRoughness *= texel.g;
     hitMetallic *= texel.b;
   }
   let normalRectangle = materials[material + 7];
   if (normalRectangle.z > 0.0) {
-    let uvOne = vec2<f32>(normalTwoData.w - normalOneData.w, colorTwoData.w - colorOneData.w);
-    let uvTwo = vec2<f32>(normalThreeData.w - normalOneData.w, colorThreeData.w - colorOneData.w);
-    applyNormalMap(normalRectangle, flagsOne.z, shape.xy, edgeOne, edgeTwo, uvOne, uvTwo, uv);
+    let normalOnSecondSet = mapReadsSecondUvSet(flagsTwo.z, 2);
+    let uvOne = select(vec2<f32>(normalTwoData.w - normalOneData.w, colorTwoData.w - colorOneData.w), secondSetCorners.zw - secondSetCorners.xy, normalOnSecondSet);
+    let uvTwo = select(vec2<f32>(normalThreeData.w - normalOneData.w, colorThreeData.w - colorOneData.w), secondSetThird - secondSetCorners.xy, normalOnSecondSet);
+    applyNormalMap(normalRectangle, flagsOne.z, shape.xy, edgeOne, edgeTwo, uvOne, uvTwo, select(uv, secondUv, normalOnSecondSet));
   }
   return alpha;
 }
@@ -365,10 +374,15 @@ fn alphaAtNearestHit() -> f32 {
   let first = triangles[base + 3];
   let second = triangles[base + 4];
   let third = triangles[base + 5];
-  let uv = firstWeight * vec2<f32>(first.w, triangles[base + 6].w) + secondWeight * vec2<f32>(second.w, triangles[base + 7].w) + thirdWeight * vec2<f32>(third.w, triangles[base + 8].w);
+  var uv = firstWeight * vec2<f32>(first.w, triangles[base + 6].w) + secondWeight * vec2<f32>(second.w, triangles[base + 7].w) + thirdWeight * vec2<f32>(third.w, triangles[base + 8].w);
   let material = i32(triangles[base].w) * MATERIAL_TEXELS;
   let mapRectangle = materials[material + 6];
   if (mapRectangle.z <= 0.0) { return 1.0; }
+  if (mapReadsSecondUvSet(materials[material + 5].z, 1)) {
+    let secondSetCorners = triangles[base + 9];
+    let secondSetThird = vec2<f32>(triangles[base + 1].w, triangles[base + 2].w);
+    uv = firstWeight * secondSetCorners.xy + secondWeight * secondSetCorners.zw + thirdWeight * secondSetThird;
+  }
   return sampleAtlas(mapRectangle, materials[material + 4].y, uv).a;
 }
 
