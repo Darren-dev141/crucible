@@ -152,3 +152,17 @@ test('geometry and asset levels return renderer geometry, and refuse skinned par
   assert.equal(assetLevels[1].asset.parts[0].geometry, assetLevels[1].asset.parts[1].geometry);
   assert.throws(() => generateAssetLods({ parts: [{ name: 'arm', geometry, skin: {} }] }), /skinned/);
 });
+
+test('generateMeshLods keeps relativeError a number for a mesh whose vertices coincide', () => {
+  const point = createMeshData({
+    positions: new Float32Array([1, 1, 1, 1, 1, 1, 1, 1, 1]),
+    faceOffsets: new Uint32Array([0, 3]),
+    cornerVertices: new Uint32Array([0, 1, 2]),
+  });
+  const levels = generateMeshLods(point, { ratios: [0.5] });
+  for (const level of levels) assert.equal(level.relativeError, 0);
+});
+
+test('generateAssetLods names the part that has no geometry', () => {
+  assert.throws(() => generateAssetLods({ parts: [{ name: 'hull' }] }), /Part hull needs a geometry/);
+});
