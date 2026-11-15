@@ -38,6 +38,7 @@ function floor(color = [0.5, 0.5, 0.5]) {
 
 export async function skyLighting(intensity = 1) {
   const response = await fetch(HDRI_URL);
+  // Unturned on purpose (#1371): render-blender.py applies ENVIRONMENT_ROTATION_Z, so Crucible and Blender keep the pre-0.21.0 pair this suite was tuned on.
   const parsed = parseRadianceHdr(await response.arrayBuffer());
   const data = parsed.data.map((radiance) => Math.min(radiance, HDRI_RADIANCE_LIMIT));
   const map = createEnvironmentMap({ ...parsed, data, intensity, showBackground: true });

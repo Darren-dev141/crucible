@@ -122,7 +122,7 @@ export function expandCrowd(recipe, node, asset, copy, cache, runtime, limits) {
       geometry: `${prefix}:${rigIndex}`, material: materialIds[rigIndex],
       assetPart: { placement: node.id, index: instance, matrix: Array.from(part.matrix) },
     });
-    runtime.partExtras.set(id, { crowd: part.crowd, assembly: part.assembly, ...(part.lods ? { lods: part.lods } : {}), ...(part.morph ? { morph: part.morph } : {}) });
+    runtime.partExtras.set(id, { group: node.id, crowd: part.crowd, assembly: part.assembly, ...(part.lods ? { lods: part.lods } : {}), ...(part.morph ? { morph: part.morph } : {}) });
   });
   const eye = recipe.camera?.eye ?? null;
   const record = {

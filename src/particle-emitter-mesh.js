@@ -59,7 +59,7 @@ function surfaceSampler(triangles) {
     let high = cumulative.length - 1;
     while (low < high) {
       const middle = (low + high) >> 1;
-      if (cumulative[middle] < target) low = middle + 1;
+      if (cumulative[middle] <= target) low = middle + 1;
       else high = middle;
     }
     const triangle = triangles[low];
@@ -203,7 +203,7 @@ function edgeSampler(positions, indices, weights, sharpAngle) {
     let high = cumulative.length - 1;
     while (low < high) {
       const middle = (low + high) >> 1;
-      if (cumulative[middle] < target) low = middle + 1;
+      if (cumulative[middle] <= target) low = middle + 1;
       else high = middle;
     }
     const edge = edges[low];

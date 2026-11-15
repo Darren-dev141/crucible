@@ -5,7 +5,8 @@ import { watch, writeFileSync } from 'node:fs';
 import { tmpdir, constants, setPriority } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
-import { createAgentRenderJobs, jobDeadlineMs } from '../scripts/agent-render-jobs.mjs';
+import { createAgentRenderJobs, jobDeadlineMs, frameByteLimitFor, oversizeFrameBudgetError } from '../scripts/agent-render-jobs.mjs';
+import { planRenderSize } from '../src/budget.js';
 
 setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
 // close() waits this long for an aborted job to settle. It is a liveness bound, not a speed target: under load the
@@ -219,6 +220,74 @@ test('1920x1080 and 1080x1920 jobs are admitted', async context => {
   await controller.close();
 });
 
+test('an image job takes up to 3840x2160 and the frame byte limit grows with its pixels', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage });
+  for (const [width, height] of [[2880, 1620], [3840, 2160], [2160, 3840]]) {
+    const { jobId } = await controller.submit({ ...request(), settings: { kind: 'image', width, height } });
+    assert.equal((await terminal(controller, jobId)).settings.height, height);
+  }
+  await assert.rejects(controller.submit({ ...request(), settings: { kind: 'video', width: 1920, height: 1081 } }), /1920x1080 \(only an image job goes up to 3840x2160\)/);
+  assert.equal(frameByteLimitFor(1920, 1080, 12), 12);
+  assert.equal(frameByteLimitFor(2880, 1620, 12), 36);
+  assert.equal(frameByteLimitFor(3840, 2160, 12), 48);
+  await controller.close();
+});
+
+const MEBIBYTE = 1024 ** 2;
+
+function planFor({ width, height, memoryBudgetMiB, hdr, depth, textureBytes = 20 * MEBIBYTE, geometryBytes = 3 * MEBIBYTE }) {
+  return planRenderSize({ width, height, samples: 4, memoryBudgetMiB, geometryBytes, textureBytes, hdr, bloom: true, depth });
+}
+
+test('a frame over 1920x1080 that the memory budget shrinks is refused with a --memory that really renders it', () => {
+  const requested = { width: 2880, height: 1620 };
+  const maximumMemoryMiB = 384;
+  for (const { hdr, depth, expectedMiB } of [
+    { hdr: false, depth: false, expectedMiB: 280 }, { hdr: true, depth: false, expectedMiB: 378 }, { hdr: true, depth: true, expectedMiB: 395 },
+  ]) {
+    const plan = planFor({ ...requested, memoryBudgetMiB: 192, hdr, depth });
+    assert.ok(plan.reduced);
+    const error = oversizeFrameBudgetError({ requested, rendered: plan, plan, memoryMiB: 192, maximumMemoryMiB: 1024 });
+    const neededMiB = Number(/--memory ([0-9]+) or more/.exec(error.message)[1]);
+    assert.equal(neededMiB, expectedMiB);
+    assert.equal(planFor({ ...requested, memoryBudgetMiB: neededMiB, hdr, depth }).reduced, false, 'the named --memory renders the full size at once');
+    assert.equal(planFor({ ...requested, memoryBudgetMiB: neededMiB - 1, hdr, depth }).reduced, true, 'and one MiB less does not');
+  }
+  const withDepth = planFor({ ...requested, memoryBudgetMiB: 192, hdr: true, depth: true });
+  const overCeiling = oversizeFrameBudgetError({ requested, rendered: withDepth, plan: withDepth, memoryMiB: 192, maximumMemoryMiB });
+  assert.match(overCeiling.message, /needs about 395 MiB, over the 384 MiB ceiling.*smaller size/);
+});
+
+test('a frame rendered at the size asked for, and a 1080p-class frame that was reduced, raise no oversize error', () => {
+  const requested = { width: 2880, height: 1620 };
+  const roomy = planFor({ ...requested, memoryBudgetMiB: 384, hdr: false, depth: false });
+  assert.equal(oversizeFrameBudgetError({ requested, rendered: roomy, plan: roomy, memoryMiB: 384, maximumMemoryMiB: 384 }), undefined);
+  const small = planFor({ width: 1920, height: 1080, memoryBudgetMiB: 96, hdr: false, depth: false, textureBytes: 0 });
+  assert.ok(small.reduced);
+  assert.equal(oversizeFrameBudgetError({ requested: { width: 1920, height: 1080 }, rendered: small, plan: small, memoryMiB: 96, maximumMemoryMiB: 384 }), undefined);
+});
+
+test('the stored frame limit scales with the pixels: a 2880x1620 job admits a frame that a 1920x1080 job refuses', async context => {
+  const root = await temporary(context);
+  const writeFrameOfBytes = frameBytes => async ({ directory, progress }) => {
+    await writeFile(join(directory, 'render.png.partial'), Buffer.alloc(frameBytes));
+    await progress({ frames: 1, maximumPendingFrames: 1 });
+    return { artifacts: [{ temporary: 'render.png.partial', filename: 'render.png', mimeType: 'image/png' }], metrics: { maximumPendingFrames: 1 } };
+  };
+  const bytesBetweenOneAndThreeTimesTheLimit = limits.maxFrameBytes * 2;
+  const large = await createAgentRenderJobs({ root, limits, run: writeFrameOfBytes(bytesBetweenOneAndThreeTimesTheLimit) });
+  const admitted = await terminal(large, (await large.submit({ ...request(), settings: { kind: 'image', width: 2880, height: 1620 } })).jobId);
+  assert.equal(admitted.state, 'completed');
+  assert.equal(admitted.artifacts[0].bytes, bytesBetweenOneAndThreeTimesTheLimit);
+  await large.close();
+  const standardRoot = await temporary(context);
+  const standard = await createAgentRenderJobs({ root: standardRoot, limits, run: writeFrameOfBytes(bytesBetweenOneAndThreeTimesTheLimit) });
+  const refused = await terminal(standard, (await standard.submit({ ...request(), settings: { kind: 'image', width: 1920, height: 1080 } })).jobId);
+  assert.equal(refused.state, 'failed');
+  await standard.close();
+});
+
 test('validation enforces range, geometry-independent storage limits and one pending frame', async context => {
   const root = await temporary(context);
   let calls = 0;
@@ -229,9 +298,12 @@ test('validation enforces range, geometry-independent storage limits and one pen
   } });
   for (const settings of [
     { kind: 'video', width: 65, height: 64 },
-    { kind: 'image', width: 1921, height: 64 },
-    { kind: 'image', width: 1920, height: 1081 },
-    { kind: 'image', width: 1920, height: 1920 },
+    { kind: 'image', width: 3841, height: 64 },
+    { kind: 'image', width: 3840, height: 2161 },
+    { kind: 'image', width: 3840, height: 3840 },
+    { kind: 'stills', width: 1921, height: 64 },
+    { kind: 'stills', width: 1920, height: 1081 },
+    { kind: 'video', width: 2880, height: 1620 },
     { kind: 'video', width: 64, height: 64, fps: 61 },
     { kind: 'video', width: 64, height: 64, duration: 61 },
   ]) await assert.rejects(controller.submit({ ...request(), settings }));

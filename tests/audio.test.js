@@ -456,3 +456,16 @@ test('a linear rolloff above 1 is rejected, other models keep up to 20, and gain
   assert.equal(distanceGain(1000, { model: 'linear', rolloff: 1, referenceDistance: 1, maximumDistance: 50 }), 0);
   assert.equal(distanceGain(1000, { model: 'linear', rolloff: 5, referenceDistance: 1, maximumDistance: 50 }), 0);
 });
+
+test('a fractional maximumInstances or maximumVoices is refused instead of letting one more voice play', () => {
+  const { audio } = createFixture();
+  assert.throws(() => audio.defineSound('clink', { buffer, maximumInstances: 2.5 }), /maximumInstances must be a whole number from 1 to 32, got 2.5/);
+  assert.throws(() => createFixture({ maximumVoices: 1.5 }), /maximumVoices must be a whole number from 1 to 64, got 1.5/);
+});
+
+test('marker times that are not numbers are refused instead of silently dropping every cue', () => {
+  const markers = [{ time: 1, name: 'footstep' }];
+  assert.throws(() => markersCrossed(markers, 0, Number.NaN), /markers toTime must be a number/);
+  assert.throws(() => markersCrossed(markers, undefined, 2), /markers fromTime must be a number/);
+  assert.equal(markersCrossed(markers, 0, 2).length, 1);
+});

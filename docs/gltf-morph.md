@@ -7,7 +7,7 @@ Available from version `0.4.0`.
 The source renderer applies the imported targets on the GPU before skeletal deformation.
 
 ```js
-import { parseGltf } from '../src/gltf.js';
+import { parseGltf } from 'crucible/addons/gltf';
 
 const asset = await parseGltf(glbBytes, { maxBytes: 32 * 1024 * 1024 });
 const morphParts = asset.parts.filter(part => part.morph);

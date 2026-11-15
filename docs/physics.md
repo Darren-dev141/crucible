@@ -14,7 +14,7 @@ npm install @dimforge/rapier3d-compat@0.21.0
 Use a package-aware development server such as Vite to resolve the solver import.
 
 ```js
-import { createPhysicsScene, planPhysicsScene } from '../src/physics.js';
+import { createPhysicsScene, planPhysicsScene } from 'crucible/addons/physics';
 
 const definition = {
   gravity: [0, -9.81, 0],
@@ -376,7 +376,7 @@ A scene recipe takes a `physics` section, and `set-physics` edits it (`null` cle
 ```
 
 Each body is a root node with a geometry. Its collider is fitted to that geometry at the node scale: `box`, `ball`, `capsule`, `cylinder` and `cone` from the bounds, `convex` from at most 2048 distinct vertices, `trimesh` from every triangle, or `compound` with a `shapes` list of up to 16 sub-colliders (`box`, `ball`, `capsule`, `cylinder`, `cone` with optional `translation` and `rotation`).
-Recipe joints also accept `spring` (`restLength`, `stiffness`, `damping`), `motor` (`{ mode: "position" | "velocity", target, stiffness?, damping, maxForce }`) and `contactsEnabled`. Recipe `physics.events` schedules up to 128 `impulse`, `kinematicPose` and `jointMotor` events by `time` in seconds (or `tick`), and `physics.fields` applies up to 8 force fields (`wind`, `turbulence`, `vortex`, `drag`, `magnet`) to dynamic bodies at every step.
+Recipe joints also accept `name` (what `jointMotor` events refer to; fracture-node writes `glue-a-b`), `breakImpulse` (fixed joints only), `spring` (`restLength`, `stiffness`, `damping`), `motor` (`{ mode: "position" | "velocity", target, stiffness?, damping, maxForce }`) and `contactsEnabled`. Recipe `physics.events` schedules up to 128 `impulse`, `kinematicPose` and `jointMotor` events by `time` in seconds (or `tick`), and `physics.fields` applies up to 8 force fields (`wind`, `turbulence`, `vortex`, `drag`, `magnet`) to dynamic bodies at every step.
 Defaults are `box` for dynamic bodies and sensors, `trimesh` for fixed ones.
 `layer` (0 to 15) and `collidesWith` replace raw bit masks.
 A node cannot have both a physics body and a motion `translation` or `rotation` track.
@@ -435,10 +435,10 @@ The boat code is part of the buoyancy chunk, so a scene without floating bodies 
 
 ## Fracture and breakable glue
 
-`src/fracture.js` splits a closed convex part (a box, cylinder, sphere or any convex mesh of at most 2048 triangles) into Voronoi fragments and describes the glue that holds them together. A concave part is rejected with a message to split it into convex parts first.
+`crucible/addons/fracture` splits a closed convex part (a box, cylinder, sphere or any convex mesh of at most 2048 triangles) into Voronoi fragments and describes the glue that holds them together. A concave part is rejected with a message to split it into convex parts first.
 
 ```js
-import { fractureMesh, fragmentPhysics } from './src/fracture.js';
+import { fractureMesh, fragmentPhysics } from 'crucible/addons/fracture';
 const fracture = fractureMesh(wallGeometry, { seed: 7, cells: 24, impact: [1.2, 0.5, 0], impactRadius: 0.6 });
 const parts = fragmentPhysics(fracture, { translation: [0, 2, 0], strength: 20, density: 100 });
 // parts.bodies, parts.colliders and parts.joints go into a physics definition next to a ball and a floor.

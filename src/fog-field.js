@@ -147,11 +147,11 @@ export function volumeShadowAmbient(volume, parts, measureOpenness) {
   }
   const key = `${volume.minimum}|${volume.maximum}`;
   const cached = derivedShadowAmbients.get(parts);
-  if (cached?.key === key) {
+  if (cached?.key === key && cached.measureOpenness === measureOpenness) {
     return cached.value;
   }
   const centre = volume.minimum.map((low, axis) => (low + volume.maximum[axis]) / 2);
   const value = 0.15 + 0.85 * (measureOpenness?.(parts, centre) ?? 0);
-  derivedShadowAmbients.set(parts, { key, value });
+  derivedShadowAmbients.set(parts, { key, measureOpenness, value });
   return value;
 }

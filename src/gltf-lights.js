@@ -28,10 +28,11 @@ function spotCone(definition) {
  * Maps KHR_lights_punctual onto the renderer's existing light options. Point lights and spot lights go to
  * pointLights and spotLights up to the renderer's limits. glTF intensity is candela for both, as in the renderer.
  * The renderer has one directional key light, so the first directional light sets keyColor and lightDirection.
+ * A file with lights also returns fillIntensity 0, and keyIntensity 0 when it has no directional light.
  * Every light that does not fit is skipped with a warning.
  * @param {object} document the glTF JSON
  * @param {{ nodeIndex: number, matrix: ArrayLike<number> }[]} lightNodes nodes that reference a light, with their column-major world matrix
- * @returns {{ lights: object, warnings: string[] }} lights is a partial environment: pointLights, spotLights, keyColor, lightDirection, keyIntensity
+ * @returns {{ lights: object, warnings: string[] }} lights is a partial environment: pointLights, spotLights, keyColor, lightDirection, keyIntensity, fillIntensity
  */
 export function readPunctualLights(document, lightNodes) {
   const definitions = document.extensions?.KHR_lights_punctual?.lights ?? [];
@@ -98,6 +99,11 @@ export function readPunctualLights(document, lightNodes) {
     lights.keyColor = key.keyColor;
     lights.lightDirection = key.lightDirection;
     lights.keyIntensity = key.keyIntensity;
+  } else if (pointLights.length || spotLights.length) {
+    lights.keyIntensity = 0;
   }
+  // A file that lights itself brings no studio light: the renderer's own key and fill lights are lamps the file does not
+  // have, and they brighten and wash out the picture next to three.js and Cycles (#1178).
+  if (Object.keys(lights).length) lights.fillIntensity = 0;
   return { lights, warnings };
 }

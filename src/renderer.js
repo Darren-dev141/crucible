@@ -2,7 +2,7 @@ import { resolveBackground, clearColourFor } from './clear-colour.js';
 import { materialTags } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { BLEND_FACTORS } from './blend-output.js';
-import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
+import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
 import { postFragment, createPostFragment, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
 import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
@@ -874,6 +874,7 @@ export class CrucibleRenderer {
     this.shaderFeatures.add(environment.map ? 'environmentMap' : 'studioLighting');
     shaderFeaturesOfLighting(this.lighting).forEach(feature => this.shaderFeatures.add(feature));
     if (shading === 'light') this.shaderFeatures.add(LIGHT_SHADING_FEATURE);
+    this.shaderFeatures.add(FRAGMENT_SHADOW_POSITION_FEATURE);
     if (shadowCascades) this.shaderFeatures.add(shadowCascades.shaderFeature);
     // Cascades replace the single map the tint is cut against, and the tint map is a half float render target.
     if (this.shaderFeatures.has('tintedShadows') && (shadowCascades || !this.context.getExtension('EXT_color_buffer_float'))) this.shaderFeatures.delete('tintedShadows');

@@ -4,6 +4,13 @@ import { registeredFeatureCode, requireFeatureCode, registerShaderFeatureCode, r
 
 export { registerShaderFeatureCode, registerSplatSupport, requireSplatSupport, layerTextureSupport, viewTransformShader, SPLAT_UNITS };
 
+/**
+ * The main program rebuilds the sun shadow coordinate from the world position in the fragment shader instead of carrying it
+ * as a vec4 varying. Meshes with about one triangle per pixel pay for every varying in setup and interpolation (Monk 13.5 to
+ * 11.4 ms, measured), and the world position is already interpolated. Not in SHADER_FEATURES: the liquid pass shares the
+ * default vertex shader and reads the varying.
+ */
+export const FRAGMENT_SHADOW_POSITION_FEATURE = 'fragmentShadowPosition';
 // The GPU crowd path (src/crowd-skinning.js) replaces this stub with its own code when that addon is imported, so the core pays for two lines.
 const CROWD_SHADER_STUB = 'uniform float crowdEnabled;\nmat4 crowdTransform() { return mat4(1.0); }';
 let crowdShaderCode = CROWD_SHADER_STUB;
@@ -88,7 +95,9 @@ out float vertexSkyVisibility;
 out vec2 vertexWear;
 #endif
 #endif
+#ifndef SHADOW_IN_FRAGMENT
 out vec4 shadowPosition;
+#endif
 out vec2 textureUV, lightmapUV;
 out vec3 boxPosition, boxNormal;
 ${skinningShader(features)}
@@ -140,7 +149,9 @@ void main() {
   vertexSkyVisibility = USES_CROWD ? 1.0 : vertexColor.a;
 #endif
 #endif
+#ifndef SHADOW_IN_FRAGMENT
   shadowPosition = lightProjection * world;
+#endif
   gl_Position = viewProjection * world;
   // A depth rank (renderer applyDepthRank): the depth of this point moved toward the eye by flushBias.x metres plus
   // flushBias.y of its distance, at the same place on screen, so ranked faces never crack or slide.
@@ -334,7 +345,12 @@ float wearNoise(vec3 position) {
   float high = mix(mix(wearCellHash(cell + vec3(0, 0, 1)), wearCellHash(cell + vec3(1, 0, 1)), blend.x), mix(wearCellHash(cell + vec3(0, 1, 1)), wearCellHash(cell + vec3(1, 1, 1)), blend.x), blend.y);
   return mix(low, high, blend.z);
 }
+#ifdef SHADOW_IN_FRAGMENT
+uniform mat4 lightProjection;
+vec4 shadowPosition;
+#else
 in vec4 shadowPosition;
+#endif
 in vec2 textureUV, lightmapUV;
 uniform sampler2D lightMap;
 uniform float lightMapScale;
@@ -721,6 +737,9 @@ vec3 renderPassValue(vec3 color, vec3 normal, vec3 emission) {
 }
 
 void main() {
+#ifdef SHADOW_IN_FRAGMENT
+  shadowPosition = lightProjection * vec4(worldPosition, 1.0);
+#endif
   vec3 normal = normalize(worldNormal);
   // Foliage and grass cards are single-sided geometry whose shading normal already leans toward the
   // canopy, so the back face keeps it instead of flipping to point into the crown.
@@ -1012,7 +1031,7 @@ export function liquidPassDrawer() {
 
 function hasSeparateCode(feature) {
   if (feature in MODULE_FEATURES) return true;
-  if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE) return false;
+  if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE || feature === FRAGMENT_SHADOW_POSITION_FEATURE) return false;
   return !ENVIRONMENT_FEATURES.includes(feature) && !VERTEX_ONLY_FEATURES.includes(feature);
 }
 
@@ -1033,7 +1052,7 @@ export const SHADER_FEATURES = Object.freeze([...Object.keys(SHADER_FEATURE_COND
 // choice between them whether or not the uniform picks it, so a renderer without those parts compiles them out.
 // The varyings that both shaders carry: per-vertex colours, and the per-instance values that a draw of one instance sets as uniforms.
 function interpolantDefines(enabled) {
-  return [['vertexColors', 'VERTEX_COLORS'], ['surfaceWear', 'SURFACE_WEAR'], ['instanced', 'INSTANCED']].filter(([feature]) => enabled.has(feature)).map(([, macro]) => `#define ${macro}`);
+  return [['vertexColors', 'VERTEX_COLORS'], ['surfaceWear', 'SURFACE_WEAR'], ['instanced', 'INSTANCED'], [FRAGMENT_SHADOW_POSITION_FEATURE, 'SHADOW_IN_FRAGMENT']].filter(([feature]) => enabled.has(feature)).map(([, macro]) => `#define ${macro}`);
 }
 
 function vertexDefinitions(enabled) {

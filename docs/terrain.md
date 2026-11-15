@@ -128,8 +128,11 @@ Where the rest of the port's load goes (marks in a scratch copy, ms from navigat
 `addons/navmesh` finds walking routes over any triangle ground, so a character can go around holes, steep slopes and obstacles. It is pure JavaScript and gives the same path for the same input.
 
 ```js
+import { createTerrain } from 'crucible/addons/terrain';
 import { createNavmesh } from 'crucible/addons/navmesh';
-const { positions, indices } = terrain.parts[0].geometry; // world space, Y up
+// One chunk covers the whole ground, so its geometry is the walkable surface. A terrain of many chunks has one geometry per chunk.
+const walkable = createTerrain({ size: 40, chunks: 1, resolution: 64, levels: 1, seed: 11 });
+const { positions, indices } = walkable.parts[0].geometry; // world space, Y up
 const navmesh = createNavmesh({ positions, indices, agentRadius: 0.3, maxSlopeDegrees: 40, obstacles: [{ min: [4, 4], max: [6, 6] }] });
 const { points, length, searchNodes } = navmesh.findPath([-15, -15], [15, 15], { spacing: 1.5 });
 ```
