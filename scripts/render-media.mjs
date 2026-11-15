@@ -26,6 +26,27 @@ function argumentsFrom(values) {
   return result;
 }
 
+/** A dimension the caller did not pass is derived from the other one; video rounds it to even so yuv420p accepts it. */
+function roundDerivedDimension(value, kind, passedValue) {
+  if (kind === 'video' && passedValue === undefined) return 2 * Math.round(value / 2);
+  return Math.round(value);
+}
+
+/** Still number `index` is frame-<index>.<ext> in the directory of --output, like the render job; the extension follows the capture format. */
+export function stillPath(output, index, captureFormat) {
+  const extension = captureFormat === 'jpeg' ? 'jpg' : 'png';
+  return resolve(dirname(output), `frame-${index}.${extension}`);
+}
+
+/** Decodes the audio stream of a finished file and throws when there is none. */
+export async function assertOutputHasAudio(ffmpeg, output) {
+  try {
+    await measureStreamSeconds(ffmpeg, output, 'audio');
+  } catch (error) {
+    throw new Error(`The rendered video has no audio stream although --audio was given (${error.message}). Check the sound file and the encoder.`);
+  }
+}
+
 export function parseRenderOptions(values) {
   const options = argumentsFrom(values);
   const kind = options.kind ?? 'image';
@@ -51,8 +72,8 @@ export function parseRenderOptions(values) {
   let defaultHeight = aspect === 'portrait' ? longer : shorter;
   if (options.width !== undefined && options.height === undefined) defaultHeight = Number(options.width) / ratio;
   if (options.height !== undefined && options.width === undefined) defaultWidth = Number(options.height) * ratio;
-  const width = Math.round(numberOption('width', defaultWidth, 64, 4096));
-  const height = Math.round(numberOption('height', defaultHeight, 64, 4096));
+  const width = roundDerivedDimension(numberOption('width', defaultWidth, 64, 4096), kind, options.width);
+  const height = roundDerivedDimension(numberOption('height', defaultHeight, 64, 4096), kind, options.height);
   if (kind === 'video' && (width % 2 || height % 2)) throw new Error('Video dimensions must be even for yuv420p output.');
   const fps = numberOption('fps', cameraKeys?.fps ?? preset.fps, 1, 60);
   const duration = numberOption('duration', scene === 'film' ? FILM_DURATION : ['motion', 'modeling'].includes(scene) ? 12 : 32, 0.1, 240);
@@ -304,7 +325,7 @@ export async function renderMedia(values = process.argv.slice(2)) {
         }));
       }
       encoder = createFrameEncoder({ executable: ffmpeg, output, fps, format: captureFormat === 'raw' ? 'rawvideo' : captureFormat === 'webcodecs' ? 'h264' : captureFormat,
-        width, height, backend: encoderBackend, audioArguments, maximumFrameBytes: 64 * 1024 * 1024,
+        width, height, backend: encoderBackend, audioArguments, frameCount, maximumFrameBytes: 64 * 1024 * 1024,
         maximumOutputBytes: Number.MAX_SAFE_INTEGER });
       if (captureFormat === 'webcodecs') frameReceiver.onChunk(chunk => encoder.writeChunk(chunk));
       const captureSequenceStarted = performance.now();
@@ -327,13 +348,16 @@ export async function renderMedia(values = process.argv.slice(2)) {
       if (captureFormat === 'webcodecs') await page.evaluate(() => window.__finishVideoEncoder());
       const encoding = await encoder.finish();
       stageTimings.encoderFinishSeconds = encoding.finishSeconds;
+      // A silent film must not pass for a finished one: the encoder reports success even when the sound was dropped.
+      if (audioArguments.length) await assertOutputHasAudio(ffmpeg, output);
     } else if (kind === 'stills') {
       const stillTimes = scene === 'film' && start === 0 && options.duration === undefined
         ? [23, 49, 59, 101, 114, 149, 158, 182]
         : Array.from({ length: 8 }, (_, index) => start + duration * (index + 0.5) / 8);
+      let stillIndex = 0;
       for (const seconds of stillTimes) {
         const image = await capture(seconds);
-        await writeFile(resolve(dirname(output), `frame-${seconds.toFixed(1)}.${captureFormat === 'jpeg' ? 'jpg' : 'png'}`), image);
+        await writeFile(stillPath(output, stillIndex++, captureFormat), image);
       }
     } else {
       await writeFile(output, await capture(time));
