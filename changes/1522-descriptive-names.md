@@ -1,0 +1,1 @@
+- Internal variables and helpers in the mesh, cloth, soft body, glTF and decal code now have descriptive names, and `npm run check:names` fails a one-letter or abbreviated declaration (#1522)

@@ -56,13 +56,13 @@ function edgeCrossings(mesh, flat, vertexPoint, line, extraPositions) {
       const u = cross2(offset, span) / denominator;
       if (t < -SNAP || t > 1 + SNAP || u < -SNAP || u > 1 + SNAP) continue;
       const clamped = Math.min(1, Math.max(0, t));
-      const s = line.lengths[index] + Math.min(1, Math.max(0, u)) * (line.lengths[index + 1] - line.lengths[index]);
+      const distanceAlongLine = line.lengths[index] + Math.min(1, Math.max(0, u)) * (line.lengths[index + 1] - line.lengths[index]);
       if (found.some(other => Math.abs(other.t - clamped) < SNAP)) continue;
-      if (clamped < SNAP) found.push({ t: 0, vertex: first, s, inserted: false });
-      else if (clamped > 1 - SNAP) found.push({ t: 1, vertex: second, s, inserted: false });
+      if (clamped < SNAP) found.push({ t: 0, vertex: first, s: distanceAlongLine, inserted: false });
+      else if (clamped > 1 - SNAP) found.push({ t: 1, vertex: second, s: distanceAlongLine, inserted: false });
       else {
         extraPositions.push(lerp(vertexPoint(first), vertexPoint(second), clamped));
-        found.push({ t: clamped, vertex: mesh.vertexCount + extraPositions.length - 1, s, inserted: true });
+        found.push({ t: clamped, vertex: mesh.vertexCount + extraPositions.length - 1, s: distanceAlongLine, inserted: true });
       }
     }
     if (found.length) crossings.set(edge, found.sort((left, right) => left.t - right.t));

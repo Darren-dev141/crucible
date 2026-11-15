@@ -30,10 +30,10 @@ export function signedVolume(positions, triangles) {
   for (let corner = 0; corner < triangles.length; corner += 3) {
     const a = triangles[corner] * 3;
     const b = triangles[corner + 1] * 3;
-    const c = triangles[corner + 2] * 3;
-    volume += (positions[a] * (positions[b + 1] * positions[c + 2] - positions[b + 2] * positions[c + 1])
-      + positions[a + 1] * (positions[b + 2] * positions[c] - positions[b] * positions[c + 2])
-      + positions[a + 2] * (positions[b] * positions[c + 1] - positions[b + 1] * positions[c])) / 6;
+    const thirdVertexOffset = triangles[corner + 2] * 3;
+    volume += (positions[a] * (positions[b + 1] * positions[thirdVertexOffset + 2] - positions[b + 2] * positions[thirdVertexOffset + 1])
+      + positions[a + 1] * (positions[b + 2] * positions[thirdVertexOffset] - positions[b] * positions[thirdVertexOffset + 2])
+      + positions[a + 2] * (positions[b] * positions[thirdVertexOffset + 1] - positions[b + 1] * positions[thirdVertexOffset])) / 6;
   }
   return volume;
 }
@@ -48,13 +48,13 @@ export function solveVolume(positions, triangles, inverseMasses, restVolume, pre
   for (let corner = 0; corner < triangles.length; corner += 3) {
     const a = triangles[corner] * 3;
     const b = triangles[corner + 1] * 3;
-    const c = triangles[corner + 2] * 3;
-    const bcX = positions[b + 1] * positions[c + 2] - positions[b + 2] * positions[c + 1];
-    const bcY = positions[b + 2] * positions[c] - positions[b] * positions[c + 2];
-    const bcZ = positions[b] * positions[c + 1] - positions[b + 1] * positions[c];
-    const caX = positions[c + 1] * positions[a + 2] - positions[c + 2] * positions[a + 1];
-    const caY = positions[c + 2] * positions[a] - positions[c] * positions[a + 2];
-    const caZ = positions[c] * positions[a + 1] - positions[c + 1] * positions[a];
+    const thirdVertexOffset = triangles[corner + 2] * 3;
+    const bcX = positions[b + 1] * positions[thirdVertexOffset + 2] - positions[b + 2] * positions[thirdVertexOffset + 1];
+    const bcY = positions[b + 2] * positions[thirdVertexOffset] - positions[b] * positions[thirdVertexOffset + 2];
+    const bcZ = positions[b] * positions[thirdVertexOffset + 1] - positions[b + 1] * positions[thirdVertexOffset];
+    const caX = positions[thirdVertexOffset + 1] * positions[a + 2] - positions[thirdVertexOffset + 2] * positions[a + 1];
+    const caY = positions[thirdVertexOffset + 2] * positions[a] - positions[thirdVertexOffset] * positions[a + 2];
+    const caZ = positions[thirdVertexOffset] * positions[a + 1] - positions[thirdVertexOffset + 1] * positions[a];
     const abX = positions[a + 1] * positions[b + 2] - positions[a + 2] * positions[b + 1];
     const abY = positions[a + 2] * positions[b] - positions[a] * positions[b + 2];
     const abZ = positions[a] * positions[b + 1] - positions[a + 1] * positions[b];
@@ -65,9 +65,9 @@ export function solveVolume(positions, triangles, inverseMasses, restVolume, pre
     gradients[b] += caX / 6;
     gradients[b + 1] += caY / 6;
     gradients[b + 2] += caZ / 6;
-    gradients[c] += abX / 6;
-    gradients[c + 1] += abY / 6;
-    gradients[c + 2] += abZ / 6;
+    gradients[thirdVertexOffset] += abX / 6;
+    gradients[thirdVertexOffset + 1] += abY / 6;
+    gradients[thirdVertexOffset + 2] += abZ / 6;
   }
   let denominator = 0;
   for (let particle = 0; particle < inverseMasses.length; particle++) {

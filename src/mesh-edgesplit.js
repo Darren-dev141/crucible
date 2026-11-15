@@ -127,18 +127,18 @@ function gridFaces(quad, bottom, top, along, pointPosition, addPoint, cuts) {
   const corners = [cornerA, cornerB, cornerC, cornerD];
   for (let column = 0; column < rows; column++) {
     for (let row = 0; row < rows; row++) {
-      const s = column / (rows - 1);
+      const columnFraction = column / (rows - 1);
       const t = row / (rows - 1);
-      const weights = [(1 - s) * (1 - t), s * (1 - t), s * t, (1 - s) * t];
+      const weights = [(1 - columnFraction) * (1 - t), columnFraction * (1 - t), columnFraction * t, (1 - columnFraction) * t];
       sources[column][row] = { weights: corners.map((corner, index) => [corner, weights[index]]) };
     }
   }
   const [pa, pb, pc, pd] = [a, b, c, d].map(pointPosition);
   for (let column = 1; column < rows - 1; column++) {
     for (let row = 1; row < rows - 1; row++) {
-      const s = column / (rows - 1);
+      const columnFraction = column / (rows - 1);
       const t = row / (rows - 1);
-      grid[column][row] = addPoint(lerp(lerp(pa, pb, s), lerp(pd, pc, s), t));
+      grid[column][row] = addPoint(lerp(lerp(pa, pb, columnFraction), lerp(pd, pc, columnFraction), t));
     }
   }
   const cells = [];

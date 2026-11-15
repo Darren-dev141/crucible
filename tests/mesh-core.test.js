@@ -211,9 +211,9 @@ test('triangulation handles concave n-gons in both windings', () => {
     const { geometry } = extractRender(mesh);
     assert.ok(Math.abs(surfaceArea(geometry) - 3) < 1e-6);
     for (let offset = 0; offset < geometry.indices.length; offset += 3) {
-      const [a, b, c] = [0, 1, 2].map(corner => geometry.indices[offset + corner] * 3);
-      const p = geometry.positions;
-      const crossY = (p[c] - p[a]) * (p[b + 2] - p[a + 2]) - (p[c + 2] - p[a + 2]) * (p[b] - p[a]);
+      const [a, b, thirdVertexOffset] = [0, 1, 2].map(corner => geometry.indices[offset + corner] * 3);
+      const trianglePositions = geometry.positions;
+      const crossY = (trianglePositions[thirdVertexOffset] - trianglePositions[a]) * (trianglePositions[b + 2] - trianglePositions[a + 2]) - (trianglePositions[thirdVertexOffset + 2] - trianglePositions[a + 2]) * (trianglePositions[b] - trianglePositions[a]);
       assert.equal(Math.sign(crossY), Math.sign(normals[1]), 'triangles keep the face winding');
     }
   }

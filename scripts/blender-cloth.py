@@ -50,9 +50,9 @@ def grid_object(name, center, width, height, plane):
             builder.faces.new((vertices[first], vertices[first + 1], vertices[below + 1], vertices[below]))
     builder.to_mesh(mesh)
     builder.free()
-    obj = bpy.data.objects.new(name, mesh)
-    bpy.context.scene.collection.objects.link(obj)
-    return obj
+    cloth_object = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(cloth_object)
+    return cloth_object
 
 
 # Blender's default air damping of 1 is a drag of about 54 per second on a sheet this light (terminal speed 0.18 m/s,

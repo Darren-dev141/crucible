@@ -48,18 +48,18 @@ export class Matrix4 {
 
   /** Split into translation, rotation and scale. A reflection goes into the X scale, as three.js does. */
   decompose(position, rotation, scale) {
-    const e = this.elements;
-    let scaleX = Math.hypot(e[0], e[1], e[2]);
-    const scaleY = Math.hypot(e[4], e[5], e[6]);
-    const scaleZ = Math.hypot(e[8], e[9], e[10]);
+    const matrixElements = this.elements;
+    let scaleX = Math.hypot(matrixElements[0], matrixElements[1], matrixElements[2]);
+    const scaleY = Math.hypot(matrixElements[4], matrixElements[5], matrixElements[6]);
+    const scaleZ = Math.hypot(matrixElements[8], matrixElements[9], matrixElements[10]);
     if (this.determinant() < 0) scaleX = -scaleX;
-    position.fromArray([e[12], e[13], e[14]]);
+    position.fromArray([matrixElements[12], matrixElements[13], matrixElements[14]]);
     const rotationMatrix = new Float64Array(16);
     rotationMatrix[15] = 1;
     for (let row = 0; row < 3; row++) {
-      rotationMatrix[row] = e[row] / scaleX;
-      rotationMatrix[4 + row] = e[4 + row] / scaleY;
-      rotationMatrix[8 + row] = e[8 + row] / scaleZ;
+      rotationMatrix[row] = matrixElements[row] / scaleX;
+      rotationMatrix[4 + row] = matrixElements[4 + row] / scaleY;
+      rotationMatrix[8 + row] = matrixElements[8 + row] / scaleZ;
     }
     rotation.fromArray(quat.normalize(new Float64Array(4), mat4.getRotation(new Float64Array(4), rotationMatrix)));
     scale.fromArray([scaleX, scaleY, scaleZ]);

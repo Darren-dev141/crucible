@@ -160,8 +160,8 @@ class Decimator {
       if (length > 0) {
         const unit = normal.map(value => value / length);
         const first = this.triangles[triangle * 3] * 3;
-        const d = -(unit[0] * this.positions[first] + unit[1] * this.positions[first + 1] + unit[2] * this.positions[first + 2]);
-        for (let corner = 0; corner < 3; corner++) addPlane(this.quadrics, this.triangles[triangle * 3 + corner], unit[0], unit[1], unit[2], d, length / 2);
+        const planeDistance = -(unit[0] * this.positions[first] + unit[1] * this.positions[first + 1] + unit[2] * this.positions[first + 2]);
+        for (let corner = 0; corner < 3; corner++) addPlane(this.quadrics, this.triangles[triangle * 3 + corner], unit[0], unit[1], unit[2], planeDistance, length / 2);
       }
       for (let corner = 0; corner < 3; corner++) {
         const key = edgeKey(this.triangles[triangle * 3 + corner], this.triangles[triangle * 3 + (corner + 1) % 3], this.vertexCount);
@@ -188,10 +188,10 @@ class Decimator {
     const length = Math.hypot(...normal);
     if (length === 0) return;
     const unit = normal.map(value => value / length);
-    const d = -(unit[0] * this.positions[first * 3] + unit[1] * this.positions[first * 3 + 1] + unit[2] * this.positions[first * 3 + 2]);
+    const planeDistance = -(unit[0] * this.positions[first * 3] + unit[1] * this.positions[first * 3 + 1] + unit[2] * this.positions[first * 3 + 2]);
     const weight = CONSTRAINT_WEIGHT * (edge[0] ** 2 + edge[1] ** 2 + edge[2] ** 2);
-    addPlane(this.quadrics, first, unit[0], unit[1], unit[2], d, weight);
-    addPlane(this.quadrics, second, unit[0], unit[1], unit[2], d, weight);
+    addPlane(this.quadrics, first, unit[0], unit[1], unit[2], planeDistance, weight);
+    addPlane(this.quadrics, second, unit[0], unit[1], unit[2], planeDistance, weight);
   }
 
   neighbors(vertex) {

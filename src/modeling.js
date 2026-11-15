@@ -116,11 +116,11 @@ function onSegment(first, second, point) {
 function intersects(first, second, third, fourth) {
   const a = orientation(first, second, third);
   const b = orientation(first, second, fourth);
-  const c = orientation(third, fourth, first);
-  const d = orientation(third, fourth, second);
-  return Math.sign(a) !== Math.sign(b) && Math.sign(c) !== Math.sign(d) ||
+  const thirdFourthToFirst = orientation(third, fourth, first);
+  const thirdFourthToSecond = orientation(third, fourth, second);
+  return Math.sign(a) !== Math.sign(b) && Math.sign(thirdFourthToFirst) !== Math.sign(thirdFourthToSecond) ||
     a === 0 && onSegment(first, second, third) || b === 0 && onSegment(first, second, fourth) ||
-    c === 0 && onSegment(third, fourth, first) || d === 0 && onSegment(third, fourth, second);
+    thirdFourthToFirst === 0 && onSegment(third, fourth, first) || thirdFourthToSecond === 0 && onSegment(third, fourth, second);
 }
 
 function ringFrom(input, name) {

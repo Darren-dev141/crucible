@@ -75,7 +75,7 @@ test('the summary groups by model and kind, and the comparison flags a pass@1 dr
 
 test('the run guard counts each streamed message once and kills a run over its budget', async () => {
   const { createRunGuard, estimateUsageCostUsd } = await import('../bench/agent-modeling/run-guard.mjs');
-  assert.equal(estimateUsageCostUsd({ input_tokens: 1e6, output_tokens: 1e6 }, 'claude-haiku-4-5'), 6);
+  assert.equal(estimateUsageCostUsd({ input_tokens: 1e6, output_tokens: 1e6 }, 'claude-haiku-5-5'), 6);
   assert.equal(estimateUsageCostUsd({ cache_read_input_tokens: 1e6 }, 'sonnet'), 0.3);
   let kills = 0;
   const child = { kill: () => { kills++; } };

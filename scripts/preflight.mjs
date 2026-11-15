@@ -9,6 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createWriteStream, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isScannedPath } from './check-names.mjs';
 import { RELEASE_FIX, readReleaseProblem } from './check-release-changelog.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -91,6 +92,12 @@ export function planChecks(changedPaths, { skipTests = false, release = false, b
   });
 
   checks.push(linkedTextCheck(paths));
+  checks.push({
+    name: 'names',
+    command: ['node', 'scripts/check-names.mjs'],
+    skipped: paths.some(path => isScannedPath(path)) ? null : 'no scanned source file changed',
+    fix: 'Rename each declaration the report names to what it holds; only i j k n, x y z u v, t, w h, r g b a and _ may stay short (scripts/check-names.mjs).',
+  });
   checks.push({
     name: 'tool schemas',
     command: ['npm', 'run', 'check:tool-schemas'],
