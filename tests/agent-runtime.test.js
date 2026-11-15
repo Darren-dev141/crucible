@@ -25,7 +25,8 @@ import { GAME_CAPABILITIES } from '../src/game-setup-notes.js';
 import { USER_PASS_CAPABILITIES } from '../src/user-pass.js';
 import { MESH_BLEND_CAPABILITIES } from '../src/mesh-blend.js';
 import { MATERIAL_SNIPPET_CAPABILITIES } from '../src/material-snippet.js';
-import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_MEMORY_MIB, BAKE_WORKER_MAXIMUM_SECONDS } from '../src/agent-scene-capabilities.js';
+import { estimateFrameBytes } from '../src/budget.js';
+import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, MAXIMUM_MEMORY_MIB, BAKE_WORKER_MAXIMUM_SECONDS } from '../src/agent-scene-capabilities.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { gameAssetIds } from '../src/game-assets.js';
 import { sequenceFrameIds } from '../src/agent-texture-sequence.js';
@@ -57,6 +58,8 @@ runTest('runtime reports real scene capabilities without launching a browser and
   assert.equal(capabilities.preview.memoryBudgetMiB, 64);
   assert.equal(capabilities.preview.backend, 'cpu');
   assert.equal(capabilities.review.maximumShots, 4);
+  assert.deepEqual([capabilities.jobs.maximumWidth, capabilities.jobs.maximumHeight, capabilities.jobs.maximumPixels], [3840, 3840, 3840 * 2160]);
+  assert.deepEqual([capabilities.jobs.maximumSequenceWidth, capabilities.jobs.maximumSequenceHeight, capabilities.jobs.maximumSequencePixels], [1920, 1920, 1920 * 1080]);
   assert.equal(capabilities.review.maximumGridHeight, 1008);
   assert.equal(capabilities.review.maximumPendingFrames, 1);
   assert.equal(capabilities.sceneLimits.maxGeometryBytes, 32 * 1024 * 1024);
@@ -107,7 +110,7 @@ async function importedBindings(source) {
 }
 
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
-  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0 } = {}) {
+  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0 } = {}) {
   const events = [];
   const sandboxTimers = new Set();
   const viewports = [];
@@ -135,7 +138,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     async evaluate(callback, { method, input }) {
       events.push(`${this.privateTarget ? 'private' : 'source'}:${method}`);
       if (method === 'create' && this.privateTarget && blockPrivateCreate) return new Promise((resolve, reject) => { this.rejectShot = reject; });
-      if (method === 'create') return { sessionId: input.sessionId, revision: 0 };
+      if (method === 'create') return { sessionId: input.sessionId, revision: 0, ...(jobRender && this.privateTarget ? { render: jobRender } : {}) };
       if (method === 'exportRecipe') return { recipe: exportedRecipe, revision: 1 };
       if (method === 'exportGlb') return { data: Buffer.from('glb bytes').toString('base64') };
       if (method === 'snapshot') {
@@ -368,6 +371,30 @@ runTest('a job cut short by its deadline leaves the runtime usable although the 
     assert.equal((await runtime.capabilities()).phase, 'ready');
     assert.equal((await runtime.apply({ sessionId })).revision, 1);
   } finally { await runtime.close(); }
+});
+
+async function runOversizeJob({ requested, jobRender, memory }) {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId, viewports } = await reviewRuntimeHarness({ jobRender,
+    runtimeOptions: { memory, jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', ...requested } });
+    const outcome = await runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', ...requested }, signal: new AbortController().signal, progress: async () => {} }).then(() => undefined, error => error);
+    return { outcome, viewports };
+  } finally { await runtime.close(); }
+}
+
+runTest('a job frame over 1920x1080 that --memory shrinks is refused with the memory it needs, a 1080p one is only reduced (#1241)', async () => {
+  const plan = { width: 1920, height: 1080, samples: 4, hdr: false, bloom: true, depth: false, estimatedBytes: estimateFrameBytes(1920, 1080, 4, 2048, { bloom: true }) };
+  const oversize = await runOversizeJob({ requested: { width: 2880, height: 1620 }, jobRender: plan, memory: 192 });
+  assert.match(oversize.outcome.message, /2880x1620 was reduced to 1920x1080 by --memory 192.*Fix: start the server with --memory 257 or more/);
+  assert.deepEqual(oversize.viewports, [], 'the page is never resized for a refused frame');
+  const standard = await runOversizeJob({ requested: { width: 1920, height: 1080 }, jobRender: { ...plan, width: 960, height: 540 }, memory: 192 });
+  assert.doesNotMatch(String(standard.outcome?.message), /was reduced to/);
+  assert.deepEqual(JSON.parse(JSON.stringify(standard.viewports)), [{ width: 960, height: 540 }]);
 });
 
 runTest('a slow suspend at job start does not fail the runtime (#1256)', async () => {

@@ -302,7 +302,7 @@ export function oversizeFrameBudgetError({ requested, rendered, plan, memoryMiB,
   const exceedsStandardFrame = requested.width > MAXIMUM_SEQUENCE_JOB_SIDE || requested.height > MAXIMUM_SEQUENCE_JOB_SIDE
     || requested.width * requested.height > MAXIMUM_SEQUENCE_JOB_PIXELS;
   if (!exceedsStandardFrame || (rendered.width >= requested.width && rendered.height >= requested.height)) return undefined;
-  const frameOptions = { hdr: plan.hdr, depth: plan.depth };
+  const frameOptions = { hdr: plan.hdr, depth: plan.depth, bloom: plan.bloom ?? true };
   const renderedFrameBytes = estimateFrameBytes(rendered.width, rendered.height, plan.samples, 2048, frameOptions);
   const heldBytes = Math.max(0, plan.estimatedBytes - renderedFrameBytes);
   const neededMiB = Math.ceil((heldBytes + estimateFrameBytes(requested.width, requested.height, plan.samples, 2048, frameOptions)) / 1024 ** 2);

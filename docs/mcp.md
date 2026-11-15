@@ -58,7 +58,7 @@ The MCP connection uses stdin and stdout, without an HTTP MCP listener.
 The browser path is optional for a standard Google Chrome installation. Pass `--browser` for another Chromium executable.
 Using Node directly also avoids shell-specific npm launcher behavior in MCP clients on Windows.
 `--backend` accepts `gpu` or `cpu` and defaults to `gpu`.
-`--memory` accepts an integer from 32 to 384 MiB and defaults to 192. A 1920x1080 frame needs about 175 MiB of render targets (measured, 4 samples), so the default fits an empty room at that size and 256 leaves room for textures; raise it for textured scenes. An image job may ask for up to 3840x2160 (measured: 2880x1620 of a plain scene needs `--memory 364`, so little room is left under the 384 ceiling for textures); a frame the budget would shrink is refused with the --memory it needs.
+`--memory` accepts an integer from 32 to 384 MiB and defaults to 192. A 1920x1080 frame needs about 175 MiB of render targets (measured, 4 samples), so the default fits an empty room at that size and 256 leaves room for textures; raise it for textured scenes. An image job may ask for up to 3840x2160 (measured: 2880x1620 of a plain scene needs `--memory 373`, so little room is left under the 384 ceiling for textures); a frame the budget would shrink is refused with the --memory it needs.
 
 `--assets` selects an absolute directory containing GLB files.
 The asset catalog reads regular files directly inside that directory, with limits of 64 files and 64 MiB per file. One call that places several assets, motion sources and sequence frames sends them to the preview page in one message, so their total is capped at 64 MiB too (`maxCombinedBytes`); grid files (`.67vg`) and look files count too. A call over it fails with an error that names the limit and the total, and the agent places the rest in later calls. The server adds up the file sizes first, so a refused call reads no file. Decoding takes 1,000,000 vertices, 4,096 parts and 1,024 joints at most; `scene_capabilities` reports every number under `assets`. They are lower than the `loadGltf` defaults (256 MiB, 8,000,000 vertices) because the server hands the whole file to the preview page as one base64 string, which crashed the page from 80 MiB in a local Chrome test. A file over a limit fails with an error that names the limit and the value it hit; a larger scene loads through `loadGltf` in code (see [gltf.md](gltf.md)). All limits live in `src/agent-asset-limits.js`.
@@ -335,7 +335,7 @@ The script prints calls, errors, error rate and median duration per tool, most c
 | Unique geometry buffers | 32 MiB |
 | Recipe or command JSON | 1 MiB |
 | Incoming stdio buffer | 2 MiB |
-| Preview dimensions | 64 to 1024 pixels per dimension (image jobs: up to 3840x2160, stills and video up to 1920x1080) |
+| Preview dimensions | 64 to 1024 pixels per dimension (image jobs: up to 3840x2160, stills and video up to 1920x1080; `scene_capabilities` jobs lists both as `maximumWidth`, `maximumHeight`, `maximumPixels` and `maximumSequenceWidth`, `maximumSequenceHeight`, `maximumSequencePixels`) |
 | Default preview dimensions | 768 by 512 pixels |
 | PNG payload | 1 MiB |
 
