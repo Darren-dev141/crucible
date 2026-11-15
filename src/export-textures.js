@@ -1,4 +1,5 @@
 import { encodePng } from './export-png.js';
+import { requireOneOf } from './export-checks.js';
 import { sourceEncodingOf } from './image-source-encoding.js';
 
 export const DEFAULT_MAX_TEXTURE_SIZE = 2048;
@@ -10,10 +11,6 @@ const VALID_WRAPS = [10497, 33071, 33648];
 const VALID_MAG_FILTERS = [9728, 9729];
 const VALID_MIN_FILTERS = [9728, 9729, 9984, 9985, 9986, 9987];
 
-function checkSamplerValue(value, validValues, field, channel) {
-  if (validValues.includes(value)) return value;
-  throw new RangeError(`GLB ${channel} texture ${field} is ${value}; use one of ${validValues.join(', ')} (glTF sampler enums).`);
-}
 
 function pixelsOf(image, channel) {
   const width = image?.naturalWidth ?? image?.width;
@@ -88,10 +85,10 @@ export function createTextureWriter(writer, maxTextureSize = DEFAULT_MAX_TEXTURE
 
   function samplerIndex(descriptor, channel) {
     const sampler = {
-      magFilter: checkSamplerValue(descriptor.magFilter ?? MAG_FILTER_DEFAULT, VALID_MAG_FILTERS, 'magFilter', channel),
-      minFilter: checkSamplerValue(descriptor.minFilter ?? MIN_FILTER_DEFAULT, VALID_MIN_FILTERS, 'minFilter', channel),
-      wrapS: checkSamplerValue(descriptor.wrapS ?? WRAP_DEFAULT, VALID_WRAPS, 'wrapS', channel),
-      wrapT: checkSamplerValue(descriptor.wrapT ?? WRAP_DEFAULT, VALID_WRAPS, 'wrapT', channel),
+      magFilter: requireOneOf('GLB', `${channel} texture magFilter`, descriptor.magFilter ?? MAG_FILTER_DEFAULT, VALID_MAG_FILTERS),
+      minFilter: requireOneOf('GLB', `${channel} texture minFilter`, descriptor.minFilter ?? MIN_FILTER_DEFAULT, VALID_MIN_FILTERS),
+      wrapS: requireOneOf('GLB', `${channel} texture wrapS`, descriptor.wrapS ?? WRAP_DEFAULT, VALID_WRAPS),
+      wrapT: requireOneOf('GLB', `${channel} texture wrapT`, descriptor.wrapT ?? WRAP_DEFAULT, VALID_WRAPS),
     };
     const key = JSON.stringify(sampler);
     if (!samplerIndices.has(key)) {
