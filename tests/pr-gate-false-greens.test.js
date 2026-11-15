@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { planChecks } from '../scripts/preflight.mjs';
-import { unknownNoteProblems } from '../scripts/size-growth.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
@@ -64,7 +63,8 @@ test('check-change-note fails a branch that deletes a change note and changes sr
   }
 });
 
-test('a size note line for a goal, scene or entry that does not exist is a problem', () => {
+test('a size note line for a goal, scene or entry that does not exist is a problem', async () => {
+  const { unknownNoteProblems } = await import('../scripts/size-growth.mjs');
   const measured = { 'entry:core': { min: 300, gzip: 100 }, 'scene:lit-box': { min: 600, gzip: 200 } };
   const goals = { 'lit-box': 150 };
   const accepted = new Map([
