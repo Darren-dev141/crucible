@@ -44,15 +44,38 @@ test('a pose edit of a grid of parts gives the scene a fresh build of the edited
 
 test('a field edit that grows the recipe past maxRecipeBytes is still refused', () => {
   const base = createAgentScene(gridRecipe(), { maxNodes: 200 }).exportRecipe();
-  let limit = JSON.stringify(base).length;
-  while (!canCreate(base, limit)) limit++;
+  const limit = smallestCreatableLimit(base);
   const scene = createAgentScene(base, { maxNodes: 200, maxRecipeBytes: limit });
-  assert.throws(
-    () => scene.apply([{ type: 'set-node', id: 'player', label: 'x'.repeat(limit) }], { expectedRevision: scene.revision }),
-    /maxRecipeBytes|label/,
-  );
-  assert.equal(scene.revision, 0, 'the refused edit leaves the scene alone');
+  // Label one node after another with a long label. Each label passes the field rules and fits the operation copy, so the
+  // first refusal can only come from the recipe size check, and it must leave the scene as it was.
+  const labelOperation = id => ({ type: 'set-node', id, label: 'x'.repeat(200) });
+  let applied = 0;
+  for (const node of base.nodes) {
+    const revisionBefore = scene.revision;
+    try {
+      scene.apply([labelOperation(node.id)], { expectedRevision: revisionBefore });
+      applied++;
+    } catch (error) {
+      assert.match(error.message, /maxRecipeBytes/);
+      assert.doesNotMatch(error.message, /label/);
+      assert.equal(scene.revision, revisionBefore, 'the refused edit leaves the scene alone');
+      assert.ok(applied > 0, 'a first label fits and only a later one is refused');
+      return;
+    }
+  }
+  assert.fail('labelling every node never pushed the recipe past maxRecipeBytes');
 });
+
+function smallestCreatableLimit(recipe) {
+  let refused = 0;
+  let accepted = JSON.stringify(recipe).length * 2;
+  while (accepted - refused > 1) {
+    const middle = Math.floor((accepted + refused) / 2);
+    if (canCreate(recipe, middle)) accepted = middle;
+    else refused = middle;
+  }
+  return accepted;
+}
 
 function canCreate(recipe, maxRecipeBytes) {
   try {
@@ -62,6 +85,44 @@ function canCreate(recipe, maxRecipeBytes) {
     return false;
   }
 }
+
+function closedRoomRecipe() {
+  const slab = (id, translation, scale) => ({ id, geometry: 'slab', material: 'stone', translation, scale });
+  return {
+    format: 'crucible.scene', schemaVersion: 1,
+    geometries: [{ id: 'slab', type: 'box' }], materials: [{ id: 'stone', color: [0.7, 0.7, 0.7] }],
+    nodes: [
+      slab('floor', [0, 0, 0], [6, 0.1, 6]),
+      slab('roof', [0, 3, 0], [6, 0.1, 6]),
+      slab('wallNorth', [0, 1.5, 3], [6, 3, 0.1]),
+      slab('wallSouth', [0, 1.5, -3], [6, 3, 0.1]),
+      slab('wallEast', [3, 1.5, 0], [0.1, 3, 6]),
+      slab('wallWest', [-3, 1.5, 0], [0.1, 3, 6]),
+      { id: 'crate', geometry: 'slab', material: 'stone', translation: [0, 0.5, 0] },
+    ],
+  };
+}
+
+// Main already differs from a fresh build by up to 0.0032 on 25 of 122661 floor samples after the second edit
+// (measured on main and on the branch), so sky is compared within that tolerance: a stale cached bound moves far more.
+const SKY_TOLERANCE = 0.01;
+
+test('floor sky visibility after a pose edit in a closed room matches a fresh build', () => {
+  const scene = createAgentScene(closedRoomRecipe());
+  for (let step = 0; step < 2; step++) {
+    scene.apply([{ type: 'set-node', id: 'crate', translation: [step * 0.7, 0.5, 0.2] }], { expectedRevision: scene.revision });
+    const fresh = createAgentScene(scene.exportRecipe());
+    assert.deepEqual(scene.exportRecipe(), fresh.exportRecipe());
+    assert.deepEqual(partMatrices(scene), partMatrices(fresh));
+    scene.parts.forEach((part, index) => {
+      const actual = Array.from(part.geometry.skyVisibility ?? []);
+      const expected = Array.from(fresh.parts[index].geometry.skyVisibility ?? []);
+      assert.equal(actual.length, expected.length, `${part.name} sky sample count`);
+      actual.forEach((value, sample) => assert.ok(Math.abs(value - expected[sample]) <= SKY_TOLERANCE, `${part.name} sky sample ${sample}: ${value} vs ${expected[sample]}`));
+    });
+  }
+  assert.ok(scene.parts[0].geometry.skyVisibility?.length > 0, 'the floor carries sky visibility, so the cached-bounds path is exercised');
+});
 
 test('worldBounds follows a part whose matrix changes in place', () => {
   const geometry = { positions: Float32Array.from([-1, -1, -1, 1, 1, 1]) };

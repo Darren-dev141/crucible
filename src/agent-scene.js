@@ -92,6 +92,12 @@ function resolveLimits(input) {
 }
 
 // Copy only JSON data. Reject accessors before reading them and bound traversal before serialization.
+function assertWithinRecipeBytes(bytes, maximum) {
+  if (bytes > maximum) {
+    throw new RangeError('JSON exceeds maxRecipeBytes. Reduce the input.');
+  }
+}
+
 function copiedJson(input, maximum) {
   let bytes = 0;
   const ancestors = new Set();
@@ -108,9 +114,7 @@ function copiedJson(input, maximum) {
   }
   function charge(count) {
     bytes += count;
-    if (bytes > maximum) {
-      throw new RangeError('JSON exceeds maxRecipeBytes. Reduce the input.');
-    }
+    assertWithinRecipeBytes(bytes, maximum);
   }
   function copy(value, depth) {
     if (depth > 64) {
@@ -1030,9 +1034,7 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
   }
   if (alreadyCopied) {
     // The input was checked JSON and each step above returns checked JSON, so only the size can have grown.
-    if (new TextEncoder().encode(JSON.stringify(recipe)).length > limits.maxRecipeBytes) {
-      throw new RangeError('JSON exceeds maxRecipeBytes. Reduce the input.');
-    }
+    assertWithinRecipeBytes(new TextEncoder().encode(JSON.stringify(recipe)).length, limits.maxRecipeBytes);
     return recipe;
   }
   recipe = copiedJson(recipe, limits.maxRecipeBytes);

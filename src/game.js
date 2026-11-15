@@ -264,6 +264,8 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
     if (scene.revision !== lastAppliedRevision) lastSentOperations.clear();
     return operations.filter(operation => lastSentOperations.get(operationKey(operation)) !== JSON.stringify(operation));
   }
+  // Assumes no two operations in one frame write the same field of the same node: the player is kinematic, physics sends only
+  // dynamic bodies and animation writes descendants. A node written twice would have its later write dropped while the earlier one repeats.
   function operationKey(operation) {
     return `${operation.type}:${operation.id}:${Object.keys(operation).join(',')}`;
   }
