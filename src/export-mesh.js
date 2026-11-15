@@ -234,15 +234,15 @@ export function exportObj(parts, options = {}) {
 
 // Normals use the inverse transpose of the upper 3x3 so non-uniform scale keeps them perpendicular to the surface.
 function worldNormals(normals, matrix) {
-  const [a, b, c, , d, e, f, , g, h, i] = matrix;
+  const [r0c0, r1c0, r2c0, , r0c1, r1c1, r2c1, , r0c2, r1c2, r2c2] = matrix;
   const cofactor = [
-    e * i - f * h, f * g - d * i, d * h - e * g,
-    c * h - b * i, a * i - c * g, b * g - a * h,
-    b * f - c * e, c * d - a * f, a * e - b * d,
+    r1c1 * r2c2 - r2c1 * r1c2, r2c1 * r0c2 - r0c1 * r2c2, r0c1 * r1c2 - r1c1 * r0c2,
+    r2c0 * r1c2 - r1c0 * r2c2, r0c0 * r2c2 - r2c0 * r0c2, r1c0 * r0c2 - r0c0 * r1c2,
+    r1c0 * r2c1 - r2c0 * r1c1, r2c0 * r0c1 - r0c0 * r2c1, r0c0 * r1c1 - r1c0 * r0c1,
   ];
   // Column-major matrix: the cofactor matrix is the inverse transpose up to the determinant's sign and size, which normalizing removes.
   const result = new Float64Array(normals.length);
-  const sign = (a * cofactor[0] + b * cofactor[1] + c * cofactor[2]) < 0 ? -1 : 1;
+  const sign = (r0c0 * cofactor[0] + r1c0 * cofactor[1] + r2c0 * cofactor[2]) < 0 ? -1 : 1;
   for (let vertex = 0; vertex < normals.length; vertex += 3) {
     const x = normals[vertex];
     const y = normals[vertex + 1];

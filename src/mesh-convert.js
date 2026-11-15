@@ -160,10 +160,10 @@ const cornerScratch = new Float64Array(12);
 
 /**
  * Sum over the four corners of |corner angle - 90 degrees|, or -1 when the quad is not convex
- * (a corner turns against the others). Vertices are a, b, c, d in winding order.
+ * (a corner turns against the others). Vertices are firstVertex to fourthVertex in winding order.
  */
-function quadCornerAngleError(positions, a, b, c, d) {
-  const quad = [a, b, c, d];
+function quadCornerAngleError(positions, firstVertex, secondVertex, thirdVertex, fourthVertex) {
+  const quad = [firstVertex, secondVertex, thirdVertex, fourthVertex];
   let error = 0;
   for (let index = 0; index < 4; index++) {
     const previous = quad[(index + 3) & 3] * 3;

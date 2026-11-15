@@ -89,11 +89,11 @@ export function signedVolume(mesh) {
   const { positions, indices } = triangulatedSurface(mesh);
   let volume = 0;
   for (let triangle = 0; triangle < indices.length / 3; triangle++) {
-    const [a, b, c] = [0, 1, 2].map(corner => indices[triangle * 3 + corner] * 3);
+    const [firstOffset, secondOffset, thirdOffset] = [0, 1, 2].map(corner => indices[triangle * 3 + corner] * 3);
     volume += (
-      positions[a] * (positions[b + 1] * positions[c + 2] - positions[b + 2] * positions[c + 1]) +
-      positions[a + 1] * (positions[b + 2] * positions[c] - positions[b] * positions[c + 2]) +
-      positions[a + 2] * (positions[b] * positions[c + 1] - positions[b + 1] * positions[c])
+      positions[firstOffset] * (positions[secondOffset + 1] * positions[thirdOffset + 2] - positions[secondOffset + 2] * positions[thirdOffset + 1]) +
+      positions[firstOffset + 1] * (positions[secondOffset + 2] * positions[thirdOffset] - positions[secondOffset] * positions[thirdOffset + 2]) +
+      positions[firstOffset + 2] * (positions[secondOffset] * positions[thirdOffset + 1] - positions[secondOffset + 1] * positions[thirdOffset])
     ) / 6;
   }
   return volume;

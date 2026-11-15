@@ -84,13 +84,13 @@ function splitQuad(polygon, splitSides, pointsAfter, pointPosition, addPoint, cu
   const count = splitSides.filter(Boolean).length;
   const oppositePair = count === 2 && splitSides[0] === splitSides[2];
   if (count !== 4 && !oppositePair) return null;
-  // Rotate so a split pair is the first and third sides: a to b, and c to d.
+  // Rotate so a split pair is the first and third sides: vertexA to vertexB, and vertexC to vertexD.
   const quad = count === 4 || splitSides[0] ? polygon : rotated(polygon, 1);
-  const [a, b, c, d] = quad.vertices;
+  const [vertexA, vertexB, vertexC, vertexD] = quad.vertices;
   const [cornerA, cornerB, cornerC, cornerD] = quad.sourceCorners;
   const along = side => pointsAfter(quad, side);
-  const bottom = [{ vertex: a, source: cornerA }, ...along(0).map(({ vertex, t }) => ({ vertex, source: { from: cornerA, to: cornerB, t } })), { vertex: b, source: cornerB }];
-  const top = [{ vertex: d, source: cornerD }, ...along(2).reverse().map(({ vertex, t }) => ({ vertex, source: { from: cornerD, to: cornerC, t: 1 - t } })), { vertex: c, source: cornerC }];
+  const bottom = [{ vertex: vertexA, source: cornerA }, ...along(0).map(({ vertex, t }) => ({ vertex, source: { from: cornerA, to: cornerB, t } })), { vertex: vertexB, source: cornerB }];
+  const top = [{ vertex: vertexD, source: cornerD }, ...along(2).reverse().map(({ vertex, t }) => ({ vertex, source: { from: cornerD, to: cornerC, t: 1 - t } })), { vertex: vertexC, source: cornerC }];
   if (count === 2) return bandFaces(quad, bottom, top);
   return gridFaces(quad, bottom, top, along, pointPosition, addPoint, cuts);
 }
@@ -108,12 +108,12 @@ function bandFaces(quad, bottom, top) {
 }
 
 function gridFaces(quad, bottom, top, along, pointPosition, addPoint, cuts) {
-  const [a, b, c, d] = quad.vertices;
+  const [vertexA, vertexB, vertexC, vertexD] = quad.vertices;
   const [cornerA, cornerB, cornerC, cornerD] = quad.sourceCorners;
   const rows = cuts + 2;
-  // Left side runs a to d, right side b to c; sides after corner b and d are walked against their own direction.
-  const rightSide = [b, ...along(1).map(({ vertex }) => vertex), c];
-  const leftSide = [a, ...along(3).reverse().map(({ vertex }) => vertex), d];
+  // Left side runs vertexA to vertexD, right side vertexB to vertexC; sides after corner B and D are walked against their own direction.
+  const rightSide = [vertexB, ...along(1).map(({ vertex }) => vertex), vertexC];
+  const leftSide = [vertexA, ...along(3).reverse().map(({ vertex }) => vertex), vertexD];
   const grid = Array.from({ length: rows }, () => new Array(rows));
   const sources = Array.from({ length: rows }, () => new Array(rows));
   for (let column = 0; column < rows; column++) {
@@ -133,7 +133,7 @@ function gridFaces(quad, bottom, top, along, pointPosition, addPoint, cuts) {
       sources[column][row] = { weights: corners.map((corner, index) => [corner, weights[index]]) };
     }
   }
-  const [pa, pb, pc, pd] = [a, b, c, d].map(pointPosition);
+  const [pa, pb, pc, pd] = [vertexA, vertexB, vertexC, vertexD].map(pointPosition);
   for (let column = 1; column < rows - 1; column++) {
     for (let row = 1; row < rows - 1; row++) {
       const columnFraction = column / (rows - 1);

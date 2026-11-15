@@ -239,7 +239,7 @@ def prepare_scene(scene, keep_glass):
             hide_object_everywhere(scene_object)
         elif tags & {"transparent", "alpha"}:
             report["cutoutObjectCount"] += 1
-    sun_names = sorted(obj.name for obj in scene.objects if obj.type == "LIGHT" and obj.data.type == "SUN" and not obj.hide_render and obj.name in visible_names)
+    sun_names = sorted(scene_object.name for scene_object in scene.objects if scene_object.type == "LIGHT" and scene_object.data.type == "SUN" and not scene_object.hide_render and scene_object.name in visible_names)
     for extra_sun_name in sun_names[1:]:
         report["extraSunsDropped"].append(extra_sun_name)
         hide_object_everywhere(bpy.data.objects[extra_sun_name])
@@ -422,9 +422,9 @@ def collect_scene_content(scene, width, height, report, glass_names):
     report["negativeDeterminantParts"] = negative_parts
     exported_names = {part["name"].split("/")[-1] for part in parts}
     report["emptyMeshObjects"] = empty_mesh_names[:40]
-    report["renderableObjectsNotExported"] = [f"{obj.name} ({obj.type}, collections {[c.name for c in obj.users_collection][:2]})" for obj in bpy.data.objects if obj.type in MESH_LIKE_OBJECT_TYPES and not obj.hide_render and obj.name not in exported_names and obj.name not in glass_names][:60]
+    report["renderableObjectsNotExported"] = [f"{scene_object.name} ({scene_object.type}, collections {[collection.name for collection in scene_object.users_collection][:2]})" for scene_object in bpy.data.objects if scene_object.type in MESH_LIKE_OBJECT_TYPES and not scene_object.hide_render and scene_object.name not in exported_names and scene_object.name not in glass_names][:60]
     report["partsWithHiddenRayKinds"] = ray_visibility_counts
-    report["shadowCatcherOrHoldoutObjects"] = sum(1 for obj in bpy.data.objects if getattr(obj, "is_shadow_catcher", False) or getattr(obj, "is_holdout", False))
+    report["shadowCatcherOrHoldoutObjects"] = sum(1 for scene_object in bpy.data.objects if getattr(scene_object, "is_shadow_catcher", False) or getattr(scene_object, "is_holdout", False))
     return environment, geometries, parts
 
 
@@ -450,7 +450,7 @@ def collect_inspection(scene):
         "meshDatablocksUsedByMoreThanOneObject": sum(1 for count in shared_data.values() if count > 1),
         "materialCount": len(bpy.data.materials),
         "materialTags": node_types,
-        "collectionInstanceEmpties": sum(1 for obj in bpy.data.objects if obj.instance_type == "COLLECTION"),
+        "collectionInstanceEmpties": sum(1 for scene_object in bpy.data.objects if scene_object.instance_type == "COLLECTION"),
         "unitScale": scene.unit_settings.scale_length,
         "engine": scene.render.engine,
         "frame": scene.frame_current,

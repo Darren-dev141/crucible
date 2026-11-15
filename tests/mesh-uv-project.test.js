@@ -18,9 +18,9 @@ function triangleRatios(mesh) {
     const end = mesh.faceOffsets[face + 1];
     const point = corner => [0, 1, 2].map(axis => mesh.positions[mesh.cornerVertices[corner] * 3 + axis]);
     for (let corner = start + 1; corner < end - 1; corner++) {
-      const [a, b, c] = [point(start), point(corner), point(corner + 1)];
-      const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-      const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const [firstPoint, secondPoint, thirdPoint] = [point(start), point(corner), point(corner + 1)];
+      const ab = [secondPoint[0] - firstPoint[0], secondPoint[1] - firstPoint[1], secondPoint[2] - firstPoint[2]];
+      const ac = [thirdPoint[0] - firstPoint[0], thirdPoint[1] - firstPoint[1], thirdPoint[2] - firstPoint[2]];
       const area3d = Math.hypot(ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]) / 2;
       const area2d = ((uv[corner * 2] - uv[start * 2]) * (uv[(corner + 1) * 2 + 1] - uv[start * 2 + 1])
         - (uv[(corner + 1) * 2] - uv[start * 2]) * (uv[corner * 2 + 1] - uv[start * 2 + 1])) / 2;

@@ -104,11 +104,11 @@ function faceNormal(points) {
   return normal;
 }
 
-function pointAt(line, s) {
+function pointAt(line, arcLength) {
   let index = 0;
-  while (index + 2 < line.lengths.length && line.lengths[index + 1] < s) index++;
+  while (index + 2 < line.lengths.length && line.lengths[index + 1] < arcLength) index++;
   const span = line.lengths[index + 1] - line.lengths[index] || 1;
-  return lerp(line.points[index], line.points[index + 1], (s - line.lengths[index]) / span);
+  return lerp(line.points[index], line.points[index + 1], (arcLength - line.lengths[index]) / span);
 }
 
 /** Lift a flat point back onto a face's plane along the projection direction. */

@@ -86,9 +86,9 @@ test('the standing clump cards of a far level face every way, so the crown is as
     let count = 0;
     for (let corner = 0; corner < indices.length; corner += 3) {
       const point = index => [positions[index * 3], positions[index * 3 + 1], positions[index * 3 + 2]];
-      const [a, b, c] = [point(indices[corner]), point(indices[corner + 1]), point(indices[corner + 2])];
-      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-      const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const [firstPoint, secondPoint, thirdPoint] = [point(indices[corner]), point(indices[corner + 1]), point(indices[corner + 2])];
+      const u = [secondPoint[0] - firstPoint[0], secondPoint[1] - firstPoint[1], secondPoint[2] - firstPoint[2]];
+      const v = [thirdPoint[0] - firstPoint[0], thirdPoint[1] - firstPoint[1], thirdPoint[2] - firstPoint[2]];
       const normal = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
       const length = Math.hypot(...normal);
       if (length === 0 || Math.abs(normal[1] / length) > 0.5) continue;

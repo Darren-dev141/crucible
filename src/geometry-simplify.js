@@ -105,18 +105,18 @@ export function findLockedVertices(indices, vertexCount) {
 }
 
 // A quadric is the symmetric 4x4 matrix of a plane sum, stored as ten numbers: aa ab ac ad bb bc bd cc cd dd.
-function addPlane(quadrics, vertex, nx, ny, nz, d) {
+function addPlane(quadrics, vertex, nx, ny, nz, planeOffset) {
   const base = vertex * 10;
   quadrics[base] += nx * nx;
   quadrics[base + 1] += nx * ny;
   quadrics[base + 2] += nx * nz;
-  quadrics[base + 3] += nx * d;
+  quadrics[base + 3] += nx * planeOffset;
   quadrics[base + 4] += ny * ny;
   quadrics[base + 5] += ny * nz;
-  quadrics[base + 6] += ny * d;
+  quadrics[base + 6] += ny * planeOffset;
   quadrics[base + 7] += nz * nz;
-  quadrics[base + 8] += nz * d;
-  quadrics[base + 9] += d * d;
+  quadrics[base + 8] += nz * planeOffset;
+  quadrics[base + 9] += planeOffset * planeOffset;
 }
 
 function quadricError(quadrics, first, second, x, y, z) {

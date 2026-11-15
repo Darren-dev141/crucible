@@ -25,11 +25,11 @@ function icosphere(levels) {
       return cache.get(key);
     };
     for (let triangle = 0; triangle < indices.length; triangle += 3) {
-      const [a, b, c] = indices.slice(triangle, triangle + 3);
-      const ab = middle(a, b);
-      const bc = middle(b, c);
-      const ca = middle(c, a);
-      next.push(a, ab, ca, b, bc, ab, c, ca, bc, ab, bc, ca);
+      const [cornerA, cornerB, cornerC] = indices.slice(triangle, triangle + 3);
+      const ab = middle(cornerA, cornerB);
+      const bc = middle(cornerB, cornerC);
+      const ca = middle(cornerC, cornerA);
+      next.push(cornerA, ab, ca, cornerB, bc, ab, cornerC, ca, bc, ab, bc, ca);
     }
     indices = next;
   }

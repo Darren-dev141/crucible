@@ -43,9 +43,9 @@ function grid(columns, rows) {
 }
 
 function triangleArea(positions, indices, offset) {
-  const [a, b, c] = [indices[offset] * 3, indices[offset + 1] * 3, indices[offset + 2] * 3];
-  const first = [0, 1, 2].map(axis => positions[b + axis] - positions[a + axis]);
-  const second = [0, 1, 2].map(axis => positions[c + axis] - positions[a + axis]);
+  const [firstOffset, secondOffset, thirdOffset] = [indices[offset] * 3, indices[offset + 1] * 3, indices[offset + 2] * 3];
+  const first = [0, 1, 2].map(axis => positions[secondOffset + axis] - positions[firstOffset + axis]);
+  const second = [0, 1, 2].map(axis => positions[thirdOffset + axis] - positions[firstOffset + axis]);
   return Math.hypot(first[1] * second[2] - first[2] * second[1], first[2] * second[0] - first[0] * second[2], first[0] * second[1] - first[1] * second[0]) / 2;
 }
 
