@@ -18,6 +18,7 @@ import { coverageMean, createCrownSkyField, matchMeanVisibility, scaleVisibility
 import { TREE_LEVEL_GAINS } from './tree-level-gains.js';
 import { LEVEL_SETTINGS, SPECIES, TREE_LEVEL_DISTANCES } from './vegetation-species.js';
 import { barkTextureDescriptor, leafTextureDescriptor } from './vegetation-textures.js';
+import { checkClumpOptions, checkScatterOptions } from './vegetation-options.js';
 import { pixelErrorScale, selectBlendedLevels } from './vegetation-impostors.js';
 
 export { prepareImpostors, getImpostor, bakeImpostorAtlas, blendLevels, pixelErrorScale } from './vegetation-impostors.js';
@@ -591,6 +592,7 @@ function buildGrassCards(random, height, radius) {
  */
 export function createGrassClump({ blades = 16, height = 0.45, radius = 0.13, style = 'blades', color = [0.23, 0.39, 0.07], seed = 1 } = {}) {
   if (!['blades', 'cards'].includes(style)) throw new RangeError('Grass style must be blades or cards.');
+  checkClumpOptions('grass', { count: blades, countName: 'blades', height, radius });
   const random = createRandom(seed * 6271 + 5);
   const material = grassMaterial(style, color);
   const geometries = style === 'cards'
@@ -628,6 +630,7 @@ function buildFlowerPatch(random, flowers, height, petalColor) {
 
 /** A patch of small flowers on thin stems; color lives in vertex colors, so one material serves every hue. */
 export function createFlowerPatch({ flowers = 5, height = 0.4, color = [1, 0.85, 0.3], seed = 1 } = {}) {
+  checkClumpOptions('flowers', { count: flowers, countName: 'flowers', height });
   const random = createRandom(seed * 3571 + 11);
   const geometry = buildFlowerPatch(random, flowers, height, color);
   const material = { color: [1, 1, 1], roughness: 0.8, metallic: 0, emission: 0 };
@@ -741,7 +744,7 @@ export function scatterVegetation({
   if (!area || ![area.minX, area.maxX, area.minZ, area.maxZ].every(Number.isFinite) || area.maxX <= area.minX || area.maxZ <= area.minZ) {
     throw new TypeError('Scatter area needs finite minX < maxX and minZ < maxZ.');
   }
-  if (!(density > 0)) throw new RangeError('Scatter density must be positive.');
+  checkScatterOptions({ area, density, spacing, variants, scale, seed, mix, knownSpecies: [...Object.keys(SPECIES), 'grass', 'flowers'] });
   const random = createRandom(seed);
   const speciesNames = Object.keys(mix).filter(name => mix[name] > 0);
   const accept = ([x, z]) => slopeDegrees(terrainHeight, x, z) <= slopeLimit && !exclusion(x, z);
