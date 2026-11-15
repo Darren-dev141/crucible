@@ -41,3 +41,28 @@ test('a fitted view wider than 40 m turns the automatic cascades on, a narrower 
   const narrow = fitAgentShadow(DEFAULT_SHADOW, [slab([0, 0, 0], [20, 1, 20])]);
   assert.equal(effectiveShadowCascades({}, narrow), 0);
 });
+
+test('a small subject on a large ground plane keeps the default view, so its shadow texels stay as fine (#1366)', () => {
+  const subject = slab([0, 0.5, 0], [1, 1, 1]);
+  const ground = slab([0, -0.05, 0], [50, 0.1, 50]);
+  assert.equal(fitAgentShadow(DEFAULT_SHADOW, [subject, ground]), DEFAULT_SHADOW);
+  const naive = fitAgentShadow(DEFAULT_SHADOW, [slab([0, 0, 0], [50, 1, 50])]);
+  assert.ok(naive.extent > 30, `a plane alone, with nothing else to fit, still gets its view: ${naive.extent}`);
+});
+
+test('a ground plane does not shrink the fit of the scene on it: the subject sets the view, the plane is left out', () => {
+  const ground = slab([0, -0.05, 0], [50, 0.1, 50]);
+  const hall = [slab([0, 3, 0], [14, 6, 0.3]), slab([0, 3, 9], [14, 6, 0.3])];
+  const fitted = fitAgentShadow(DEFAULT_SHADOW, [...hall, ground]);
+  const withoutGround = fitAgentShadow(DEFAULT_SHADOW, hall);
+  assert.deepEqual(fitted, withoutGround);
+  assert.ok(fitted.extent > DEFAULT_SHADOW.extent && fitted.extent < 14, `extent ${fitted.extent}`);
+});
+
+test('a recipe that writes the default shadow out is read as having left it out, and one that changes any field keeps it', () => {
+  const wide = [slab([0, 0, 0], [20, 3, 20])];
+  const written = normalizeAgentLook({ shadow: { ...DEFAULT_SHADOW } }).shadow;
+  assert.ok(fitAgentShadow(written, wide).extent > DEFAULT_SHADOW.extent);
+  const tightened = normalizeAgentLook({ shadow: { extent: 3.5, distance: 10 } }).shadow;
+  assert.equal(fitAgentShadow(tightened, wide), tightened);
+});

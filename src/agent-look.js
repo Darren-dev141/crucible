@@ -466,13 +466,31 @@ function shadowBoundsFrom(shadow, direction) {
 // little wider than they are. A scene wider than the largest view (the default world view's half width, 65 m) keeps the view as it was.
 const SHADOW_FIT_PADDING = 1.1;
 const LARGEST_FITTED_SHADOW_EXTENT = 65;
+// A ground plane under a small subject must not stretch the view: a 1 m object on a 50 m plane would get a 40 m view and shadow texels 6 times
+// larger than the default view gives it. A horizontal slab wider than this and at most 15 percent as thick as it is wide (bounds carry about 5 percent padding on each side) is left out of the fit
+// when anything else is left (a room's 8 m floor stays in).
+const GROUND_PLANE_MINIMUM_WIDTH = 10;
+const GROUND_PLANE_THICKNESS_RATIO = 0.15;
+
+function isGroundPlane(part) {
+  const bounds = sceneBoundsOfParts([part]);
+  if (!bounds) return false;
+  const [width, height, depth] = bounds.maximum.map((value, axis) => value - bounds.minimum[axis]);
+  const horizontal = Math.max(width, depth);
+  return horizontal > GROUND_PLANE_MINIMUM_WIDTH && height <= horizontal * GROUND_PLANE_THICKNESS_RATIO;
+}
+
+function fitBoundsOf(parts) {
+  const subjects = parts.filter(part => !isGroundPlane(part));
+  return sceneBoundsOfParts(subjects.length > 0 ? subjects : parts);
+}
 
 /** The shadow a scene should use: the recipe's own when it set one, else a view fitted to the parts when they outgrow the default one. */
 export function fitAgentShadow(shadow, parts) {
   const defaults = shadowFrom({});
   const isDefault = Object.keys(defaults).every(key => JSON.stringify(shadow[key]) === JSON.stringify(defaults[key]));
   if (!isDefault) return shadow;
-  const bounds = sceneBoundsOfParts(parts);
+  const bounds = sceneBoundsOfParts(parts) && fitBoundsOf(parts);
   if (!bounds) return shadow;
   const radius = Math.hypot(...bounds.maximum.map((value, axis) => value - bounds.minimum[axis])) / 2;
   const extent = radius * SHADOW_FIT_PADDING;

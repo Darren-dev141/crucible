@@ -116,16 +116,22 @@ async function render(sessionId, name, renderer) {
   return result;
 }
 
-try {
-  await client.connect(transport);
-  const created = await call('scene_create', { recipe });
-  await render(created.sessionId, 'raster');
-  if (rasterOnly) { console.log(`wrote ${outputDirectory}/raster.png`); process.exitCode = 0; } else {
-  const traced = await render(created.sessionId, 'path-traced', {
+async function traceAndReport(sessionId) {
+  const traced = await render(sessionId, 'path-traced', {
     type: 'pathTracer', backend, samples, bounces: 6, denoise: false, seed: 1, maxSeconds: 120,
   });
   console.log(JSON.stringify({ ignored: traced.metrics?.pathTracer?.ignored, diagnostics: traced.diagnostics }, null, 1));
   console.log(`wrote ${outputDirectory}/raster.png and path-traced.png`);
+}
+
+try {
+  await client.connect(transport);
+  const created = await call('scene_create', { recipe });
+  await render(created.sessionId, 'raster');
+  if (rasterOnly) {
+    console.log(`wrote ${outputDirectory}/raster.png`);
+  } else {
+    await traceAndReport(created.sessionId);
   }
 } finally {
   await client.close().catch(() => {});
