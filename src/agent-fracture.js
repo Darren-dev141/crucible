@@ -82,6 +82,9 @@ function fracturableNode(candidate, nodeId) {
   if ((candidate.motion?.tracks ?? []).some(track => track.id === nodeId)) {
     throw invalidField('node', nodeId, 'a node without motion tracks; the pieces are moved by physics, so remove its tracks first');
   }
+  if ((candidate.physics?.bodies ?? []).some(body => body.node === nodeId)) {
+    throw invalidField('node', nodeId, `a node without a physics body; the pieces get their own bodies, so drop the body of ${nodeId} with set-physics first`);
+  }
   return node;
 }
 
