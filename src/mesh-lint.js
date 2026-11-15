@@ -4,6 +4,8 @@ import { faceNormals } from './mesh-normals.js';
 import { cornerFaces, edgeCornerTable, faceParts } from './mesh-topology.js';
 
 const SAMPLE_LIMIT = 8;
+// Neighbouring faces whose normals have a dot product below this lie on top of each other, facing opposite ways.
+const FOLDED_NORMAL_DOT = -0.99;
 
 // Every problem names the operation that usually fixes it, so an agent can act without another lookup.
 const PROBLEMS = Object.freeze({
@@ -23,6 +25,7 @@ export const GEOMETRY_PROBLEMS = Object.freeze({
   'thin-wall': { severity: 'warning', fix: 'The wall behind these faces (sample is face indices) is under 0.5% of the mesh size thick. Thicken it with solidify, or move the faces apart.' },
   'floating-part': { severity: 'warning', fix: 'This part (sample is part indices) touches no other part. Translate it onto its neighbour, or ignore this if it is meant to stand alone.' },
   asymmetric: { severity: 'warning', fix: 'The mesh is mirror-symmetric except for the vertices in sample. Rebuild one half and mirror it, or set_position those vertices to their partners.' },
+  'folded-face': { severity: 'warning', fix: 'Two neighbouring faces fold back onto each other (sample is edge indices), usually after an inset, extrude or bevel went past the face limit. Lower thickness or width, or undo that operation.' },
   'non-planar-quad': { severity: 'warning', fix: 'These quads (sample is face indices) fold by more than 45 degrees across their diagonal and pinch shading. Triangulate them, or flatten their corners.' },
   'skewed-quad': { severity: 'warning', fix: 'These quads (sample is face indices) have a corner over 60 degrees from a right angle. Dissolve or slide edges so corners stay near 90 degrees.' },
 });
@@ -166,6 +169,22 @@ function addProblem(problems, kind, element) {
   if (problem.sample.length < SAMPLE_LIMIT) problem.sample.push(element);
 }
 
+// An edge shared by two consistently wound faces whose normals point opposite ways is a fold: the surface doubles back.
+function flagFoldedEdges(mesh, table, facesOfCorners, problems) {
+  const { normals, areas } = faceNormals(mesh);
+  for (let edge = 0; edge < mesh.edgeCount; edge++) {
+    const start = table.edgeOffsets[edge];
+    if (table.edgeOffsets[edge + 1] - start !== 2) continue;
+    const first = facesOfCorners[table.edgeCorners[start]];
+    const second = facesOfCorners[table.edgeCorners[start + 1]];
+    if (first === second || !areas[first] || !areas[second]) continue;
+    const alignment = normals[first * 3] * normals[second * 3]
+      + normals[first * 3 + 1] * normals[second * 3 + 1]
+      + normals[first * 3 + 2] * normals[second * 3 + 2];
+    if (alignment < FOLDED_NORMAL_DOT) addQualityProblem(problems, 'folded-face', edge);
+  }
+}
+
 /**
  * Signed volume of each part, from the divergence theorem over its triangulated fan.
  * Only meaningful for closed, consistently wound parts.
@@ -272,6 +291,7 @@ export function lintMesh(mesh, { geometry = false } = {}) {
   for (let face = 0; face < mesh.faceCount; face++) {
     if (areas[face] <= minimumArea) addProblem(problems, 'degenerate-face', face);
   }
+  if (geometry) flagFoldedEdges(mesh, table, facesOfCorners, problems);
   const used = new Uint8Array(mesh.vertexCount);
   for (const vertex of mesh.cornerVertices) used[vertex] = 1;
   for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
