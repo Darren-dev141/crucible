@@ -156,6 +156,32 @@ const RECORDED = {
   bracketVertices: 2526, bracketTriangles: 5052, bracketHash: '73fab5cf025c640fe724b1422356bbf9580bcde4c4cc13be50f2dae0e35c1946',
 };
 
+// Two boxes that touch only along one edge: grid points on the two diagonals make saddle cells (#1302).
+const EDGE_TOUCHING_BOXES = {
+  op: 'union',
+  children: [
+    { shape: 'box', size: [1, 1, 1], position: [-0.5, -0.5, 0] },
+    { shape: 'box', size: [1, 1, 1], position: [0.5, 0.5, 0] },
+  ],
+};
+
+test('boxes that touch along an edge mesh with every edge joining exactly two quads, at many resolutions', () => {
+  for (const resolution of [5, 7, 9, 11, 15, 21, 27, 33]) {
+    const result = mesh(EDGE_TOUCHING_BOXES, resolution);
+    assert.equal(openEdgeCount(result), 0, `resolution ${resolution}`);
+    assert.equal(result.positions.length, result.normals.length);
+    assert.equal(result.positions.length / 3 * 2, result.uvs.length);
+  }
+});
+
+test('the separated saddle copies keep finite, non-zero normals', () => {
+  const { normals } = mesh(EDGE_TOUCHING_BOXES, 15);
+  for (let offset = 0; offset < normals.length; offset += 3) {
+    const length = Math.hypot(normals[offset], normals[offset + 1], normals[offset + 2]);
+    assert.ok(Number.isFinite(length) && length > 0, `normal ${offset / 3}`);
+  }
+});
+
 test('bad input names the field and what to pass', () => {
   const failure = (root, pattern, extra = {}) => assert.throws(() => sdfGeometry({ type: 'sdf', root, ...extra }), pattern);
   failure({ shape: 'cone' }, /sdf\.root\.shape is cone; pass one of sphere, box/);

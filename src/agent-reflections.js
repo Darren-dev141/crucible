@@ -34,12 +34,21 @@ export function placeObjectReflections(sourceParts, drawnParts, environment, env
  */
 export function stageObjectReflections(cache, recipe, sourceParts, drawnParts, graph, environmentMap) {
   const { environment } = recipe;
-  const worldMatrices = sourceParts.map(part => Array.from(graph.getNode(part.name).worldMatrix));
+  const worldMatrices = new Float32Array(sourceParts.length * 16);
+  sourceParts.forEach((part, index) => worldMatrices.set(graph.getNode(part.name).worldMatrix, index * 16));
   const key = JSON.stringify([environment.pointLights, environment.spotLights, environment.areaLights, environment.keyColor, environment.keyIntensity, environment.lightDirection,
-    environment.skyTop, environment.skyBottom, environment.setup, environment.hdri, environment.environmentIntensity, environment.environmentRotation, recipe.materials, worldMatrices]);
-  if (cache?.key === key && cache.sourceParts === sourceParts && cache.drawnParts === drawnParts) {
+    environment.skyTop, environment.skyBottom, environment.setup, environment.hdri, environment.environmentIntensity, environment.environmentRotation, recipe.materials]);
+  if (cache?.key === key && cache.sourceParts === sourceParts && cache.drawnParts === drawnParts && sameFloats(cache.worldMatrices, worldMatrices)) {
     return cache;
   }
   const placed = placeObjectReflections(sourceParts, drawnParts, environment, environmentMap);
-  return { key, sourceParts, drawnParts, result: placed.report.placed > 0 ? placed : null };
+  return { key, worldMatrices, sourceParts, drawnParts, result: placed.report.placed > 0 ? placed : null };
+}
+
+function sameFloats(first, second) {
+  if (first.length !== second.length) return false;
+  for (let index = 0; index < first.length; index++) {
+    if (first[index] !== second[index]) return false;
+  }
+  return true;
 }

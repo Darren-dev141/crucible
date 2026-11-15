@@ -37,7 +37,7 @@ import { resolveJobRoot } from './agent-job-root.mjs';
 import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError } from './agent-render-jobs.mjs';
 import { RENDER_QUALITY_NOTE, applyQuality, tierReport } from './agent-render-quality.mjs';
 import { RENDER_BUDGET_NOTE, chooseBudgetSettings, parseBudget } from './agent-render-budget.mjs';
-import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
+import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
 import { encodeRenderOutput, encodeMultilayerExr } from './render-output-encoders.mjs';
 import { createFrameEncoder } from './frame-encoder.mjs';
 import { DEFAULT_PAGE_ENCODER_QUANTIZER, createFrameReceiver, startVideoEncoderInPage } from './gpu-frame-reader.mjs';
@@ -47,9 +47,10 @@ import { isPreviewHost } from './preview-host.mjs';
 import { runAnnotateSession } from './annotate-session.mjs';
 import { openInDefaultBrowser } from './annotate-open.mjs';
 import { ANNOTATE_LIMITS } from '../src/agent-annotate.js';
-import { normalizeReview, REVIEW_LIMITS } from './agent-review.mjs';
+import { normalizeReview, reviewDeadlineMessage, REVIEW_LIMITS } from './agent-review.mjs';
 import { mergeFrameDiagnostics, pathTracerFindingsLimit } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
+import { createSharedGpuCard } from './agent-gpu-queue.mjs';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
@@ -72,6 +73,8 @@ const MAXIMUM_KEPT_WEB_BUILDS = 4;
 const EXPORTED_GLB_NAME = /^[0-9a-f-]{36}\.glb$/;
 const EXPORTED_WEB_BUILD_NAME = /^web-[0-9a-f-]{36}$/;
 const EVALUATION_TIMEOUT_MS = 30000;
+const RECOVERY_HINT = 'The scenes in this runtime are lost. Call scene_create (or scene_create_asset) to start a fresh runtime; no server restart is needed.';
+const FAILED_RUNTIME_MESSAGE = `The agent runtime is failed. ${RECOVERY_HINT}`;
 // Handing the scene page to a render job or review and bringing it back gets longer than an ordinary call. A job cut short by its deadline usually ran
 // while another process held the GPU, and the page can need that long to draw again once the card is free (#1256).
 const PAGE_HANDOFF_TIMEOUT_MS = 4 * EVALUATION_TIMEOUT_MS;
@@ -101,7 +104,7 @@ const VENDOR_FILES = Object.freeze({
 });
 
 export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', browser: browserPath, memory = 192, assets: assetRoot, packs: packsRoot,
-  jobs: jobRoot, ffmpeg = 'ffmpeg', audio: audioRoot, openPage = openInDefaultBrowser, addons: addonSet = { addons: [], skipped: [] },
+  jobs: jobRoot, ffmpeg = 'ffmpeg', audio: audioRoot, gpuQueue, openPage = openInDefaultBrowser, addons: addonSet = { addons: [], skipped: [] },
   previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url) } = {}) {
   if (!['gpu', 'cpu'].includes(backend)) {
     throw new RangeError('backend must be gpu or cpu.');
@@ -131,7 +134,16 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   if (typeof ffmpeg !== 'string' || !ffmpeg || (ffmpeg !== 'ffmpeg' && (!isAbsolute(ffmpeg) || !existsSync(ffmpeg)))) {
     throw new TypeError('FFmpeg must be on PATH or configured with an existing absolute executable path.');
   }
+  // One unit of GPU work (a look, a review, a bake, a render job) waits for the person's own GPU queue when --gpu-queue is set.
+  // The server takes the card before it enters its own call queue, so a long wait never blocks other calls, and a unit that
+  // runs while the server already holds the card (a look during a render job) joins that hold instead of queueing against itself.
+  const gpuCard = gpuQueue ? createSharedGpuCard(gpuQueue) : undefined;
+  function gpuUnit(weight, work, options) {
+    return gpuCard ? gpuCard.run(weight, work, options) : work();
+  }
   let phase = 'idle';
+  // A restart replaces the browser and every scene; a job that began before it must not touch the new runtime when it unwinds.
+  let runtimeGeneration = 0;
   let browserInstance;
   let httpServer;
   // The job that is capturing video frames, if any. Its socket path is secret and lives only as long as the job.
@@ -189,7 +201,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (!jobRoot) throw new Error('Configure --jobs with an absolute output directory before submitting render jobs.');
     if (!jobsPromise && closing) throw new Error('The agent runtime is closing or closed.');
     // A failed creation is not kept: the next call tries again instead of repeating the first error until restart.
-    jobsPromise ??= createAgentRenderJobs({ root: jobRoot, run: runJob }).catch(error => {
+    jobsPromise ??= createAgentRenderJobs({ root: jobRoot, run: runJob, acquireGpu: gpuCard ? signal => gpuCard.take('heavy', signal) : undefined }).catch(error => {
       jobsPromise = undefined;
       throw error;
     });
@@ -339,17 +351,31 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     return { sources };
   }
 
-  function enqueue(task) {
-    if (closing || phase === 'closing' || phase === 'closed' || phase === 'failed') {
-      return Promise.reject(new Error(`The agent runtime is ${phase}.`));
+  // A failed runtime has lost its scene page and every scene in it. A call that starts a new scene may bring up a fresh runtime
+  // instead of repeating the failure until the server restarts (#1256); every other call still says the runtime is failed.
+  async function restartFailedRuntime() {
+    runtimeGeneration++;
+    forgetAllSessions();
+    await shutdownResources().catch(() => {});
+    phase = 'idle';
+  }
+
+  function unavailableMessage(state) {
+    return state === 'failed' ? FAILED_RUNTIME_MESSAGE : `The agent runtime is ${state}.`;
+  }
+
+  function enqueue(task, { recoversFailedRuntime = false } = {}) {
+    if (closing || phase === 'closing' || phase === 'closed' || (phase === 'failed' && !recoversFailedRuntime)) {
+      return Promise.reject(new Error(unavailableMessage(phase)));
     }
     if (queuedCalls >= MAXIMUM_QUEUED_CALLS) {
       return Promise.reject(new Error('The preview call queue is full. Retry after pending calls finish.'));
     }
     queuedCalls++;
-    const result = queue.then(() => {
+    const result = queue.then(async () => {
+      if (phase === 'failed' && recoversFailedRuntime && !closing) await restartFailedRuntime();
       if (closing || phase === 'closed' || phase === 'failed') {
-        throw new Error(`The agent runtime is ${closing ? 'closing' : phase}.`);
+        throw new Error(unavailableMessage(closing ? 'closing' : phase));
       }
       return task();
     });
@@ -574,7 +600,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     requireSession(input.sessionId);
     if (!browserInstance?.isConnected() || page.isClosed()) {
       phase = 'failed';
-      throw new Error('The preview browser disconnected. The scene cannot be recovered from this runtime.');
+      throw new Error(`The preview browser disconnected. ${RECOVERY_HINT}`);
     }
     return evaluate(method, input, page, timeoutMs);
   }
@@ -591,7 +617,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             timedOut = true;
             if (target === page) phase = 'failed';
             reject(new Error(target === page
-              ? `The preview operation exceeded ${timeoutMs / 1000} seconds. This runtime must be closed.`
+              ? `The preview operation exceeded ${timeoutMs / 1000} seconds. ${RECOVERY_HINT}`
               : `The private render operation exceeded ${timeoutMs / 1000} seconds.`));
           }, timeoutMs);
         }),
@@ -611,7 +637,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     }
   }
 
-  async function runJob({ jobId, sessionId, directory, snapshot, settings, signal, progress }) {
+  async function runJob({ jobId, sessionId, directory, snapshot, settings, signal, progress, startRenderClock = () => {} }) {
     let jobPage;
     let session;
     let encoder;
@@ -623,11 +649,12 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     let nativeTemporalShotIndex;
     let pageEncodes = false;
     let suspended = false;
+    const generationAtStart = runtimeGeneration;
     const started = performance.now();
     // One job runs at a time, so the estimate made at submission belongs to the job that starts next.
     const estimate = estimateForNextJob;
     estimateForNextJob = undefined;
-    const metrics = { backend, requestedWidth: settings.width, requestedHeight: settings.height,
+    const metrics = { backend, memoryBudgetMiB: memory, requestedWidth: settings.width, requestedHeight: settings.height,
       renderSeconds: 0, captureSeconds: 0, peakNodeBytes: 0, peakBrowserHeap: 0, maximumPendingFrames: 1 };
     async function recordPeakMemory() {
       metrics.peakNodeBytes = Math.max(metrics.peakNodeBytes, process.memoryUsage().rss);
@@ -645,6 +672,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         await invoke('suspend', { sessionId }, PAGE_HANDOFF_TIMEOUT_MS);
         suspended = true;
       });
+      // The wait behind other calls and the handoff of the scene page are over: from here the deadline counts render time only (#1256).
+      startRenderClock();
       signal.throwIfAborted();
       jobPage = await browserInstance.newPage({ viewport: { width: settings.width, height: settings.height }, deviceScaleFactor: 1 });
       signal.throwIfAborted();
@@ -657,6 +686,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         ...(snapshot.assetBytes ? { data: snapshot.assetBytes.toString('base64'), ...(await motionSources([snapshot.recipe.motion])) } : await placedAssetData(snapshot.recipe)) };
       const created = await jobPage.evaluate(({ method, input }) => window.__agentPreview[method](input),
         { method: snapshot.assetBytes ? 'createAsset' : 'create', input });
+      // The plan made at creation sees the requested size; later plans see the viewport already cut to the budget.
+      metrics.requiredMemoryMiB = created.render.requiredMemoryMiB;
       const width = settings.kind === 'video' ? Math.floor(created.render.width / 2) * 2 : created.render.width;
       const height = settings.kind === 'video' ? Math.floor(created.render.height / 2) * 2 : created.render.height;
       if (width < 64 || height < 64) throw new Error('Render budget reduced the job below its minimum output size.');
@@ -932,7 +963,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           }
         }
         finally {
-          if (suspended && !closing) {
+          if (generationAtStart !== runtimeGeneration) {
+            // The runtime restarted while this job unwound: its scene is gone and the new runtime owns the phase.
+          } else if (suspended && !closing) {
             try {
               await enqueue(() => invoke('resume', { sessionId }, PAGE_HANDOFF_TIMEOUT_MS));
               phase = 'ready';
@@ -1006,14 +1039,16 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       };
     },
     create({ recipe }) {
-      return enqueue(async () => {
+      const createScene = () => enqueue(async () => {
         await requirePreviewRenderer();
         await boot();
         const sessionId = randomUUID();
-        const result = await evaluate('create', { recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) }, page, recipe?.bake ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
+        const createInput = { recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) };
+        const result = await evaluate('create', createInput, page, recipe?.bake ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
         registerCreatedScene(sessionId, result, Boolean(recipe?.bake));
         return result;
-      });
+      }, { recoversFailedRuntime: true });
+      return recipe?.bake ? gpuUnit('heavy', createScene) : createScene();
     },
     /** The catalog with the installed packs; `{ pack, recipe }` or `{ pack, material }` reads one pack item's JSON instead. */
     assetCatalog({ pack, recipe, material } = {}) {
@@ -1039,7 +1074,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         const result = await evaluate('createAsset', { recipe, data: bytes.toString('base64'), sessionId, memoryBudgetMiB: memory, backend, ...(await motionSources([recipe.motion])) });
         registerCreatedScene(sessionId, result, false);
         return result;
-      });
+      }, { recoversFailedRuntime: true });
     },
     inspect(input) {
       return enqueue(() => invoke('inspect', input));
@@ -1074,7 +1109,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       });
     },
     apply(input) {
-      return enqueue(async () => {
+      const applyOperations = () => enqueue(async () => {
         await requirePreviewRenderer();
         if (input.branch !== undefined) {
           const { branch, ...rest } = input;
@@ -1086,14 +1121,18 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         const motions = (input.operations ?? []).filter(operation => operation.type === 'set-motion').map(operation => operation.motion);
         const gameAssets = await gameAssetNeeds(input);
         const placedValue = gameAssets?.recipe ?? input.operations;
-        const applied = await invoke('apply', { ...input, ...(await motionSources(motions, placedValue)), ...(await placedAssetData(placedValue)), ...(gameAssets ? { assetNeeds: gameAssets.recipe } : {}) }, rebakes ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
+        const applyInput = { ...input, ...(await motionSources(motions, placedValue)), ...(await placedAssetData(placedValue)), ...(gameAssets ? { assetNeeds: gameAssets.recipe } : {}) };
+        const applied = await invoke('apply', applyInput, rebakes ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
         if (bakeAfter ?? hadBake) bakedSessionIds.add(input.sessionId);
         else bakedSessionIds.delete(input.sessionId);
         return applied;
       });
+      // Whether the edit rebakes light is read when the call arrives, so the card is taken before the call queue is entered.
+      const rebakesLight = input.branch === undefined && (bakedSessionIds.has(input.sessionId) || bakeAfterOperations(input.operations) === true);
+      return rebakesLight ? gpuUnit('heavy', applyOperations) : applyOperations();
     },
     look(input) {
-      return enqueue(async () => {
+      return gpuUnit('light', () => enqueue(async () => {
         await requirePreviewRenderer();
         requireSession(input.sessionId);
         const width = input.width ?? 768;
@@ -1127,7 +1166,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           result.metadata.note = `The ${width}x${height} PNG was over the 1 MiB image response budget, so this is the ${stepWidth}x${stepHeight} render. Request that size or smaller to skip the retry.`;
         }
         return result;
-      });
+      }));
     },
     // Shows the current view in the person's own browser, waits for their pins and notes, and resolves each pin to a part and a
     // world point. The wait holds no preview queue slot, so other tools keep working while the person marks.
@@ -1180,7 +1219,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       let settings;
       try { settings = normalizeReview(input); }
       catch (error) { return Promise.reject(error); }
-      return enqueue(async () => {
+      return gpuUnit('light', () => enqueue(async () => {
         await requirePreviewRenderer();
         requireSession(settings.sessionId);
         const snapshot = await invoke('snapshot', settings);
@@ -1196,6 +1235,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         let session;
         let output;
         let deadlineExpired = false;
+        let completedShots = 0;
+        const reviewDeadlineText = () => reviewDeadlineMessage({ completedShots, requestedShots: settings.shots.length, deadlineSeconds: EVALUATION_TIMEOUT_MS / 1000 });
         let cancellationReason;
         const cancellation = new Promise((resolve, reject) => {
           cancelReview = error => {
@@ -1208,10 +1249,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         cancellation.catch(() => {});
         const deadline = setTimeout(() => {
           deadlineExpired = true;
-          cancelReview(new Error('The review exceeded its total 30 second deadline.'));
+          cancelReview(new Error(reviewDeadlineText()));
         }, EVALUATION_TIMEOUT_MS);
         function requireReviewOpen() {
-          if (deadlineExpired) throw new Error('The review exceeded its total 30 second deadline.');
+          if (deadlineExpired) throw new Error(reviewDeadlineText());
           if (closing) throw new Error('The agent runtime is closing.');
         }
         async function reviewEvaluate(method, value) {
@@ -1264,6 +1305,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
                 throw new Error(memoryGuardMessage({ subject: 'Review', ...sample }));
               }
               shots[index] = { ...rendered, ...(group.branch === undefined ? {} : { branch: group.branch, branchStale: branchRecipe.stale }) };
+              completedShots += 1;
             }
             await reviewEvaluate('dispose', { sessionId: privateSessionId });
             privateCreated = false;
@@ -1274,7 +1316,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             backend, width: settings.gridWidth, height: settings.gridHeight, shots,
             peakNodeBytes, peakBrowserHeap, maximumPendingFrames: 1 } };
         } catch (error) {
-          if (deadlineExpired) throw new Error('The review exceeded its total 30 second deadline.');
+          if (deadlineExpired) throw new Error(reviewDeadlineText());
           throw error;
         } finally {
           clearTimeout(deadline);
@@ -1307,7 +1349,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         }
         output.metadata.elapsedSeconds = (performance.now() - started) / 1000;
         return output;
-      });
+      }));
     },
     restore(input) {
       return enqueue(async () => {
@@ -1403,6 +1445,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             const { quality, ...base } = settings;
             ({ settings: jobSettings, report: qualityReport } = applyQuality({ quality, base, backend, nativeTracer: Boolean((await nativeTracerLocator.find()).tracer), estimateOf }));
           }
+          const triangleProblem = pathTraceTriangleProblem(size, jobSettings?.renderer, { canChooseBackend: backend !== 'cpu', picksRenderer: settings?.budget !== undefined || settings?.quality !== undefined });
+          if (triangleProblem) throw new RangeError(triangleProblem);
           const estimate = estimateOf(jobSettings);
           estimateForNextJob = estimate;
           try {

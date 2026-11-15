@@ -2,6 +2,9 @@
 // settings alone, so the same inputs give the same answer. A correction learned from the last few jobs on this machine
 // (kept in the jobs folder, never sent anywhere) can move it, within a fixed bound.
 
+import { MAXIMUM_MEMORY_MIB } from '../src/agent-scene-capabilities.js';
+import { MAX_TRACE_TRIANGLES } from '../src/path-tracer-scene.js';
+
 const MIB = 1024 ** 2;
 
 /** What scene_capabilities topic jobs says about the estimate and the report. The details are in docs/mcp.md. */
@@ -72,6 +75,8 @@ export function sceneSizeFrom(inspection, recipe) {
     parts: inspection?.counts?.parts ?? 0,
     assetParts: placements.reduce((total, placement) => total + (placement.parts ?? 0), 0),
     triangles: listedScaled + generatedTriangles,
+    // The triangles the node list itself reports, never scaled or guessed: a floor of the real count.
+    listedTriangles,
     materials: inspection?.counts?.materials ?? 0,
     textures: textureCount(recipe),
     lights: (look.pointLights ?? 0) + (look.spotLights ?? 0) + (look.areaLights ?? 0) + 1,
@@ -168,10 +173,21 @@ function frameWasReduced(metrics) {
   return Boolean(metrics.width && metrics.requestedWidth && (metrics.width < metrics.requestedWidth || metrics.height < metrics.requestedHeight));
 }
 
+/** What to do about a reduced frame: raise --memory when the full frame fits under the server ceiling, else say what to shrink. */
+function memoryAdvice(metrics) {
+  const running = metrics.memoryBudgetMiB ? `; this server runs with --memory ${metrics.memoryBudgetMiB}` : '';
+  const needs = ` The full frame needs a render budget of ${metrics.requiredMemoryMiB} MiB${running}.`;
+  if (metrics.requiredMemoryMiB > MAXIMUM_MEMORY_MIB) {
+    return `${needs} --memory accepts at most ${MAXIMUM_MEMORY_MIB}, so a restart cannot fit it. Reduce the textures, the geometry, the frame size, or turn off HDR or bloom to render at ${metrics.requestedWidth}x${metrics.requestedHeight}.`;
+  }
+  return `${needs} Restart it with --memory ${metrics.requiredMemoryMiB} or more to render at ${metrics.requestedWidth}x${metrics.requestedHeight}.`;
+}
+
 function fallbacksFrom(settings, metrics) {
   const fallbacks = [];
   if (frameWasReduced(metrics)) {
-    fallbacks.push(`The memory budget reduced the frame from ${metrics.requestedWidth}x${metrics.requestedHeight} to ${metrics.width}x${metrics.height}.`);
+    const neededBudget = metrics.requiredMemoryMiB ? memoryAdvice(metrics) : '';
+    fallbacks.push(`The memory budget reduced the frame from ${metrics.requestedWidth}x${metrics.requestedHeight} to ${metrics.width}x${metrics.height}.${neededBudget}`);
   }
   if (metrics.pathTracer?.backendNote) fallbacks.push(metrics.pathTracer.backendNote);
   if (metrics.pathTracer?.denoiserNote) fallbacks.push(metrics.pathTracer.denoiserNote);
@@ -224,4 +240,32 @@ export function parseHistory(text) {
   } catch {
     return [];
   }
+}
+
+/**
+ * The estimate of `sceneSizeFrom` counts triangles as vertices / 2, which is up to 1.5 times the real count of non-indexed geometry
+ * (vertices / 3), and it does not subtract the parts the tracer skips. So the submit check refuses only above this multiple of the
+ * cap; a scene between the cap and the margin goes through to the exact check made when the trace starts.
+ */
+export const TRIANGLE_ESTIMATE_SAFETY_FACTOR = 2;
+
+/**
+ * The message of a path traced job the CPU tracer would refuse after it started, or undefined. The CPU tracer (the default
+ * backend) flattens the scene and takes at most MAX_TRACE_TRIANGLES triangles in total; the count here is the estimate of
+ * `sceneSizeFrom`. Only its generated and truncated part is approximate, so the safety margin applies to that part alone: a scene
+ * whose listed nodes (exact counts) are over the cap is refused at once, and otherwise only an estimate clearly over the margin
+ * is, with "about" in the message. The gpu and native backends have
+ * other bounds, checked when the trace starts. `canChooseBackend` is false when the caller cannot set renderer.backend (a runtime on
+ * SwiftShader, or a budget or quality job that picks the renderer), so the advice then names only ways that work.
+ */
+export function pathTraceTriangleProblem(size, renderer, { canChooseBackend = true, picksRenderer = false } = {}) {
+  if (!renderer || (renderer.backend !== undefined && renderer.backend !== 'cpu')) return undefined;
+  const listedTriangles = size.listedTriangles ?? 0;
+  const exactlyOverCap = listedTriangles > MAX_TRACE_TRIANGLES;
+  if (!exactlyOverCap && size.triangles <= MAX_TRACE_TRIANGLES * TRIANGLE_ESTIMATE_SAFETY_FACTOR) return undefined;
+  const count = exactlyOverCap ? `${listedTriangles} triangles` : `about ${size.triangles} triangles`;
+  const base = `settings.renderer: this scene has ${count} and the cpu path tracer takes at most ${MAX_TRACE_TRIANGLES} in total.`;
+  if (picksRenderer) return `${base} Simplify or drop meshes, or leave budget and quality out and pick the renderer yourself.`;
+  if (!canChooseBackend) return `${base} Simplify or drop meshes; this runtime has no GPU backend.`;
+  return `${base} Simplify or drop meshes, or set renderer.backend to "gpu" or "native", which hold more.`;
 }

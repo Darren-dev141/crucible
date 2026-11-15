@@ -5,11 +5,32 @@ export const REVIEW_LIMITS = Object.freeze({ minimumShots: 1, maximumShots: 4,
   labelHeight: 24, maximumLabelLength: 48, maximumGridWidth: 960, maximumGridHeight: 1008,
   maximumImageBytes: 1024 * 1024, maximumPendingFrames: 1 });
 
+// A review camera is a view, not a lens: its field of view is in degrees, so the lens fields of a scene camera have no place here.
+const CAMERA_FIELD_HINTS = Object.freeze({
+  focalLength: 'pass fov in degrees instead, such as fov 45',
+  sensorWidth: 'pass fov in degrees instead, such as fov 45',
+  projection: 'a review samples the scene camera as a perspective view; set eye, target and fov',
+  orthoScale: 'a review samples the scene camera as a perspective view; set eye, target and fov',
+});
+
 function fields(value, allowed, name) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).some(key => !allowed.includes(key))) {
-    throw new TypeError(`Invalid or unknown ${name} fields.`);
+  const subject = name === 'review' ? 'Review' : `Review ${name}`;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError(`${subject} must be an object with the fields ${allowed.join(', ')}.`);
   }
+  const rejected = Object.keys(value).filter(key => !allowed.includes(key));
+  if (rejected.length === 0) return;
+  const reasons = rejected.map(key => (name === 'camera' && CAMERA_FIELD_HINTS[key] ? `${key} (${CAMERA_FIELD_HINTS[key]})` : key));
+  throw new TypeError(`${subject} field${rejected.length > 1 ? 's' : ''} not accepted: ${reasons.join('; ')}. ${subject} takes ${allowed.join(', ')}; remove the others.`);
+}
+
+/** The message of a review that ran out of time: how far it got and what to ask for instead. */
+export function reviewDeadlineMessage({ completedShots, requestedShots, deadlineSeconds }) {
+  const fits = Math.max(1, completedShots);
+  const advice = requestedShots > 1 && fits < requestedShots
+    ? `Ask for at most ${fits} shot${fits === 1 ? '' : 's'} per call, or lower width and height, or leave labels off.`
+    : 'Lower width and height, leave labels off, or review a simpler scene.';
+  return `The review exceeded its total ${deadlineSeconds} second deadline after ${completedShots} of ${requestedShots} shots. ${advice}`;
 }
 
 function clock(value, name) {

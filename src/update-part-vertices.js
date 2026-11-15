@@ -2,6 +2,7 @@
 // drew, written into its existing GPU buffers with bufferSubData. A deforming mesh such as cloth skips replaceParts,
 // which would build a new geometry object and upload every buffer again. The renderer is a parameter, so this module
 // imports nothing from the renderer and a scene that never deforms a mesh does not carry it.
+import { markLiveGeometry } from './live-geometry.js';
 
 function checkVertices(name, values, expectedLength, label) {
   if (!(values instanceof Float32Array) || values.length !== expectedLength) {
@@ -52,6 +53,8 @@ export function updatePartVertices(renderer, part, positions, normals) {
     context.bindBuffer(context.ARRAY_BUFFER, buffers.get(field));
     context.bufferSubData(context.ARRAY_BUFFER, 0, geometry[field]);
   }
+  // The values changed in place under the same array, so no cache may keep a measurement of this geometry.
+  markLiveGeometry(geometry);
   location.batch.bounds = boundingSphereOf(geometry.positions);
   renderer.shadowsDirty = true;
   return part;

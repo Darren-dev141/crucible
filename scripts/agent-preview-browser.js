@@ -14,7 +14,7 @@ import { installCoplanarDiagnostics } from '../src/coplanar-overlap.js';
 import { applyProjection } from '../src/camera.js';
 import { mat4 } from 'gl-matrix';
 import { listAddedControllerKinds, listAddedCameraRigKinds, listControllerKinds, listCameraRigKinds, unregisterControllerKind, unregisterCameraRigKind } from '../src/player.js';
-import { resolveAgentShadow, agentEnvironmentMap } from '../src/agent-look.js';
+import { fitAgentShadow, resolveAgentShadow, agentEnvironmentMap } from '../src/agent-look.js';
 import { agentSceneModule, agentSceneModuleLoaded } from '../src/agent-scene-modules.js';
 import { agentGroundPlacement, createAgentGround, placeAgentGround, FLOOR_COLOR } from '../src/agent-ground.js';
 import { groundBounceEnvironment } from '../src/ground-bounce.js';
@@ -23,10 +23,12 @@ import { parseGltf } from '../src/gltf.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { exportGlb } from '../src/export.js';
 import '../src/texture-update.js';
+import { staleRevisionMessage } from '../src/agent-errors.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
 import { rasterOptionsFor } from './agent-render-quality.mjs';
 import { hasPatternTextures } from './agent-preview-textures.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
+import { imageLimitProblem } from '../src/image-header.js';
 import { registerCatalogEnvironment, registerCatalogLook } from '../src/look-catalog.js';
 import { registerVolumeGrid } from '../src/volume-grid.js';
 import { parseRadianceHdr } from '../src/hdri.js';
@@ -34,7 +36,7 @@ import { parseCube } from '../src/view-transform.js';
 import { weightTracksFromGltfAnimation } from '../src/export-skeleton.js';
 import { clipFromGltfAnimation } from '../src/skeleton-pose.js';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
-import { AGENT_SCENE_DEFAULT_LIMITS } from '../src/agent-scene-capabilities.js';
+import { AGENT_SCENE_DEFAULT_LIMITS, MAXIMUM_MEMORY_MIB } from '../src/agent-scene-capabilities.js';
 import { describeApplication } from '../src/agent-apply-report.js';
 import { framingProblems, placementProblems, textureProblems, exposureProblems, lumaShares } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, createBranchStore, printableLabel } from '../src/agent-branches.js';
@@ -214,6 +216,7 @@ function renderInfo(renderer, viewWarnings = []) {
     graphics: context.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : context.RENDERER),
     estimatedBytes: renderer.memoryPlan.estimatedBytes,
     bloom: renderer.memoryPlan.bloom,
+    requiredMemoryMiB: renderer.memoryPlan.requiredMemoryMiB,
     width: canvas.width,
     height: canvas.height,
     samples: renderer.capabilities.samples,
@@ -232,7 +235,11 @@ function renderInfo(renderer, viewWarnings = []) {
 // Sequence frames arrive as catalog image bytes keyed by asset id. They are decoded here, without colour conversion or
 // premultiplication, so the same file gives the same pixels in a preview and in a render job.
 async function decodeSequenceFrame(id, base64) {
-  const bitmap = await createImageBitmap(new Blob([bytesFromBase64(base64)]), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+  const bytes = bytesFromBase64(base64);
+  // The header size is checked first: createImageBitmap would decode every pixel of an oversized frame before its size is known.
+  const headerProblem = imageLimitProblem(bytes, `Sequence frame ${id.slice(0, 12)}`, TEXTURE_SEQUENCE_LIMITS);
+  if (headerProblem) throw new RangeError(headerProblem);
+  const bitmap = await createImageBitmap(new Blob([bytes]), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
   try {
     if (bitmap.width > TEXTURE_SEQUENCE_LIMITS.maxSide || bitmap.height > TEXTURE_SEQUENCE_LIMITS.maxSide) {
       throw new RangeError(`Sequence frame ${id.slice(0, 12)} is ${bitmap.width}x${bitmap.height}; frames are at most ${TEXTURE_SEQUENCE_LIMITS.maxSide} pixels on a side.`);
@@ -398,7 +405,7 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   syncSequenceTextures(record);
   const environment = record.scene.environment;
   const effects = record.scene.effects;
-  const shadow = record.scene.shadow;
+  const shadow = fitAgentShadow(record.scene.shadow, record.scene.parts);
   const shadowKey = JSON.stringify([environment.lightDirection, shadow]);
   if (record.shadowKey !== shadowKey) {
     record.renderer.shadowBounds = resolveAgentShadow(shadow, environment.lightDirection);
@@ -518,7 +525,7 @@ function resetCanvas() {
 
 // The cascade code is a loaded module, so a scene with one shadow map never runs it.
 function cascadeCountFor(scene) {
-  return agentSceneModule('cascades').effectiveShadowCascades(scene.environment, scene.shadow);
+  return agentSceneModule('cascades').effectiveShadowCascades(scene.environment, fitAgentShadow(scene.shadow, scene.parts));
 }
 
 // Wind strength of the recipe; absent keeps the renderer default. The heading is applied by applyRecipeWindHeading.
@@ -547,13 +554,14 @@ function initializeRenderer(scene, { memoryBudgetMiB, backend, transparent = fal
     depth: true,
     world: scene.environment.world,
     environment: litEnvironment(scene.parts, scene.environment, Boolean(placement)),
-    shadowBounds: resolveAgentShadow(scene.shadow, scene.environment.lightDirection),
+    shadowBounds: resolveAgentShadow(fitAgentShadow(scene.shadow, scene.parts), scene.environment.lightDirection),
     shadowCascades: cascadesFor(scene),
     skyOpenness,
     fogSkyVisibility,
     pixelRatio: 1,
     ...rasterOptionsFor(tier, backend),
     memoryBudgetMiB,
+    maximumMemoryBudgetMiB: MAXIMUM_MEMORY_MIB,
     transparent,
   }))));
   // Outlines, toon light and polylines draw only for a frame that carries environment.lines; user passes run last, on the finished frame.
@@ -953,7 +961,7 @@ window.__agentPreview = {
   },
   snapshot({ sessionId, expectedRevision }) {
     const record = requireSession(sessionId);
-    if (record.scene.revision !== expectedRevision) throw new Error('Stale revision for render snapshot.');
+    if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('render snapshot', expectedRevision, record.scene.revision));
     return { sourceRevision: record.scene.revision, recipe: record.scene.exportRecipe(),
       clips: record.asset?.animations.map(clip => ({ duration: clip.duration })) ?? [] };
   },
@@ -1087,7 +1095,7 @@ window.__agentPreview = {
       heldNativeExportTables = split.tables;
       exported = split.manifest;
     }
-    return { ...exported, ignored: describeIgnoredFeatures(record.scene.parts, environment, 'cpu', { kernelMaterials: exported.wholeMaterials }) };
+    return { ...exported, ignored: describeIgnoredFeatures(record.scene.parts, environment, 'cpu', { kernelMaterials: exported.wholeMaterials, clipStart: camera.clipStart }) };
   },
   // One chunk (base64) of a table of the chunked export that exportNativeScene holds.
   readNativeExportChunk({ name, offset }) {
@@ -1345,7 +1353,7 @@ window.__agentPreview = {
     return afterMeshBooleans(operations, () => {
       const record = requireSession(sessionId);
       if (record.asset) throw new TypeError('Branches support procedural recipe scenes.');
-      if (record.scene.revision !== expectedRevision) throw new Error('Stale revision for branch.');
+      if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('branch', expectedRevision, record.scene.revision));
       const baseRecipe = record.scene.exportRecipe();
       const scratch = createAgentScene(baseRecipe);
       validatePreviewCamera(candidateCamera(record, operations));

@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentRenderJobs, normalizeJobSettings, RENDER_HISTORY_FILE } from '../scripts/agent-render-jobs.mjs';
 import { conciseJobResult } from '../scripts/mcp-response-format.mjs';
+import { planRenderSize } from '../src/budget.js';
+import { MAXIMUM_MEMORY_MIB } from '../src/agent-scene-capabilities.js';
 import {
   CORRECTION_BOUND, HISTORY_LIMIT, correctionFromHistory, estimateRenderJob, historyWithJob, jobKind, parseHistory, renderReport, sceneSizeFrom,
 } from '../scripts/agent-render-estimate.mjs';
@@ -26,7 +28,7 @@ function settingsFor(overrides) {
 
 test('scene size counts every placed node, textures and lights', () => {
   const size = sceneSizeFrom(inspection({ nodeCount: 10, trianglesEach: 1200 }), recipe);
-  assert.deepEqual(size, { parts: 10, assetParts: 0, triangles: 12000, materials: 3, textures: 2, lights: 4 });
+  assert.deepEqual(size, { parts: 10, assetParts: 0, triangles: 12000, listedTriangles: 12000, materials: 3, textures: 2, lights: 4 });
 });
 
 test('a truncated node list is scaled up to the part count', () => {
@@ -114,7 +116,7 @@ test('a damaged history file counts as no history', () => {
 test('the report puts the estimate, the measurement and what fell back in one record', () => {
   const settings = settingsFor({ width: 1920, height: 1080, renderer: { type: 'pathTracer', backend: 'native', samples: 64 } });
   const metrics = {
-    elapsedSeconds: 12.345, peakNodeBytes: 300 * 1024 ** 2, peakBrowserHeap: 100 * 1024 ** 2, requestedWidth: 1920, requestedHeight: 1080, width: 1280, height: 720,
+    elapsedSeconds: 12.345, peakNodeBytes: 300 * 1024 ** 2, peakBrowserHeap: 100 * 1024 ** 2, requestedWidth: 1920, requestedHeight: 1080, width: 1280, height: 720, requiredMemoryMiB: 250, memoryBudgetMiB: 192,
     pathTracer: { averageSamples: 48, backendNote: 'No native tracer was found. The gpu backend ran instead.', denoiserNote: 'OIDN is not installed; the wavelet denoiser ran.' },
   };
   const report = renderReport({ estimate: { seconds: 10, peakMemoryMiB: 350, basis: 'scene size' }, settings, metrics });
@@ -124,6 +126,7 @@ test('the report puts the estimate, the measurement and what fell back in one re
   assert.equal(report.samplesRequested, 64);
   assert.equal(report.fallbacks.length, 3);
   assert.match(report.fallbacks[0], /1920x1080 to 1280x720/);
+  assert.match(report.fallbacks[0], /needs a render budget of 250 MiB; this server runs with --memory 192. Restart it with --memory 250 or more/);
   assert.deepEqual(renderReport({ settings: settingsFor({}), metrics: { elapsedSeconds: 1 } }).fallbacks, []);
 });
 
@@ -191,4 +194,17 @@ test('the basis names the jobs folder, a clamped time factor and missing memory 
   const noMemory = [{ ...historyEntry(2), measuredPeakMemoryMiB: 0 }, { ...historyEntry(2), measuredPeakMemoryMiB: 0 }];
   assert.match(estimateRenderJob({ size, settings, backend: 'gpu', history: noMemory }).basis, /memory from scene size only/);
   assert.doesNotMatch(estimateRenderJob({ size, settings, backend: 'gpu', history: [historyEntry(1.5), historyEntry(1.5)] }).basis, /\(/);
+});
+
+test('the reduced-frame fallback never asks for a --memory value over the ceiling (#1313)', () => {
+  const plan = planRenderSize({ width: 1920, height: 1080, samples: 4, memoryBudgetMiB: 384, hdr: true, bloom: true, geometryBytes: 100e6, textureBytes: 150e6 });
+  assert.ok(plan.reduced);
+  assert.ok(plan.requiredMemoryMiB > MAXIMUM_MEMORY_MIB);
+  const metrics = { elapsedSeconds: 1, requestedWidth: 1920, requestedHeight: 1080, width: plan.width, height: plan.height, requiredMemoryMiB: plan.requiredMemoryMiB, memoryBudgetMiB: 384 };
+  const [fallback] = renderReport({ settings: settingsFor({}), metrics }).fallbacks;
+  assert.doesNotMatch(fallback, /Restart it with --memory/);
+  assert.match(fallback, new RegExp(`--memory accepts at most ${MAXIMUM_MEMORY_MIB}`));
+  assert.match(fallback, /Reduce the textures, the geometry, the frame size/);
+  const [reachable] = renderReport({ settings: settingsFor({}), metrics: { ...metrics, requiredMemoryMiB: MAXIMUM_MEMORY_MIB, memoryBudgetMiB: 192 } }).fallbacks;
+  assert.match(reachable, new RegExp(`Restart it with --memory ${MAXIMUM_MEMORY_MIB} or more`));
 });

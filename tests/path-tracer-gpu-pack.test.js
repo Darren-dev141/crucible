@@ -33,7 +33,7 @@ function sampleScene() {
 
 test('triangles are packed in leaf order with their corner, edges and material', () => {
   const scene = sampleScene();
-  const table = packTriangles(scene);
+  const table = packTriangles(scene, { secondUvSet: true });
   const order = scene.bvh.triangleOrder;
   assert.equal(order.length, 4);
   for (let slot = 0; slot < order.length; slot++) {

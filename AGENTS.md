@@ -43,6 +43,13 @@ Run the full preflight once before you push. A green preflight covers the PR gat
 
 For one test file: `node --test tests/<area>.test.js`.
 
+Between one file and the full pass, while you iterate (each prints at most about 20 lines for 10 failures and writes the full TAP to `artifacts/test-logs/`):
+
+- `npm run test:affected -- src/foo.js`: every test file that mentions the file, or a module that re-exports it. With no files it uses what your branch changed.
+- `npm run test:fast`: a deterministic 10 percent of the test files, seeded by the branch name (`-- --seed <text> --percent <n>`).
+- `npm run test:mutation-check -- tests/foo.test.js`: reverts your `src/`, `bin/` and `packages/` changes, runs the tests, lists the ones that fail and restores the tree. It exits 1 when every test still passes, which means the test does not pin your fix. Stage unstaged edits outside those folders first, and `git add -N` new files under them.
+- `npm test -- --test-reporter=./scripts/test-compact-reporter.mjs` gives the full pass the same short output.
+
 ## Rules that fail a pull request
 
 - Add `changes/<issue>.md` with one bullet when you change `src/`, `bin/`, `packages/` or `skills/` ([changes/README.md](changes/README.md) has the naming rule).
