@@ -157,8 +157,11 @@ export async function buildPackIndex({ packsDirectory = join(repositoryRoot, 'pa
   const source = resolve(packsDirectory);
   const output = resolve(outputDirectory);
   assertOutputIsSeparate(source, output);
+  if (!existsSync(source)) {
+    throw new Error(`The packs folder ${source} does not exist, so the build would publish an empty index. Pass --packs <folder> with the folder that holds the pack folders.`);
+  }
   const folders = [];
-  for (const entry of await readdir(source, { withFileTypes: true }).catch(() => [])) {
+  for (const entry of await readdir(source, { withFileTypes: true })) {
     if (entry.isDirectory() || entry.isSymbolicLink()) folders.push(entry.name);
   }
   folders.sort();
@@ -187,7 +190,10 @@ export async function buildPackIndex({ packsDirectory = join(repositoryRoot, 'pa
 
 function optionValue(name) {
   const position = process.argv.indexOf(name);
-  return position === -1 ? undefined : process.argv[position + 1];
+  if (position === -1) return undefined;
+  const value = process.argv[position + 1];
+  if (value === undefined || value.startsWith('--')) throw new Error(`${name} needs a folder after it, such as ${name} public/packs.`);
+  return value;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
