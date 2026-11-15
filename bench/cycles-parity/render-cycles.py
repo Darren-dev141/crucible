@@ -7,11 +7,24 @@ import re
 import sys
 import time
 
+import importlib.util
+
 import bpy
 import numpy
 from mathutils import Matrix, Vector
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+
+def load_sibling_module(module_name):
+    module_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{module_name}.py")
+    specification = importlib.util.spec_from_file_location(module_name, module_path)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+cycles_switches = load_sibling_module("cycles_switches")
 
 WATTS_PER_POINT_INTENSITY = 4.0 * math.pi
 WATTS_PER_AREA_INTENSITY = math.pi
@@ -32,6 +45,8 @@ SOFT_FALLOFF_FROM_SCENE = "scene"
 soft_falloff_setting = SOFT_FALLOFF_FROM_SCENE
 # Set by --light-mis off: lights stop being hit by BSDF rays and are sampled by next event estimation only (a diagnostic).
 light_mis_enabled = True
+# Set by --emission-sampling off: emissive materials are no longer sampled as lights, so their light reaches a pixel by bounce rays only.
+emission_sampling_enabled = True
 # Set by --radiance-cap. Cook and the Crucible runtime limit the texels of a sky map before they are interpolated (before-lookup, the default);
 # the Blender world used to limit the interpolated value instead (after-lookup), which lets the texels beside a very bright spot add energy.
 radiance_cap_before_lookup = True
@@ -92,7 +107,7 @@ def parse_cli_arguments():
         raise ValueError("Pass script arguments after '--': <sceneJsonPath> <outputPrefix> [options].")
     argument_list = sys.argv[sys.argv.index("--") + 1:]
     if len(argument_list) < 2 or argument_list[0].startswith("--") or argument_list[1].startswith("--"):
-        raise ValueError("Usage: blender -b --factory-startup --python bench/cycles-parity/render-cycles.py -- <sceneJsonPath> <outputPrefix> [--samples 256] [--bounces 8] [--transparent-bounces 8] [--seed 1] [--width 960] [--height 540] [--filter-type box|gaussian|blackman-harris] [--filter-width 1.0] [--keep-exr] [--part-ids] [--grey-diffuse] [--radiance-cap before-lookup|after-lookup] [--world-property name=value] [--soft-falloff default|on|off (default: each light's softFalloff field, off when absent)] [--z-depth] [--depth-samples 64] [--denoise none|oidn-gpu|oidn-cpu] [--f-stop 2.8 [--focus-distance m] [--aperture-blades 0|3..64] [--aperture-rotation degrees] [--sensor-width 36]]")
+        raise ValueError("Usage: blender -b --factory-startup --python bench/cycles-parity/render-cycles.py -- <sceneJsonPath> <outputPrefix> [--samples 256] [--bounces 8] [--transparent-bounces 8] [--seed 1] [--width 960] [--height 540] [--filter-type box|gaussian|blackman-harris] [--filter-width 1.0] [--keep-exr] [--part-ids] [--grey-diffuse] [--radiance-cap before-lookup|after-lookup] [--world-property name=value] [--soft-falloff default|on|off (default: each light's softFalloff field, off when absent)] [--light-mis on|off] [--emission-sampling on|off] [--cycles-property name=value (repeatable; see cycles_switches.py)] [--z-depth] [--depth-samples 64] [--denoise none|oidn-gpu|oidn-cpu] [--f-stop 2.8 [--focus-distance m] [--aperture-blades 0|3..64] [--aperture-rotation degrees] [--sensor-width 36]]")
     return {
         "scene_json_path": os.path.abspath(argument_list[0]),
         "output_prefix": os.path.abspath(argument_list[1]),
@@ -121,6 +136,7 @@ def parse_cli_arguments():
         "sensor_width": float(read_flag_value(argument_list, "--sensor-width", "36")),
         "soft_falloff": read_soft_falloff(argument_list),
         "light_mis": read_flag_value(argument_list, "--light-mis", "on") != "off",
+        "emission_sampling": read_flag_value(argument_list, "--emission-sampling", "on") != "off",
         "radiance_cap_before_lookup": read_radiance_cap_order(argument_list),
     }
 
@@ -368,6 +384,16 @@ def configure_diffuse_transmission(material, principled_node, material_entry, ha
     links.new(add_node.outputs["Shader"], nodes["Material Output"].inputs["Surface"])
 
 
+def disable_emission_sampling(material):
+    """Stop next event estimation from picking this material's emission, so only bounce rays find it (Cook --direct-lighting bsdf-only)."""
+    if hasattr(material.cycles, "emission_sampling"):
+        material.cycles.emission_sampling = "NONE"
+    elif hasattr(material.cycles, "sample_as_light"):
+        material.cycles.sample_as_light = False
+    else:
+        raise RuntimeError(f"--emission-sampling off needs material.cycles.emission_sampling or sample_as_light, and Blender {bpy.app.version_string} has neither.")
+
+
 def build_blender_material(material_name, material_entry, has_vertex_colors, image_entries, built_images):
     material = bpy.data.materials.new(material_name)
     principled_node = material.node_tree.nodes["Principled BSDF"]
@@ -386,6 +412,8 @@ def build_blender_material(material_name, material_entry, has_vertex_colors, ima
         principled_node.inputs["Emission Strength"].default_value = material_entry["emission"]
         if "emissiveMap" in material_entry:
             connect_emissive_map(material, principled_node, material_entry, emission_color, image_entries, built_images)
+        if not emission_sampling_enabled:
+            disable_emission_sampling(material)
     if "map" in material_entry:
         connect_base_color_texture(material, principled_node, material_entry, has_vertex_colors, image_entries, built_images)
     elif has_vertex_colors:
@@ -661,23 +689,10 @@ def configure_cycles_parity(scene, options):
 
 # One --cycles-property name=value, applied after every setting above so that the override is what renders.
 def apply_cycles_property(scene, property_assignment):
-    if "=" not in property_assignment:
-        raise ValueError(f"--cycles-property takes name=value, got {property_assignment!r}.")
-    property_name, property_text = property_assignment.split("=", 1)
+    property_name, property_value = cycles_switches.parse_cycles_property(property_assignment)
     if not hasattr(scene.cycles, property_name):
-        raise ValueError(f"--cycles-property names a scene.cycles property, and {property_name!r} is not one.")
-    current_value = getattr(scene.cycles, property_name)
-    try:
-        property_value = json.loads(property_text)
-    except json.JSONDecodeError:
-        raise ValueError(f"--cycles-property {property_name} takes a JSON value such as 0, 0.5, true or \"NAME\", got {property_text!r}.")
-    if isinstance(current_value, bool) != isinstance(property_value, bool):
-        raise ValueError(f"--cycles-property {property_name} is {'a boolean' if isinstance(current_value, bool) else 'not a boolean'}, got {property_text!r}.")
-    if isinstance(current_value, int) and not isinstance(property_value, int):
-        raise ValueError(f"--cycles-property {property_name} is a whole number, got {property_text!r}.")
-    if isinstance(current_value, str) != isinstance(property_value, str):
-        raise ValueError(f"--cycles-property {property_name} is {'a name in quotes' if isinstance(current_value, str) else 'a number'}, got {property_text!r}.")
-    setattr(scene.cycles, property_name, type(current_value)(property_value))
+        raise ValueError(f"--cycles-property {property_name} does not exist in this Blender version ({bpy.app.version_string}).")
+    setattr(scene.cycles, property_name, property_value)
 
 
 # One --world-property name=value (a diagnostic): sets a property of the world's Cycles settings, such as sampling_method="NONE"
@@ -854,6 +869,8 @@ def main():
     soft_falloff_setting = options["soft_falloff"]
     global light_mis_enabled
     light_mis_enabled = options["light_mis"]
+    global emission_sampling_enabled
+    emission_sampling_enabled = options["emission_sampling"]
     global radiance_cap_before_lookup
     radiance_cap_before_lookup = options["radiance_cap_before_lookup"]
     global cycles_property_assignments
@@ -863,6 +880,7 @@ def main():
             continue
         if index + 1 >= len(sys.argv):
             raise ValueError("--cycles-property takes name=value after it.")
+        cycles_switches.parse_cycles_property(sys.argv[index + 1])
         cycles_property_assignments.append(sys.argv[index + 1])
     build_scene_objects(scene, description)
     build_world_shader(scene, description["world"], repository_root)
