@@ -3,7 +3,7 @@ import { materialTags } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
 import { postFragment, createPostFragment, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
-import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing } from './gl-program.js';
+import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
 import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError } from './budget.js';
 import { applyProjection } from './camera.js';
@@ -878,6 +878,7 @@ export class CrucibleRenderer {
   // The second half of construction, which reads the link results. Reading a result waits for the driver, so a page that
   // builds a heavy renderer passes deferProgramLink and awaits programsReady() instead of freezing for the whole compile.
   finishConstruction() {
+    if (this.disposed || !this.pendingConstruction) return;
     const { pending, parts, environment } = this.pendingConstruction;
     this.pendingConstruction = null;
     const benchmark = this.benchmark;
@@ -923,14 +924,15 @@ export class CrucibleRenderer {
     if (!this.benchmark && !this.multisampleFramebuffer) this.allocateFrameTargets(this.canvas.width, this.canvas.height);
   }
 
-  /** Resolves once every program started by the constructor has linked, polling without blocking the main thread, then finishes construction. Needs deferProgramLink. */
+  /** Resolves once every program started by the constructor has linked, polling without blocking the main thread, then finishes construction. Needs deferProgramLink. After dispose() it resolves at once without finishing construction. */
   async programsReady() {
-    if (!this.pendingConstruction) return;
+    if (this.disposed || !this.pendingConstruction) return;
     const context = this.context;
     const parallelCompile = context.getExtension('KHR_parallel_shader_compile');
     const { pending } = this.pendingConstruction;
     const programs = [...Object.values(pending), ...(this.pendingEnvironmentPrograms?.values() ?? [])].map(started => started.program);
-    while (parallelCompile && programs.some(program => !context.getProgramParameter(program, parallelCompile.COMPLETION_STATUS_KHR))) {
+    // A renderer disposed during the wait has deleted these programs, which would never report complete.
+    while (!this.disposed && parallelCompile && programs.some(program => !context.getProgramParameter(program, parallelCompile.COMPLETION_STATUS_KHR))) {
       await new Promise(resolve => setTimeout(resolve, 8));
     }
     this.finishConstruction();
@@ -942,21 +944,25 @@ export class CrucibleRenderer {
    * stops there; the driver's thread keeps building while this waits in short timers, then the draw runs again. The last
    * draw is complete and leaves every program, target and texture that frame uses ready, so the next frame costs no more than
    * any other. Call it while the canvas is hidden or another world is on screen. Past `timeoutMilliseconds` it draws the
-   * frame at once and resolves true when it never had to, false otherwise.
+   * frame at once and resolves true when it never had to, false otherwise. On a disposed renderer it resolves false without drawing.
    */
   async prepareFrame(frame, { timeoutMilliseconds = 6000 } = {}) {
     await this.programsReady();
+    if (this.disposed) return false;
     const context = this.context;
     const deadline = performance.now() + timeoutMilliseconds;
     setPreparing(context, true);
     try {
       for (;;) {
+        // dispose() may have run during any wait below: its programs are deleted and a draw would leak and raise GL errors.
+        if (this.disposed) return false;
         try {
           this.render(frame);
           return true;
         } catch (error) {
           if (!(error instanceof ProgramNotReady)) throw error;
-          while (!isLinkComplete(context, error.program) && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 8));
+          while (!this.disposed && !isLinkComplete(context, error.program) && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 8));
+          if (this.disposed) return false;
           if (performance.now() >= deadline) break;
         }
       }
@@ -1910,6 +1916,8 @@ export class CrucibleRenderer {
   }
 
   resize() {
+    // A lost context answers every parameter query with null, so there is no size limit to plan against. This class has no restore path: the caller disposes the renderer and builds a new one when the context comes back.
+    if (this.context.isContextLost()) return;
     const plan = planRenderSize({ width: Math.max(1, this.canvas.clientWidth), height: Math.max(1, this.canvas.clientHeight), pixelRatio: this.pixelRatio, samples: this.samples, memoryBudgetMiB: this.memoryBudgetMiB, geometryBytes: this.geometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !this.benchmark, depth: this.depth, maximumSize: Math.min(this.context.getParameter(this.context.MAX_RENDERBUFFER_SIZE), this.context.getParameter(this.context.MAX_TEXTURE_SIZE)) });
     const { width, height } = plan;
     this.memoryPlan = plan;
@@ -2812,7 +2820,24 @@ export class CrucibleRenderer {
     context.activeTexture(context.TEXTURE0);
   }
 
+  // Programs and shaders that deferProgramLink started and finishConstruction has not yet taken over.
+  releasePendingConstruction() {
+    const context = this.context;
+    const started = [...Object.values(this.pendingConstruction?.pending ?? {}), ...(this.pendingEnvironmentPrograms?.values() ?? [])];
+    for (const { program, shaders } of started) {
+      // Reading the link status waits for a link still in flight; deleting a program mid-link leaves a GL error that the next renderer on this context sees (#74).
+      context.getProgramParameter(program, context.LINK_STATUS);
+      shaders.forEach((shader) => context.deleteShader(shader));
+      context.deleteProgram(program);
+    }
+    this.pendingConstruction = null;
+    this.pendingEnvironmentPrograms = null;
+  }
+
   dispose() {
+    this.disposed = true;
+    this.releasePendingConstruction();
+    releaseStartedPrograms(this.context);
     this.fogFieldTexture?.dispose();
     this.releaseFrameTargets();
     this.shadowCascades?.dispose(this.context, this.renderTargets);
