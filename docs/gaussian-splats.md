@@ -62,4 +62,4 @@ GPU: 48 bytes per splat in one RGBA32UI texture and 4 bytes for the order buffer
 
 ## What it costs
 
-See [bench/gaussian-splats/README.md](../bench/gaussian-splats/README.md) for frame times and memory at 100,000 and 1,000,000 splats on an RTX 3060 and on SwiftShader, and the comparison with the three.js `GaussianSplat`.
+See [bench/gaussian-splats/README.md](https://github.com/codepawl/crucible/blob/main/bench/gaussian-splats/README.md) for frame times and memory at 100,000 and 1,000,000 splats on an RTX 3060 and on SwiftShader, and the comparison with the three.js `GaussianSplat`.

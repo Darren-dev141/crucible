@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { changelogWithUnreleased, readChangelogData } from './changelog-fragments.mjs';
 import { plainGuide } from './plain-guide.mjs';
 import { buildApiReference } from './api-reference.mjs';
+import { publishedDocuments } from './published-documents.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const metadata = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
@@ -50,35 +51,8 @@ await writeFile(resolve(root, 'public/guide.md'), await plainGuide(root));
 await writeFile(resolve(root, 'public/api-reference.json'), `${JSON.stringify(await buildApiReference())}
 `);
 await copyFile(resolve(root, 'docs/gltf.md'), resolve(root, 'public/gltf.md'));
-const sourceDocuments = [
-  'scene-graph.md', 'modeling.md', 'animation-curves.md', 'animation-mixer.md',
-  'gltf-morph.md', 'morph-targets.md', 'skinning.md', 'physics.md',
-  'export-glb.md', 'sculpt.md', 'surface.md', 'mesh-query.md', 'mesh.md','primitives.md', 'shrinkwrap.md', 'spume.md',
-  'retarget.md',
-  'skeleton-pose.md',
-  'vehicle.md',
-  'vegetation.md', 'terrain.md', 'grass.md', 'clutter.md', 'light-bake.md', 'path-tracer.md', 'gaussian-splats.md',
-  'camera-path.md', 'lighting.md', 'volumetric.md', 'film-physics.md',
-  'runtime.md',
-  'streaming.md',
-  'game-rules.md',
-  'netcode.md',
-  'input.md',
-  'physics-runtime.md',
-  'player.md',
-  'audio.md',
-  'animation-graph.md',
-  'surface-attachment.md',
-  'agent-scene.md',
-  'mcp.md',
-  'agent-look.md',
-  'agent-asset.md',
-  'agent-render-jobs.md',
-  'agent-motion.md',
-  'agent-character-motion.md',
-  'agent-review.md',
-];
-for (const name of sourceDocuments) {
+
+for (const name of publishedDocuments) {
   await copyFile(resolve(root, 'docs', name), resolve(root, 'public', name));
 }
 

@@ -12,7 +12,7 @@ All jobs start at once.
 | `size` | `npm run size` and `npm run tool-cost` against the pull request base (pull requests only; a release has no base) |
 | `unit` (12 shards balanced by measured time, `scripts/shard-test-files.mjs` and `config/test-timings.json`) | `npm run build:lib`, then `npm run test:coverage` on one twelfth of the test files; uploads its lcov and per-file timings |
 | `coverage` | merges the shard lcov files, writes the summary, compares with `config/coverage-baseline.json`, uploads `lcov` |
-| `package` | `prepare:release`, `check:links:package`, `smoke:package`, `smoke:mcp-package` |
+| `package` | `prepare:release`, `check:links:package`, `check:published-site`, `smoke:package`, `smoke:mcp-package` |
 | `bun` | `smoke:mcp-package` with `MCP_SERVER_RUNTIME=bun`: the packed MCP server runs under bun, the way `bunx crucible-mcp` starts it |
 | `test` | waits for every job above and fails unless each one succeeded. Branch protection on `main` requires this name. |
 

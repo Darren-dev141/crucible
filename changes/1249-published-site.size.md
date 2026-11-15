@@ -1,0 +1,1 @@
+- goal:agent-scene: 9 bytes gzip of drift against the size base, the same +9 described in changes/1263.size.md; this change touches nothing under src/ (#1249)
