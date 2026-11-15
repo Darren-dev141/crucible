@@ -119,6 +119,21 @@ function describeState(state, restartHint) {
   return `${variables}${verdict}`;
 }
 
+// A rules part that does not say `visible` starts as hidden as the scene node it is named after,
+// so a hidden pickup stays hidden until a rule shows it.
+function rulesWithNodeVisibility(rulesDocument, nodes) {
+  if (rulesDocument.parts === undefined) return rulesDocument;
+  const hiddenNodeIds = new Set(nodes.filter(node => node.visible === false).map(node => node.id));
+  const parts = rulesDocument.parts.map(part => partWithNodeVisibility(part, hiddenNodeIds));
+  return { ...rulesDocument, parts };
+}
+
+function partWithNodeVisibility(part, hiddenNodeIds) {
+  const followsHiddenNode = part.visible === undefined && hiddenNodeIds.has(part.id);
+  if (!followsHiddenNode) return part;
+  return { ...part, visible: false };
+}
+
 async function loadAnimationRuntime() {
   const [{ createGameAnimation }, { createPathFollower }] = await Promise.all([import('./game-animation.js'), import('./npc-follower.js')]);
   return { createGameAnimation, createPathFollower };
@@ -218,7 +233,7 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
     fixedUpdate: (stepSeconds, context) => physics.fixedUpdate(stepSeconds, context, physics.playerIsBody ? [controller.state.position[0], controller.state.position[1] + footOffset, controller.state.position[2]] : null, body.rotationY),
   };
   const nodeIds = new Set(recipe.nodes.map(node => node.id));
-  const rules = game.rules ? createGameRules(game.rules, { input, onRestart: restartHost, getPartPosition: id => (id === game.player.node ? [...controller.state.position] : physics?.positionOf(id)) }) : null;
+  const rules = game.rules ? createGameRules(rulesWithNodeVisibility(game.rules, recipe.nodes), { input, onRestart: restartHost, getPartPosition: id => (id === game.player.node ? [...controller.state.position] : physics?.positionOf(id)) }) : null;
   const shownNodes = new Map();
   const animatedCharacters = [];
   const animationSystems = [];
