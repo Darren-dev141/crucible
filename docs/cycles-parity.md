@@ -1703,3 +1703,21 @@ Cook's packer capped every environment texel at 16 unless `hdriRadianceLimit` sa
 The whole Pavilion gap was the cap. Since Cook `5d9eda8` the default is no limit; `hdriRadianceLimit` (a number above 0) still caps for a caller that asks, and the `--hdri-radiance-limit` flag of `trace-native.mjs` passes it. The parity scenes above that carry `radianceLimit: 16` in their scene file are unchanged: the bench bridge applies that cap to both Cook and Cycles before either reads the map.
 
 Not measured: noise. A sun texel in the tens of thousands gives more fireflies at low sample counts than the capped map did; the pictures above were compared at their converged sample counts only.
+
+## Cook switch to Cycles setting, for splitting a gap (#1105)
+
+To split a gap between Cook and Cycles, switch the same feature off on both sides and render again. `render-cycles.py` takes the Cycles side:
+
+| Cook switch | Cycles setting in `render-cycles.py` | Same on both sides? |
+| --- | --- | --- |
+| `--filter-glossy 0` of `trace-native.mjs` (`1.0` is the default) | `--cycles-property filter_glossy=0` (Blender's own name is `blur_glossy`; both work) | Yes: both widen glossy lobes after a bounce that spread the light |
+| `--clamp-direct N` / `--clamp-indirect N` of `trace-native.mjs` | `--cycles-property sample_clamp_direct=N` / `sample_clamp_indirect=N` (`0` is off) | Same idea; compare the clamp value, not the name |
+| none (Cook has no caustics switch) | `--cycles-property caustics_reflective=false` / `caustics_refractive=false` | Cycles only |
+| `--direct-lighting bsdf-only` on emissive triangles | `--emission-sampling off` (emissive materials leave next event estimation, so only bounce rays find them) | Yes for emissive meshes; `[inferred]`, not rendered yet |
+| `--direct-lighting bsdf-only` on point, spot and area lights | none | No: Cook ignores it for point and spot lights |
+| `--direct-lighting nee-only` on emissive triangles | none | No exact pair: Cycles cannot hide an emitter from bounce rays and still light the scene with it, because `visible_diffuse` and `visible_glossy` hide the whole object, geometry included |
+| `--direct-lighting nee-only` on point, spot and area lights | `--light-mis off` (lamps are sampled by light sampling only) | Cook counts a lamp hit by a bounce ray as well, so its `nee-only` rows run about 5 percent high; compare Cycles `--light-mis off` against Cook's `both` rows |
+
+`--cycles-property` takes only the names it checks: `blur_glossy`, `sample_clamp_direct`, `sample_clamp_indirect`, `caustics_reflective`, `caustics_refractive`, `light_sampling_threshold`, `use_light_tree`, `min_light_bounces`, `min_transparent_bounces`, `max_bounces`, `diffuse_bounces`, `glossy_bounces`, `transmission_bounces` and `use_adaptive_sampling`, each with a type and range. Any other name stops the run with that list. The parsing lives in `bench/cycles-parity/cycles_switches.py`; `uv run --no-project python -m unittest bench/cycles-parity/test_cycles_switches.py` tests it without Blender.
+
+`[not measured]`: no Blender render ran for this change. `--emission-sampling off` sets `material.cycles.emission_sampling = "NONE"` (or `sample_as_light = False` on older builds) and stops with a message if the build has neither; check it with a `bsdf-only` Cook render on an emissive scene before relying on it.
