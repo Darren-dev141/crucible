@@ -241,7 +241,7 @@ test('bad network input is counted and ignored, and too many entities are refuse
   assert.throws(() => server.netcode.addEntity('overflow'), /at most 256 entities/);
 });
 
-test('a client counts a snapshot with an invalid session and drops one from a retired run', () => {
+test('a client counts a snapshot with an invalid session and drops an older run by its id', () => {
   const network = createLoopbackNetwork();
   const serverTransport = network.createTransport('server');
   const client = createPeer({ role: 'client', serverId: 'server', transport: network.createTransport('c') });
@@ -547,4 +547,46 @@ test('a client drops a snapshot of an older run even when it never saw that run 
   network.advance(1);
   assert.equal(client.netcode.stats.authorityRestarts, 1);
   assert.equal(client.netcode.tick, 1);
+});
+
+test('an ack without a run id counts only when its tick is not beyond the authority tick', () => {
+  const { transport, stepServer, snapshot } = createHandPlayedClient();
+  transport.send('server', handInput(1, { acknowledgedTick: snapshot().tick + 1000 }));
+  stepServer();
+  stepServer();
+  assert.equal(snapshot().base, null, 'a tick this run has not reached cannot name a base');
+  transport.send('server', handInput(2, { acknowledgedTick: snapshot().tick }));
+  stepServer();
+  stepServer();
+  assert.notEqual(snapshot().base, null, 'a tick this run has reached names the base');
+});
+
+test('the authority counts an invalid authoritySession and ignores the message', () => {
+  const { server, transport, stepServer, snapshot } = createHandPlayedClient();
+  const before = server.netcode.stats.rejectedMessages;
+  transport.send('server', handInput(1, { authoritySession: 7, acknowledgedTick: snapshot().tick }));
+  stepServer();
+  assert.equal(server.netcode.stats.rejectedMessages, before + 1);
+});
+
+test('a client adopts a lower run id when only that run keeps arriving, and a snapshot of the tracked run resets the count', () => {
+  const network = createLoopbackNetwork();
+  const serverTransport = network.createTransport('server');
+  const client = createPeer({ role: 'client', serverId: 'server', transport: network.createTransport('c') });
+  client.runtime.step(FRAME_MILLISECONDS);
+  const snapshot = (session, tick) => ({ type: 'snapshot', tick, base: null, entities: {}, removed: [], lastProcessedInput: 0, session });
+  serverTransport.send('c', snapshot('run-b', 100));
+  for (let tick = 1; tick <= 29; tick += 1) serverTransport.send('c', snapshot('run-a', tick));
+  network.advance(1);
+  assert.equal(client.netcode.tick, 100, 'a short burst of a lower run is still stale');
+  assert.equal(client.netcode.stats.authorityRestarts, 0);
+  serverTransport.send('c', snapshot('run-b', 101));
+  for (let tick = 30; tick <= 58; tick += 1) serverTransport.send('c', snapshot('run-a', tick));
+  network.advance(1);
+  assert.equal(client.netcode.tick, 101, 'a snapshot of the tracked run resets the count');
+  assert.equal(client.netcode.stats.authorityRestarts, 0);
+  serverTransport.send('c', snapshot('run-a', 59));
+  network.advance(1);
+  assert.equal(client.netcode.stats.authorityRestarts, 1, 'the 30th in a row of the lower run is adopted');
+  assert.equal(client.netcode.tick, 59);
 });

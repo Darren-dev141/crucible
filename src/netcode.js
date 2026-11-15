@@ -375,6 +375,8 @@ function validateNetcodeOptions(options) {
 // ----- The authority side -----
 
 const SESSION_ID_LENGTH_LIMIT = 64;
+// Snapshots in a row of a run that sorts before the tracked one, with none of the tracked run between them.
+const OLDER_RUN_ADOPTION_THRESHOLD = 30;
 
 function isValidSession(session) {
   return typeof session === 'string' && session.length <= SESSION_ID_LENGTH_LIMIT;
@@ -389,7 +391,9 @@ function createSessionId() {
   // Two runs started in the same millisecond still get ordered times.
   lastSessionTimestamp = Math.max(Date.now(), lastSessionTimestamp + 1);
   // Fixed width, so the byte count of a run does not depend on the draw.
-  const randomPart = Math.floor(Math.random() * 0xffffffff).toString(36).padStart(7, '0');
+  const randomWords = new Uint32Array(1);
+  globalThis.crypto.getRandomValues(randomWords);
+  const randomPart = randomWords[0].toString(36).padStart(7, '0');
   return `${lastSessionTimestamp.toString(36).padStart(9, '0')}-${randomPart}`;
 }
 
@@ -603,6 +607,7 @@ function createClient(settings, stats) {
   let stepSeconds = null;
   const sessionId = createSessionId();
   let authoritySession = null;
+  let consecutiveSnapshotsOfOlderRun = 0;
   let latestTick = -1;
   let inputSequence = 0;
   let predicted = null;
@@ -632,6 +637,7 @@ function createClient(settings, stats) {
     pendingInputs.length = 0;
     predicted = null;
     renderTime = null;
+    consecutiveSnapshotsOfOlderRun = 0;
     stats.authorityRestarts += 1;
   }
 
@@ -660,9 +666,16 @@ function createClient(settings, stats) {
       // before any snapshot of the run it came from, so it is told apart by the run order and not by a list.
       if (authoritySession !== null && message.session < authoritySession) {
         stats.staleSnapshots += 1;
-        return;
+        consecutiveSnapshotsOfOlderRun += 1;
+        // An authority restarted with a clock behind the first run's gets an id that sorts before it. When only the
+        // lower id keeps arriving, the run being tracked is gone, so the other run is adopted.
+        if (consecutiveSnapshotsOfOlderRun < OLDER_RUN_ADOPTION_THRESHOLD) return;
+        resetForNewAuthority();
+      } else if (authoritySession !== null && message.session > authoritySession) {
+        resetForNewAuthority();
+      } else {
+        consecutiveSnapshotsOfOlderRun = 0;
       }
-      if (authoritySession !== null && message.session > authoritySession) resetForNewAuthority();
       authoritySession = message.session;
     }
     if (message.tick <= latestTick) {
