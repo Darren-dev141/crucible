@@ -152,6 +152,8 @@ Translation, rotation, and scale tracks are supported.
 The importer rejects animation poses that become singular or change triangle winding.
 
 The current source supports four-influence [GPU skinning](https://crucible.codepawl.com/skinning.md). GPU skinning is available from version `0.4.0`.
+
+Negative skin weights, which three.js and Blender also accept, are clamped to 0 and each vertex is renormalised. A vertex left with no positive weight binds fully to joint 0. `warnings` names the primitive and counts the clamped weights. NaN and Infinity weights still fail.
 The current source also supports relative POSITION/NORMAL morph targets and weight animations. See [morph import](https://crucible.codepawl.com/gltf-morph.md).
 A morph primitive without an authored base NORMAL loads with normals generated from its triangles; its morph NORMAL deltas are dropped, with a warning. TANGENT targets remain unsupported.
 

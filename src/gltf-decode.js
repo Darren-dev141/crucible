@@ -102,16 +102,30 @@ function decodedAttribute(attribute, normalized) {
   };
 }
 
-/** Scale each vertex's four weights to sum to one, as three.js does for skinned meshes. */
-function normalizedWeights(weights) {
+/**
+ * Scale each vertex's four weights to sum to one, as three.js does for skinned meshes. Negative weights are clamped to 0 first;
+ * a vertex left with none is bound fully to joint 0. A vertex that was all zero stays zero for validateSkinGeometry to refuse.
+ * `repairs` counts the clamped weights and the vertexes bound to joint 0, and `indices` is a Float32Array copy that may be edited.
+ */
+function normalizedWeights(weights, indices, repairs) {
   const values = attributeFloats(weights);
   for (let offset = 0; offset < values.length; offset += 4) {
-    const total = values[offset] + values[offset + 1] + values[offset + 2] + values[offset + 3];
-    if (total === 0) {
-      values[offset] = 1;
-      continue;
+    let total = 0;
+    let clamped = 0;
+    for (let influence = 0; influence < 4; influence++) {
+      if (values[offset + influence] < 0) {
+        values[offset + influence] = 0;
+        clamped++;
+      }
+      total += values[offset + influence];
     }
-    for (let influence = 0; influence < 4; influence++) values[offset + influence] /= total;
+    repairs.clampedWeights += clamped;
+    if (total === 0 && clamped) {
+      indices[offset] = 0;
+      values[offset] = total = 1;
+      repairs.boundToJointZero++;
+    }
+    if (total !== 0) for (let influence = 0; influence < 4; influence++) values[offset + influence] /= total;
   }
   return { array: values, itemSize: 4, count: weights.count, normalized: false, componentType: 5126 };
 }
@@ -342,12 +356,17 @@ export async function decodeGltf({ document, glbBinary, resourceBytes, decoders,
     return source;
   }
 
-  /** Raw joints and weights are checked before normalizing, so zero-weight vertices are reported. */
+  /** Weights are normalized first, clamping negatives; joints and the result are then checked, so all-zero and non-finite weights are still reported. */
   function prepareSkinnedSource(source, jointCount) {
     if (source.skinPrepared) return;
-    const { skinIndex, skinWeight, position } = source.attributes;
-    validateSkinGeometry({ positions: { length: position.count * 3 }, skinIndices: attributeFloats(skinIndex), skinWeights: attributeFloats(skinWeight) }, createSkinPose(jointCount));
-    source.attributes.skinWeight = normalizedWeights(skinWeight);
+    const { skinIndex, position } = source.attributes;
+    const repairs = { clampedWeights: 0, boundToJointZero: 0 };
+    const skinIndices = attributeFloats(skinIndex);
+    const skinWeight = normalizedWeights(source.attributes.skinWeight, skinIndices, repairs);
+    validateSkinGeometry({ positions: { length: position.count * 3 }, skinIndices, skinWeights: skinWeight.array }, createSkinPose(jointCount));
+    source.skinWeightRepairs = repairs;
+    if (repairs.boundToJointZero) source.attributes.skinIndex = { array: Uint16Array.from(skinIndices), itemSize: 4, count: skinIndex.count, normalized: false, componentType: 5123 };
+    source.attributes.skinWeight = skinWeight;
     source.skinPrepared = true;
   }
 

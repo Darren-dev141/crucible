@@ -1335,6 +1335,8 @@ export async function parseGltf(data, options = {}) {
               const warning = `Repaired ${primitiveLabel(document, association.meshes, association.primitives)}: ${reason}.`;
               if (!warnings.includes(warning)) warnings.push(warning);
             };
+            const { clampedWeights, boundToJointZero } = node.geometry.skinWeightRepairs ?? {};
+            if (clampedWeights) onRepair(`${clampedWeights} negative skin weight(s) were clamped to 0${boundToJointZero ? `; ${boundToJointZero} vertex(es) bound to joint 0` : ''}`);
             const converted = await convertGeometry(node.geometry, primitive, secondUvSet, () => meshNamesWithIgnoredAlpha.add(node.name), onRepair, checkpoint);
             if (converted.uvs) bakeUvTransform(converted.uvs, uvTransform);
             geometries.set(geometryKey, converted);
