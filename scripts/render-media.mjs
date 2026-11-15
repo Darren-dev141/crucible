@@ -26,6 +26,45 @@ function argumentsFrom(values) {
   return result;
 }
 
+/** A dimension the caller did not pass is derived from the other one; video rounds it to even so yuv420p accepts it. */
+function roundDerivedDimension(value, kind, passedValue) {
+  if (kind === 'video' && passedValue === undefined) return 2 * Math.round(value / 2);
+  return Math.round(value);
+}
+
+/** Still number `index` is frame-<index>.<ext> in the directory of --output, like the render job; the extension follows the capture format. */
+export function stillPath(output, index, captureFormat) {
+  const extension = captureFormat === 'jpeg' ? 'jpg' : 'png';
+  return resolve(dirname(output), `frame-${index}.${extension}`);
+}
+
+/** The paths of `count` stills, one distinct file per still, however short the duration. */
+export function stillPaths(output, count, captureFormat) {
+  return Array.from({ length: count }, (_, index) => stillPath(output, index, captureFormat));
+}
+
+/** The encoder options of a video render; `frameCount` is required whenever the video has audio. */
+export function renderEncoderOptions({ ffmpeg, output, fps, captureFormat, width, height, encoderBackend, audioArguments, frameCount }) {
+  const format = captureFormat === 'raw' ? 'rawvideo' : captureFormat === 'webcodecs' ? 'h264' : captureFormat;
+  return { executable: ffmpeg, output, fps, format, width, height, backend: encoderBackend, audioArguments, frameCount,
+    maximumFrameBytes: 64 * 1024 * 1024, maximumOutputBytes: Number.MAX_SAFE_INTEGER };
+}
+
+const AUDIO_LENGTH_TOLERANCE_SECONDS = 0.05;
+
+/** Decodes the audio stream of a finished file and throws when there is none or, given the picture length, when its length is off. */
+export async function assertOutputHasAudio(ffmpeg, output, expectedSeconds) {
+  let audioSeconds;
+  try {
+    audioSeconds = await measureStreamSeconds(ffmpeg, output, 'audio');
+  } catch (error) {
+    throw new Error(`The rendered video has no audio stream although --audio was given (${error.message}). Check the sound file and the encoder.`);
+  }
+  if (expectedSeconds !== undefined && Math.abs(audioSeconds - expectedSeconds) > AUDIO_LENGTH_TOLERANCE_SECONDS) {
+    throw new Error(`The rendered audio is ${audioSeconds.toFixed(3)} s but the picture is ${expectedSeconds.toFixed(3)} s; they must match within 50 ms.`);
+  }
+}
+
 export function parseRenderOptions(values) {
   const options = argumentsFrom(values);
   const kind = options.kind ?? 'image';
@@ -51,8 +90,8 @@ export function parseRenderOptions(values) {
   let defaultHeight = aspect === 'portrait' ? longer : shorter;
   if (options.width !== undefined && options.height === undefined) defaultHeight = Number(options.width) / ratio;
   if (options.height !== undefined && options.width === undefined) defaultWidth = Number(options.height) * ratio;
-  const width = Math.round(numberOption('width', defaultWidth, 64, 4096));
-  const height = Math.round(numberOption('height', defaultHeight, 64, 4096));
+  const width = roundDerivedDimension(numberOption('width', defaultWidth, 64, 4096), kind, options.width);
+  const height = roundDerivedDimension(numberOption('height', defaultHeight, 64, 4096), kind, options.height);
   if (kind === 'video' && (width % 2 || height % 2)) throw new Error('Video dimensions must be even for yuv420p output.');
   const fps = numberOption('fps', cameraKeys?.fps ?? preset.fps, 1, 60);
   const duration = numberOption('duration', scene === 'film' ? FILM_DURATION : ['motion', 'modeling'].includes(scene) ? 12 : 32, 0.1, 240);
@@ -303,9 +342,7 @@ export async function renderMedia(values = process.argv.slice(2)) {
           measureAudioSeconds: path => measureStreamSeconds(ffmpeg, path, 'audio'),
         }));
       }
-      encoder = createFrameEncoder({ executable: ffmpeg, output, fps, format: captureFormat === 'raw' ? 'rawvideo' : captureFormat === 'webcodecs' ? 'h264' : captureFormat,
-        width, height, backend: encoderBackend, audioArguments, maximumFrameBytes: 64 * 1024 * 1024,
-        maximumOutputBytes: Number.MAX_SAFE_INTEGER });
+      encoder = createFrameEncoder(renderEncoderOptions({ ffmpeg, output, fps, captureFormat, width, height, encoderBackend, audioArguments, frameCount }));
       if (captureFormat === 'webcodecs') frameReceiver.onChunk(chunk => encoder.writeChunk(chunk));
       const captureSequenceStarted = performance.now();
       for (let frame = 0; frame < frameCount; frame++) {
@@ -327,13 +364,15 @@ export async function renderMedia(values = process.argv.slice(2)) {
       if (captureFormat === 'webcodecs') await page.evaluate(() => window.__finishVideoEncoder());
       const encoding = await encoder.finish();
       stageTimings.encoderFinishSeconds = encoding.finishSeconds;
+      // A silent film must not pass for a finished one: the encoder reports success even when the sound was dropped.
+      if (audioArguments.length) await assertOutputHasAudio(ffmpeg, output, frameCount / fps);
     } else if (kind === 'stills') {
       const stillTimes = scene === 'film' && start === 0 && options.duration === undefined
         ? [23, 49, 59, 101, 114, 149, 158, 182]
         : Array.from({ length: 8 }, (_, index) => start + duration * (index + 0.5) / 8);
-      for (const seconds of stillTimes) {
-        const image = await capture(seconds);
-        await writeFile(resolve(dirname(output), `frame-${seconds.toFixed(1)}.${captureFormat === 'jpeg' ? 'jpg' : 'png'}`), image);
+      const paths = stillPaths(output, stillTimes.length, captureFormat);
+      for (const [stillIndex, seconds] of stillTimes.entries()) {
+        await writeFile(paths[stillIndex], await capture(seconds));
       }
     } else {
       await writeFile(output, await capture(time));
