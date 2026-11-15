@@ -48,6 +48,7 @@ export function splitEdges(mesh, edgeMask) {
   }
   if (splitCount === 0) throw new RangeError('The rule selects no edge shared by two faces. Select interior edges, such as { "angle": 30 } or { "all": true }.');
   const extraPositions = [];
+  const extraSources = [];
   const vertexOfGroup = new Map();
   const seenVertices = new Set();
   const polygons = facePolygons(mesh);
@@ -58,6 +59,7 @@ export function splitEdges(mesh, edgeMask) {
       if (!vertexOfGroup.has(group)) {
         if (seenVertices.has(vertex)) {
           extraPositions.push(positionOf(mesh, vertex));
+          extraSources.push(vertex);
           vertexOfGroup.set(group, mesh.vertexCount + extraPositions.length - 1);
         } else {
           seenVertices.add(vertex);
@@ -67,7 +69,7 @@ export function splitEdges(mesh, edgeMask) {
       return vertexOfGroup.get(group);
     });
   }
-  return { mesh: buildPolygonMesh(mesh, polygons, extraPositions), splitEdges: splitCount, addedVertices: extraPositions.length };
+  return { mesh: buildPolygonMesh(mesh, polygons, extraPositions, extraSources), splitEdges: splitCount, addedVertices: extraPositions.length };
 }
 
 /** Drop every vertex that no face uses. Faces, tags and attributes stay as they are. */
