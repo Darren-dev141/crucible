@@ -1,4 +1,5 @@
 import { facePolygons, buildPolygonMesh } from './mesh-polygons.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 // Cutting a mesh with a plane (bisect_plane, after bmesh.ops.bisect_plane) or with a polyline projected along a
 // direction (the knife). Both insert one shared point on every cut edge, so no T-junctions appear, and split each
@@ -176,6 +177,7 @@ function capPolygon(loop, tag) {
  * has four faces. Faces get `<name>.inner` or `<name>.outer` by side.
  */
 export function bisectPlane(mesh, { point, normal, distance = 1e-4, clearInner = false, clearOuter = false, fill = false, name = 'bisect' }) {
+  requireFiniteInRange('bisectPlane', 'point and normal', [point, normal], -1e6, 1e6);
   const planeNormal = unit(normal);
   const { signs, offsets } = planeSigns(mesh, point, planeNormal, distance);
   const extraPositions = [];
