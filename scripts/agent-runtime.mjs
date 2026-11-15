@@ -246,7 +246,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   }
 
   /**
-   * Adds up the sizes of the files one call would send, from their directory entries, and refuses the call over the combined limit
+   * Adds up the sizes of the files one call would send, from the catalog record (the embedded length), and refuses the call over the combined limit
    * before any file is read or base64 encoded. Reading first peaked at about 2.2 times the total before the check ran. Motion source
    * assets travel in their own field next to the placed ones, so each counts again even when a recipe also places it.
    */

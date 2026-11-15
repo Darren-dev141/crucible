@@ -235,3 +235,13 @@ test('size() reports the bytes read() returns for a GLB with sibling images (#12
   assert.ok(stored.length > onDisk, 'the stored GLB embeds the colormap, so it is larger than the file');
   assert.equal(await catalog.size(assetId), stored.length);
 });
+
+test('size() equals read().length for a pack file entry of a GLB with sibling images (#1282)', async context => {
+  const directory = await boatFixture(context);
+  const directoryCatalog = await createAgentAssetCatalog(directory);
+  const metadata = directoryCatalog.list().assets[0];
+  const packFile = { assetId: metadata.assetId, directory, filename: 'boat-fishing-small.glb', metadata };
+  const packCatalog = await createAgentAssetCatalog(null, [packFile]);
+  const stored = await packCatalog.read(metadata.assetId);
+  assert.equal(await packCatalog.size(metadata.assetId), stored.length);
+});

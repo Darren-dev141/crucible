@@ -72,7 +72,11 @@ function parseHeader(headerText) {
         vertexElementSeen = true;
         vertexCount = Number(words[2]);
       } else if (!vertexElementSeen) {
-        skippedElement = { name: words[1], count: Number(words[2]), rowBytes: 0 };
+        const count = Number(words[2]);
+        if (!Number.isInteger(count) || count < 0) {
+          throw new Error(`Gaussian splat PLY element "${words[1]}" before "vertex" has an invalid count "${words[2]}". Re-export the file.`);
+        }
+        skippedElement = { name: words[1], count, rowBytes: 0 };
       }
     } else if (words[0] === 'property' && skippedElement) {
       if (words[1] === 'list' || !PROPERTY_TYPES[words[1]]) {

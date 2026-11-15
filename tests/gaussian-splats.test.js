@@ -175,6 +175,19 @@ test('a PLY with a list element before vertex says the vertex element must come 
   assert.throws(() => parseGaussianSplatPly(file), /vertex element first/);
 });
 
+test('a PLY with a bad count on an element before vertex is refused with the element name (#1282)', () => {
+  const cases = [
+    ['element camera -1', 'property float fov'],
+    ['element camera -100', 'property float fov'],
+    ['element camera 1.5', 'property double fov'],
+    ['element camera', 'property float fov'],
+  ];
+  for (const [elementLine, propertyLine] of cases) {
+    const file = buildCustomPly(headerWith('\n', elementLine, propertyLine), [60, ...IDENTITY_SPLAT(1, 2, 3)]);
+    assert.throws(() => parseGaussianSplatPly(file), /element "camera" before "vertex" has an invalid count.*Re-export/, elementLine);
+  }
+});
+
 test('a non-finite scale throws with the splat index (#1282)', () => {
   const notANumber = IDENTITY_SPLAT(0, 0, 0);
   notANumber[7] = Number.NaN;
