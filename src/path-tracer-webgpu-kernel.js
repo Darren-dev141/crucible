@@ -1181,21 +1181,27 @@ export const buildMegakernelSource = ({ hasVolume = false, hasSubsurface = false
 ${realtime ? realtime.declarations + realtime.addLights : `// The first hit lights from every emitter; later hits draw one, and divide by the chance of drawing it.
 fn addLights(depth: i32, normal: vec3<f32>) {
   let emitterCount = params.emittersFlagsSample.x;
-  if (lightsFromEveryEmitter(depth, emitterCount)) {
+  // One loop with one flushShadowRay call, so the shadow ray traversal is inlined into the megakernel once: with a call per branch
+  // FXC (Dawn's D3D12 compiler without dxcompiler.dll) fails on the kernel with E_FAIL (#1350).
+  let everyEmitter = lightsFromEveryEmitter(depth, emitterCount);
+  var firstEmitter = 0;
+  var endEmitter = 0;
+  if (everyEmitter) {
     selectionProbability = 1.0;
-    for (var emitter = 0; emitter < emitterCount; emitter++) {
-      sampleEmitter(depth, normal, emitter);
-      flushShadowRay();
+    endEmitter = emitterCount;
+  } else {
+    let chosen = chooseEmitter(normal);
+    if (chosen >= 0) {
+      firstEmitter = chosen;
+      endEmitter = chosen + 1;
     }
-    return;
   }
-  let chosen = chooseEmitter(normal);
-  if (chosen >= 0) {
-    sampleEmitter(depth, normal, chosen);
+  for (var emitter = firstEmitter; emitter < endEmitter; emitter++) {
+    sampleEmitter(depth, normal, emitter);
     flushShadowRay();
   }
   // The sky is drawn with its uniform share whatever light was chosen: that share weighs the next escape ray.
-  selectionProbability = 1.0 / f32(emitterCount);
+  if (!everyEmitter) { selectionProbability = 1.0 / f32(emitterCount); }
 }`}
 ${hasSubsurface ? SUBSURFACE_FUNCTIONS : ''}
 // cameraRays is true when the path starts at the camera, so its first leg steps through shadow-only parts.
