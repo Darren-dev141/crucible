@@ -120,3 +120,20 @@ test('the docs say the three optional packages are not on npm, and each package 
   const denoise = JSON.parse(readText('packages/denoise-oidn/package.json'));
   assert.equal(denoise.peerDependenciesMeta['@codepawlhq/cook'].optional, true);
 });
+
+test('an empty public folder is reported as missing files, not as zero problems', async () => {
+  const { findMissingPublishedFiles } = await import('../scripts/check-published-site.mjs');
+  withFixture({ 'public/release.json': '{}' }, (folder) => {
+    const missing = findMissingPublishedFiles(folder);
+    assert.ok(missing.some((line) => line.startsWith('public/llms.txt is missing')), missing.join('\n'));
+    assert.ok(missing.some((line) => line.startsWith('public/guide.md is missing')));
+    assert.ok(missing.some((line) => line.includes('prepare:release')));
+  });
+});
+
+test('a complete public folder reports no missing files', async () => {
+  const { findMissingPublishedFiles } = await import('../scripts/check-published-site.mjs');
+  const files = { 'public/release.json': '{}', 'public/llms.txt': '', 'public/guide.md': '', 'public/gltf.md': '' };
+  for (const name of publishedDocuments.filter((document) => document.endsWith('.md'))) files[`public/${name}`] = '';
+  withFixture(files, (folder) => assert.deepEqual(findMissingPublishedFiles(folder), []));
+});

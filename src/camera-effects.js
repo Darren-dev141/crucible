@@ -1,5 +1,5 @@
 import { mat4 } from 'gl-matrix';
-import { applyProjection } from './camera.js';
+import { applyProjection, requirePositiveFinite } from './camera.js';
 import { compileProgram, fullscreenVertex } from './gl-program.js';
 
 // Depth of field and camera motion blur as optional full-frame stages. The core renderer carries no shader text for
@@ -217,10 +217,14 @@ const FULL_BLUR_F_STOP = 1.4;
 
 /**
  * The effects of one frame when the camera carries an f-stop: depth of field with the blur that stop gives (1.4 / fStop, at most
- * 1), focused on the camera's target. Effects with their own blur (a timeline shot's) are left as they are.
+ * 1), focused at `camera.focusDistance` along the view axis (as the path tracer and Blender do), by default at the camera's
+ * target. Effects with their own blur (a timeline shot's) are left as they are. A non-positive `fStop` or `focusDistance` throws.
  */
 export function effectsWithFStop(effects, camera) {
-  if (camera.fStop === undefined || effects.depthOfField.blur > 0) return effects;
-  const focusDistance = Math.max(0.01, Math.hypot(...camera.target.map((component, axis) => component - camera.eye[axis])));
+  if (camera.fStop === undefined) return effects;
+  requirePositiveFinite(camera.fStop, 'fStop');
+  if (camera.focusDistance !== undefined) requirePositiveFinite(camera.focusDistance, 'focusDistance');
+  if (effects.depthOfField.blur > 0) return effects;
+  const focusDistance = camera.focusDistance ?? Math.max(0.01, Math.hypot(...camera.target.map((component, axis) => component - camera.eye[axis])));
   return { ...effects, depthOfField: { blur: Math.min(1, FULL_BLUR_F_STOP / camera.fStop), focusDistance } };
 }

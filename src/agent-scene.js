@@ -559,6 +559,8 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
     return input.length;
   }
   for (const field of GEOMETRY_FIELDS[value.type]) {
+    // Terrain checks its own numbers (a whole resolution from 2 to 256), so its message names the real range; null is not absent there, so it still fails below.
+    if (value.type === 'terrain' && ['size', 'resolution', 'amplitude'].includes(field) && value[field] !== null) continue;
     if (value[field] !== undefined && !['profile', 'contour', 'holes', 'path', 'closed', 'base', 'edits', 'stack', 'shapeKeys', 'points', 'taper', 'text', 'font', 'align', 'from', 'to', 'shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'root', 'source', 'impact'].includes(field)) {
       finite(value[field], field);
     }
@@ -1589,6 +1591,13 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     return records;
   }
 
+  function geometryBudgetError({ residentStats, pendingVertices }, plans, budget, heldCheckpoints) {
+    const largest = plans.filter(plan => !plan.existing).sort((first, second) => second.estimatedVertices - first.estimatedVertices)[0];
+    const largestNote = largest === undefined ? 'no new geometry is added' : `largest new geometry "${largest.definition.id}" has ${largest.estimatedVertices}`;
+    return invalidField('geometry.vertices', residentStats.vertices + pendingVertices, `a geometry preflight peak of at most ${budget.maxVertices} vertices and ${budget.maxGeometryBytes} bytes (this needs ${residentStats.geometryBytes + pendingVertices * 56} bytes): ${residentStats.vertices} vertices are already held by the active scene, checkpoints and staged resources and ${pendingVertices} are new; ${largestNote}. Reduce detail${heldCheckpoints ? ' or release checkpoints' : ''}`);
+  }
+
+
   // The edit only moves nodes of a plain scene (no relations, placed assets, armatures or motion) and every geometry is
   // resident: the committed state's graph is moved in place instead of being built again.
   function canMoveStagedGraph(recipe, movedNodeIds, assetRuntime) {
@@ -1656,7 +1665,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     let { residentStats } = planned;
     const { plans, pendingVertices } = planned;
     if (planned.overBudget) {
-      throw new RangeError('Geometry preflight exceeds peak maxVertices or maxGeometryBytes across active, checkpoint and staged resources. Reduce detail or release checkpoints');
+      throw geometryBudgetError(planned, plans, limits, checkpoints.size);
     }
 
     // Validate references, hierarchy and matrix arithmetic before generating any new resource.

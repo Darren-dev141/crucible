@@ -10,6 +10,7 @@ import { createWriteStream, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { RELEASE_FIX, readReleaseProblem } from './check-release-changelog.mjs';
+import { isFragmentName } from './changelog-fragments.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const logFolder = join(root, 'artifacts', 'preflight');
@@ -37,8 +38,11 @@ const MANUAL_CHECKS = Object.freeze([
   { pattern: /^src\/(renderer|frame|render)/, command: 'npm run benchmark:runtime', reason: 'the frame path' },
 ]);
 
+// The same rule the fold uses, so a note this gate accepts is a note changes:fold writes into CHANGELOG.md.
+// A note in a subfolder of changes/ or named readme.md passes a looser check and is then skipped by the fold.
 function isNewChangeNote(path) {
-  return path.startsWith('changes/') && path.endsWith('.md') && path !== 'changes/README.md';
+  const [folder, name, ...deeper] = path.split('/');
+  return folder === 'changes' && name !== undefined && deeper.length === 0 && isFragmentName(name);
 }
 
 const RELEASE_SKIP_REASON = 'a release: the version changed, so the notes are folded and the budgets reset (CONTRIBUTING.md#release)';

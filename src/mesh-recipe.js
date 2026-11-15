@@ -715,6 +715,8 @@ export function evaluateMeshStack(mesh, stack, { maxVertices = 250_000, maxFaces
     const hit = key === undefined ? undefined : cache?.get(key);
     let result;
     if (hit) {
+      // The cache key holds no limits, so a result built under larger limits is checked again under these.
+      checkBudget(hit.mesh, limits, index, node.op);
       current = hit.mesh;
       result = { ...hit.result, cached: true };
     } else {

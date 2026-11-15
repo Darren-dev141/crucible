@@ -50,12 +50,13 @@ export function countOpenEdges(positions, indices, tolerance) {
   return countMeshEdgeProblems(positions, indices, tolerance).open;
 }
 
-const boundsByGeometry = new WeakMap();
+// Cached by the positions array a geometry holds now, so a geometry given new positions is measured again.
+const boundsByPositions = new WeakMap();
 
-function localBounds(geometry) {
-  let bounds = boundsByGeometry.get(geometry);
-  if (bounds) return bounds;
+function localBounds(geometry, label, partName) {
   const positions = geometry.positions;
+  let bounds = boundsByPositions.get(positions);
+  if (bounds) return bounds;
   const minimum = [Infinity, Infinity, Infinity];
   const maximum = [-Infinity, -Infinity, -Infinity];
   for (let index = 0; index < positions.length; index += 3) {
@@ -64,13 +65,16 @@ function localBounds(geometry) {
       maximum[axis] = Math.max(maximum[axis], positions[index + axis]);
     }
   }
+  if (![...minimum, ...maximum].every(Number.isFinite)) {
+    throw new RangeError(`${label}.part "${partName}" has no finite vertex positions`);
+  }
   bounds = { minimum, maximum };
-  boundsByGeometry.set(geometry, bounds);
+  boundsByPositions.set(positions, bounds);
   return bounds;
 }
 
 function orientedBounds(part, label) {
-  const { minimum, maximum } = localBounds(part.geometry);
+  const { minimum, maximum } = localBounds(part.geometry, label, part.name);
   const matrix = part.matrix ?? [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
   const localCenter = minimum.map((low, axis) => (low + maximum[axis]) / 2);
   const center = [0, 1, 2].map(row => matrix[row] * localCenter[0] + matrix[4 + row] * localCenter[1] + matrix[8 + row] * localCenter[2] + matrix[12 + row]);
@@ -89,17 +93,19 @@ function orientedBounds(part, label) {
   return { center, size, axes };
 }
 
-const edgeProblemsByGeometry = new WeakMap();
+const edgeProblemsByPositions = new WeakMap();
 
 /** Throws unless the part's mesh is closed and its faces wind the same way, which the rasterizer's front and back faces rely on. */
 export function assertClosedMesh(part, label) {
-  let problems = edgeProblemsByGeometry.get(part.geometry);
-  if (!problems) {
-    const { minimum, maximum } = localBounds(part.geometry);
+  const { positions, indices } = part.geometry;
+  let cached = edgeProblemsByPositions.get(positions);
+  if (cached?.indices !== indices) {
+    const { minimum, maximum } = localBounds(part.geometry, label, part.name);
     const diagonal = Math.hypot(maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2]);
-    problems = countMeshEdgeProblems(part.geometry.positions, part.geometry.indices, diagonal * 1e-6);
-    edgeProblemsByGeometry.set(part.geometry, problems);
+    cached = { indices, problems: countMeshEdgeProblems(positions, indices, diagonal * 1e-6) };
+    edgeProblemsByPositions.set(positions, cached);
   }
+  const { problems } = cached;
   if (problems.open > 0) throw new RangeError(`${label}.part "${part.name}" is not a closed mesh (${problems.open} open edges), so it has no inside; close it or use fit "bounds"`);
   if (problems.inconsistent > 0) throw new RangeError(`${label}.part "${part.name}" has faces wound against each other (${problems.inconsistent} edges), so the rasterizer cannot tell inside from outside; flip those faces or use the path tracer`);
 }
