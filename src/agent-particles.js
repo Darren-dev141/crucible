@@ -77,6 +77,9 @@ function normalizeEmitter(input, context, path) {
     halfExtents: input.halfExtents === undefined ? [0.5, 0.5, 0.5] : vectorOfThree(input.halfExtents, `${path}.halfExtents`, POSITION_LIMIT).map(Math.abs),
     radius: input.radius === undefined ? 0.5 : finiteNumber(input.radius, `${path}.radius`, 0, POSITION_LIMIT),
   };
+  if (shape === 'box' && input.radius !== undefined) {
+    throw invalidField(`${path}.radius`, input.radius, `left out on a box emitter, which is sized by ${path}.halfExtents, such as [0.5, 0.5, 0.5]; use shape "sphere" or "disc" for a radius`);
+  }
   if (shape === 'mesh') {
     normalizeMeshEmitter(input, emitter, context, path);
   } else {
@@ -212,6 +215,9 @@ function normalizeHairSystem(input, context, path) {
     droop: finiteNumber(input.droop ?? 0.5, `${path}.droop`, 0, 10),
     lean: finiteNumber(input.lean ?? 0.2, `${path}.lean`, 0, 2),
   };
+  if (input.sway === undefined && input.swayRate !== undefined) {
+    throw invalidField(`${path}.swayRate`, input.swayRate, `left out unless ${path}.sway is set, such as sway 0.05; swayRate only changes how fast a swaying strand moves`);
+  }
   if (input.sway !== undefined) {
     system.sway = finiteNumber(input.sway, `${path}.sway`, 0, 10);
     system.swayRate = finiteNumber(input.swayRate ?? 0.5, `${path}.swayRate`, 0.01, 20);
