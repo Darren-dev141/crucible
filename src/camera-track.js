@@ -14,7 +14,13 @@ function validateFrameKeys(frames, framesPerSecond) {
     if (!Array.isArray(frame) || !isFiniteTriple(frame[0]) || !isFiniteTriple(frame[1])) {
       throw new RangeError(`Camera frames[${index}] must be [eye, target], each three finite numbers.`);
     }
+    if (Math.hypot(frame[1][0] - frame[0][0], frame[1][1] - frame[0][1], frame[1][2] - frame[0][2]) <= 1e-8) {
+      throw new RangeError(`Camera frames[${index}] eye and target are the same point, so there is no view direction; move the target away from the eye.`);
+    }
   });
+  if (!Number.isFinite(frames.length / framesPerSecond)) {
+    throw new RangeError(`Camera fps ${framesPerSecond} is too small for ${frames.length} frames to have a finite duration; pass a larger fps.`);
+  }
 }
 
 /**
