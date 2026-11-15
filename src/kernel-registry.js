@@ -6,14 +6,14 @@ import { unwrapUv } from './mesh-uv.js';
 
 // The kernels a worker can run, by the name the call sites give `runKernel`. Each is the same function the call site
 // computes inline with, so the worker and the inline path return identical data.
-const KERNELS = {
+const KERNELS = Object.assign(Object.create(null), {
   lightBake: bakeChangedParts,
   probeTrace: traceProbes,
   gridTrace: traceGridKernel,
   cloth: bakeClothWithFields,
   pattern: bakeMaterialPattern,
   uvUnwrap: unwrapUv,
-};
+});
 
 function collectBuffers(value, buffers) {
   if (ArrayBuffer.isView(value)) {
@@ -33,6 +33,7 @@ function collectBuffers(value, buffers) {
  */
 export function answerKernelRequest({ name, args }) {
   try {
+    if (!KERNELS[name]) throw new RangeError(`unknown kernel "${String(name)}": use one of ${Object.keys(KERNELS).join(', ')}`);
     const value = KERNELS[name](...args);
     const buffers = new Set();
     collectBuffers(value, buffers);
