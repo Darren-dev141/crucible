@@ -2,7 +2,9 @@ import './support/load-agent-scene-modules.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAgentScene } from '../src/agent-scene.js';
-import { closedRoom, roomLitBy, lightmapBytesOf } from './support/agent-bake-rooms.mjs';
+import { closedRoom, roomLitBy, lightmapBytesOf, freezeBakeClockForFile } from './support/agent-bake-rooms.mjs';
+
+freezeBakeClockForFile();
 
 test('a brick wall keeps its pattern and receives bounced light through a light map', () => {
   const recipe = closedRoom();

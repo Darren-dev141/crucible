@@ -3,12 +3,14 @@ import './support/load-agent-scene-modules.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAgentScene } from '../src/agent-scene.js';
-import { closedRoom, lightmapBytesOf } from './support/agent-bake-rooms.mjs';
+import { closedRoom, lightmapBytesOf, freezeBakeClockForFile } from './support/agent-bake-rooms.mjs';
+
+freezeBakeClockForFile();
 
 const LIGHT_MOVES = { kind: 'light', id: 'point:0', property: 'position', keyframes: [{ time: 0, value: [0, 2, 0] }, { time: 2, value: [1, 2, 0] }] };
 
 function bakedRoom(bakeOverrides = {}) {
-  const recipe = closedRoom({ bake: { preset: 'draft', ...bakeOverrides }, motion: { duration: 2, tracks: [LIGHT_MOVES] } });
+  const recipe = closedRoom({ bake: { preset: 'draft', texelsPerUnit: 1, probes: false, ...bakeOverrides }, motion: { duration: 2, tracks: [LIGHT_MOVES] } });
   recipe.environment.pointLights = [{ position: [0, 2, 0], intensity: 10 }];
   return recipe;
 }
