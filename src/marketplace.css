@@ -11,7 +11,7 @@ body.marketplace > main { gap: 40px; }
 .market-version { color: var(--muted); font-family: var(--mono); font-size: 13px; font-weight: 400; }
 .market-description { color: var(--muted); font-size: 15px; }
 .market-facts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.market-facts li { padding: 3px 10px; border-radius: 999px; background: var(--tint); color: var(--muted); font-size: 13px; }
+.market-facts li { padding: 3px 10px; border-radius: 6px; background: var(--tint); color: var(--muted); font-size: 13px; }
 
 .pack-card { grid-template-columns: 168px minmax(0, 1fr); align-items: start; }
 .pack-preview { width: 168px; aspect-ratio: 1; object-fit: cover; border-radius: var(--radius); background: var(--window); }

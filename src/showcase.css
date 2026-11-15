@@ -28,7 +28,7 @@
   min-height: 34px;
   padding: 6px 14px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 8px;
   background: #17161aa6;
   color: #fefefd;
   font-size: 13px;
@@ -51,7 +51,7 @@
   margin: 0;
   padding: 10px 16px;
   transform: translate(-50%, -50%);
-  border-radius: 999px;
+  border-radius: 8px;
   background: #17161ab8;
   color: #fefefd;
   font-size: 14px;
