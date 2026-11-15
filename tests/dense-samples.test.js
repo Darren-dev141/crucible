@@ -57,7 +57,7 @@ function resizingRenderer({ clientWidth, clientHeight, parts }) {
   const renderer = Object.create(CrucibleRenderer.prototype);
   const allocations = [];
   Object.assign(renderer, {
-    context, canvas, pixelRatio: 1, hdr: false, benchmark: false, shading: 'full', baseSamples: 4, denseSamples: 2, fitParts: parts, world: false,
+    context, canvas, pixelRatio: 1, hdr: false, benchmark: false, shading: 'full', baseSamples: 4, denseSamples: 2, densityParts: parts, fitParts: [...parts, partWithTriangles(5000)], world: false,
     projection: new Float32Array(16), capabilities: { samples: 4 }, geometryBytes: 0, textureBytes: 0, depth: false, memoryBudgetMiB: 4096, maximumMemoryBudgetMiB: 4096,
     allocateFrameTargets(width, height) { allocations.push([width, height, this.multisampleSamples]); },
   });
@@ -95,4 +95,13 @@ test('a resize that keeps the sample count and the size allocates nothing, and w
   plain.canvas.clientWidth = 400;
   plain.renderer.resize();
   assert.equal(plain.renderer.multisampleSamples, 4);
+});
+
+test('a resize with no size change keeps the count the constructor chose, whatever the fit list adds (the ground) (#1163)', () => {
+  const parts = [partWithTriangles(100 * 100 - 100)];
+  const { renderer, allocations } = resizingRenderer({ clientWidth: 100, clientHeight: 100, parts });
+  assert.equal(renderer.multisampleSamples, 4);
+  renderer.resize();
+  assert.equal(renderer.multisampleSamples, 4);
+  assert.ok(allocations.every(allocation => allocation[2] === 4));
 });

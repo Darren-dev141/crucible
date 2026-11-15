@@ -759,7 +759,8 @@ export class CrucibleRenderer {
     if (volume.density > 0 && !this.hdr) throw new Error('Volume fog requires EXT_color_buffer_float for HDR rendering');
     this.baseSamples = samples;
     this.denseSamples = denseSamples;
-    this.multisampleSamples = this.chooseMultisampleSamples(parts);
+    this.densityParts = parts;
+    this.multisampleSamples = this.chooseMultisampleSamples(this.densityParts);
     this.capabilities = { hdr: this.hdr, hdrRequested: Boolean(hdr), hdrFallbackReason: hdr && !this.hdr ? benchmark ? 'HDR is disabled in benchmark mode' : 'EXT_color_buffer_float is unavailable' : null, samples: this.multisampleSamples };
     this.geometryBytes = 0;
     this.geometryBuffers = new Map();
@@ -1402,6 +1403,9 @@ export class CrucibleRenderer {
     const renderParts = this.groundPart ? [...parts, this.groundPart] : parts;
     this.fitParts = renderParts;
     this.fitBounds = undefined;
+    this.densityParts = parts;
+    // A scene that gained or lost triangles can cross the density threshold with no size change; resize() judges it again and rebuilds the targets.
+    const resampled = this.denseSamples != null && this.chooseMultisampleSamples(this.densityParts) !== this.multisampleSamples;
     const grouped = groupWorld(retainedUnchanged ? this.incrementalGrouping : null, parts, this.groundPart, this.batching, retainedUnchanged);
     this.incrementalGrouping = grouped.state;
     const groups = grouped.batches;
@@ -1515,6 +1519,7 @@ export class CrucibleRenderer {
     this.shadowsDirty = true;
     // With retainedUnchanged the caller promises that parts of kept batches did not move, so only the new batches are re-synced.
     this.updateParts(retainedUnchanged ? renderParts.filter(part => !retained.has(this.partLocations.get(part)?.batch)) : renderParts);
+    if (resampled) this.resize();
     return parts.length;
   }
 
@@ -1944,7 +1949,7 @@ export class CrucibleRenderer {
     // A canvas that grew or shrank changes the triangles per pixel, so denseSamples is judged again; a new count needs new render targets.
     const previousSamples = this.multisampleSamples;
     if (this.denseSamples != null) {
-      this.multisampleSamples = this.chooseMultisampleSamples(this.fitParts);
+      this.multisampleSamples = this.chooseMultisampleSamples(this.densityParts);
       this.capabilities.samples = this.multisampleSamples;
     }
     const plan = planRenderSize({ width: Math.max(1, this.canvas.clientWidth), height: Math.max(1, this.canvas.clientHeight), pixelRatio: this.pixelRatio, samples: this.samples, memoryBudgetMiB: this.memoryBudgetMiB, geometryBytes: this.geometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !this.benchmark, depth: this.depth, maximumSize: Math.min(this.context.getParameter(this.context.MAX_RENDERBUFFER_SIZE), this.context.getParameter(this.context.MAX_TEXTURE_SIZE)), maximumMemoryBudgetMiB: this.maximumMemoryBudgetMiB });
