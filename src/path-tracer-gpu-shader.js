@@ -380,12 +380,22 @@ vec3 srgbToLinear(vec3 encoded) {
   return mix(pow((encoded + 0.055) / 1.055, vec3(2.4)), encoded / 12.92, lessThanEqual(encoded, vec3(0.04045)));
 }
 
+int wrapTexel(int index, int size, int mode) {
+  if (mode == 1) return clamp(index, 0, size - 1);
+  if (mode == 2) {
+    int folded = ((index % (2 * size)) + 2 * size) % (2 * size);
+    return folded < size ? folded : 2 * size - 1 - folded;
+  }
+  return ((index % size) + size) % size;
+}
+
 vec4 sampleAtlas(vec4 rectangle, float flags, vec2 uv) {
   if (rectangle.z <= 0.0) return vec4(1.0);
   int width = int(rectangle.z);
   int height = int(rectangle.w);
-  bool repeat = mod(flags, 2.0) >= 1.0;
-  bool encoded = flags >= 2.0;
+  bool encoded = mod(floor(flags / 2.0), 2.0) >= 1.0;
+  int wrapU = int(mod(floor(flags / 4.0), 4.0));
+  int wrapV = int(mod(floor(flags / 16.0), 4.0));
   float x = uv.x * rectangle.z - 0.5;
   float y = uv.y * rectangle.w - 0.5;
   float left = floor(x);
@@ -396,13 +406,8 @@ vec4 sampleAtlas(vec4 rectangle, float flags, vec2 uv) {
   for (int corner = 0; corner < 4; corner++) {
     int column = int(left) + (corner & 1);
     int row = int(top) + (corner >> 1);
-    if (repeat) {
-      column = ((column % width) + width) % width;
-      row = ((row % height) + height) % height;
-    } else {
-      column = clamp(column, 0, width - 1);
-      row = clamp(row, 0, height - 1);
-    }
+    column = wrapTexel(column, width, wrapU);
+    row = wrapTexel(row, height, wrapV);
     float weight = (((corner & 1) == 1) ? shareX : 1.0 - shareX) * (((corner >> 1) == 1) ? shareY : 1.0 - shareY);
     vec4 texel = texelFetch(uAtlas, ivec2(int(rectangle.x) + column, int(rectangle.y) + row), 0);
     vec3 color = encoded ? srgbToLinear(texel.rgb) : texel.rgb;
