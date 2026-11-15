@@ -615,6 +615,18 @@ test('a vertex whose weights are all negative is bound fully to joint 0 and coun
   asset.dispose();
 });
 
+test('a lone raw skin weight of 2.0 is normalised and accepted, while NaN is still refused', async () => {
+  const asset = await parseGltf(skinnedStripAsset((document, append, chunks) => {
+    chunks[document.meshes[0].primitives[0].attributes.WEIGHTS_0].set([2, 0, 0, 0], 0);
+  }));
+  assert.deepEqual(Array.from(asset.parts[0].geometry.skinWeights.subarray(0, 4)), [1, 0, 0, 0]);
+  assert.equal(asset.warnings.some(warning => /skin weight/.test(warning)), false);
+  asset.dispose();
+  await assert.rejects(parseGltf(skinnedStripAsset((document, append, chunks) => {
+    chunks[document.meshes[0].primitives[0].attributes.WEIGHTS_0].set([2, NaN, 0, 0], 0);
+  })), /finite values within zero and one/);
+});
+
 test('a skeletal animation that scales a joint to zero collapses it to a point and restores with the base pose', async () => {
   const asset = await parseGltf(skinnedStripAsset((document, append) => {
     const scales = append(new Float32Array([1, 1, 1, 0, 1, 1]), 'VEC3');
