@@ -98,6 +98,25 @@ test('the same recipe plays the same physics twice', async () => {
   }
 });
 
+test('restart() puts a fallen crate back where the recipe placed it and keeps the physics running', async () => {
+  const restore = withAnimationFrameStubs();
+  try {
+    const game = await playFor(await exportedRecipe(), 1.5);
+    const fallen = game.physics.getPose('crate').translation[1];
+    assert.ok(fallen < 2, `the crate fell, y ${fallen}`);
+    const restarting = game.restart();
+    assert.equal(game.physics, null, 'there is no world while it is rebuilt');
+    await restarting;
+    assert.ok(game.physics, 'the new world is reachable as game.physics');
+    assert.ok(Math.abs(game.physics.getPose('crate').translation[1] - 3) < 1e-6, 'the crate is back at the start height');
+    for (let step = 0; step < 90; step++) game.runtime.step(STEP_MILLISECONDS);
+    assert.ok(game.physics.getPose('crate').translation[1] < 2, 'the crate falls again');
+    game.dispose();
+  } finally {
+    restore();
+  }
+});
+
 test('the kinematic player body pushes a dynamic crate', async () => {
   const restore = withAnimationFrameStubs();
   try {

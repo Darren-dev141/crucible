@@ -33,16 +33,23 @@ export async function createGamePhysics({ recipe, scene, playerNode, physicsUrl 
   }
   const definition = liveAgentPhysicsDefinition(recipe.physics, recipe, geometries);
   await loadJoltEngine({ moduleUrl: sameOriginModuleUrl(physicsUrl) });
-  const system = await createPhysicsSystem(definition, { adapter: joltAdapter, timestep: GAME_PHYSICS_STEP_SECONDS });
+  const createSystem = () => createPhysicsSystem(definition, { adapter: joltAdapter, timestep: GAME_PHYSICS_STEP_SECONDS });
+  // The world is null while restart() rebuilds it; the steps in between do nothing.
+  let system = await createSystem();
+  let rebuilding = Promise.resolve();
+  let disposed = false;
   const bodies = new Map(recipe.physics.bodies.map(body => [body.node, body]));
   const sentPoses = new Map();
 
   return {
-    system,
+    get system() {
+      return system;
+    },
     bodies,
     playerIsBody: bodies.get(playerNode)?.type === 'kinematic',
     /** Drive the kinematic player body to the controller position, then step the world once. */
     fixedUpdate(stepSeconds, context, playerPosition, playerYaw) {
+      if (!system) return;
       if (playerPosition) {
         system.setKinematicPose(playerNode, {
           translation: playerPosition,
@@ -53,11 +60,12 @@ export async function createGamePhysics({ recipe, scene, playerNode, physicsUrl 
     },
     /** Position of a dynamic body, for the rules; undefined for any other node. */
     positionOf(nodeId) {
-      return bodies.get(nodeId)?.type === 'dynamic' ? system.getPose(nodeId).translation : undefined;
+      return system && bodies.get(nodeId)?.type === 'dynamic' ? system.getPose(nodeId).translation : undefined;
     },
     /** set-node operations for the dynamic bodies that moved since the last call. */
     poseOperations() {
       const operations = [];
+      if (!system) return operations;
       for (const [nodeId, body] of bodies) {
         if (body.type !== 'dynamic') continue;
         const { translation, rotation } = system.getPose(nodeId);
@@ -68,8 +76,27 @@ export async function createGamePhysics({ recipe, scene, playerNode, physicsUrl 
       }
       return operations;
     },
+    /** Put every body back where the recipe placed it by building the world again. Resolves once the new world runs. */
+    restart() {
+      const previous = system;
+      system = null;
+      previous?.dispose();
+      sentPoses.clear();
+      rebuilding = rebuilding.then(async () => {
+        const next = await createSystem();
+        if (disposed) next.dispose();
+        else {
+          // A second restart may have queued behind the first, which already installed a world.
+          system?.dispose();
+          system = next;
+        }
+      });
+      return rebuilding;
+    },
     dispose() {
-      system.dispose();
+      disposed = true;
+      system?.dispose();
+      system = null;
     },
   };
 }

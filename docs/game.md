@@ -53,6 +53,12 @@ A field newer than the last npm release carries a tag such as `{since 0.21.0}`; 
 
 A rules part named like a scene node is hidden and shown with it, which is how a coin disappears. Yaw 0 faces -Z, and W moves forward. Removing the player node while a game uses it fails with the field to fix.
 
+The player and each NPC move in world space. A node under a parent that only has a translation keeps its place: `startGame` writes the node's own translation as the world position minus the parents' translations. A parent with a rotation or a scale is refused when the game starts, with the parent's id; give that parent only a translation, or choose a node whose parents have none.
+
+## Restarting
+
+After `win` or `lose` the rules stop until the game restarts, and the exported page shows `(R to restart)` in the corner label. Three ways put the whole game back at its start: the `restart` [rule action](game-rules.md#actions), the R key (on a page that reads the keyboard, once the game is won or lost; a `?replay=` page has no key) and `game.restart()` from code. Each does the same: the rules reset, the player goes back to its start position and heading, the camera rig and the player's animation graph reset, each NPC returns to its start and walks its path again with its graph reset, and the physics world is rebuilt so every body returns to the recipe's pose. `game.restart()` returns a promise that settles when the physics world is ready again (at once without physics); until then `game.physics` is `null` and the bodies do not step. Anything a host added outside `startGame` is the host's to reset.
+
 ## The web build
 
 `scene_export_web` writes one folder: `index.html`, `game.json` (the recipe) and `engine/` (the built Crucible modules, found by following the imports from `build/game.js`). It runs from any static host with no server code, and the folder is bounded: the engine stays under 12 MiB, the recipe under 1 MiB, and the newest four builds are kept. Placed catalog assets (and the assets whose clips a character retargets) are copied to `assets/<id>.glb`, up to 64 MiB together; grown vegetation is refused with the fix. The page shows the variables and the verdict in a corner label and exposes the running game as `window.__game` (`rules.state`, `controller.state`, `scene`, `runtime`).

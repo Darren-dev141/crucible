@@ -158,6 +158,39 @@ test('an NPC follows a path from the recipe, blends into walk and stops at the e
   }
 });
 
+test('restart() puts an NPC back at its start and sends it along its path again', async () => {
+  const nodes = [...characterNodes(), ...characterNodes('Npc').map(node => ({ ...node, ...(node.id === 'NpcWalker' ? { translation: [4, 0, 0] } : {}) }))];
+  const npc = { node: 'NpcWalker', path: [[4, -6], [8, -6]], cruiseSpeed: WALK_SPEED, animation: prefixedAnimation('Npc') };
+  const recipe = setGame(sceneWith(nodes), { player: { node: 'Walker' }, npcs: [npc] });
+  const { game, finish } = await startRecipe(recipe, { version: 1, samples: 1, events: [] });
+  try {
+    const follower = game.npcs[0].follower;
+    for (let frame = 0; frame < 60 * 20 && follower.state.status !== 'arrived'; frame++) game.runtime.step(FRAME_MILLISECONDS);
+    assert.equal(follower.state.status, 'arrived');
+    await game.restart();
+    assert.equal(follower.state.status, 'moving');
+    assert.deepEqual(follower.state.position, [4, 0, 0]);
+    assert.equal(game.npcs[0].graph.time, 0, 'the NPC graph starts from time 0');
+    for (let frame = 0; frame < 60 * 20 && follower.state.status !== 'arrived'; frame++) game.runtime.step(FRAME_MILLISECONDS);
+    assert.equal(follower.state.status, 'arrived', 'the NPC walks the path a second time');
+  } finally {
+    finish();
+  }
+});
+
+test('an NPC under a translated parent is placed relative to it and stays put on the first frame', async () => {
+  const nodes = [{ id: 'Platform', translation: [20, 0, 0] }, ...characterNodes(), ...characterNodes('Npc').map(node => (node.id === 'NpcWalker' ? { ...node, parent: 'Platform', translation: [0, 0, 0] } : node))];
+  const npc = { node: 'NpcWalker', path: [[20, -6]], cruiseSpeed: WALK_SPEED, animation: prefixedAnimation('Npc') };
+  const recipe = setGame(sceneWith(nodes), { player: { node: 'Walker' }, npcs: [npc] });
+  const { game, finish } = await startRecipe(recipe, { version: 1, samples: 1, events: [] });
+  try {
+    game.runtime.step(FRAME_MILLISECONDS);
+    assert.ok(Math.abs(nodeNamed(game.scene, 'NpcWalker').translation[0]) < 0.1, `local x ${nodeNamed(game.scene, 'NpcWalker').translation[0]}`);
+  } finally {
+    finish();
+  }
+});
+
 test('an animation names the field and the fix when it is wrong', () => {
   const player = animation => ({ player: { node: 'Walker', animation } });
   assert.throws(rejection(player(locomotionAnimation({ extra: 1 }))), /player\.animation\.extra is not a field\. Use one of: clips/);
