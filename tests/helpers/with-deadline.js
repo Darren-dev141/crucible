@@ -12,3 +12,16 @@ export async function withDeadline(promise, step, milliseconds = STEP_DEADLINE_M
     clearTimeout(timer);
   }
 }
+
+// Starts a page function that waits for something (a promise on the page) and returns a promise for its value. The deadline covers the page
+// promise itself, since evaluateHandle only resolves once the page promise settles, not the instant jsonValue() runs.
+export function watchPage(page, step, pageFunction, argument, milliseconds = STEP_DEADLINE_MILLISECONDS) {
+  const watching = withDeadline(
+    page.evaluateHandle(pageFunction, argument).then(handle => handle.jsonValue()),
+    step,
+    milliseconds,
+  );
+  // The caller awaits it later; a rejection before then must not count as unhandled.
+  watching.catch(() => {});
+  return watching;
+}
