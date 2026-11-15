@@ -3,7 +3,7 @@ import { GEOMETRY_PROBLEMS } from '../src/mesh-lint.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { box, cylinder, sphere } from '../src/geometry.js';
-import { editMesh, validateTopology, meshFromGeometry, lintMesh, meshBounds, facesWithTag } from '../src/mesh.js';
+import { editMesh, validateTopology, meshFromGeometry, lintMesh, meshBounds, facesWithTag, tagCounts } from '../src/mesh.js';
 import { loadMeshBooleans, meshBoolean } from '../src/mesh-boolean.js';
 import { applyMeshEdits, transformMesh } from '../src/mesh-recipe.js';
 import { createAgentScene } from '../src/agent-scene.js';
@@ -131,4 +131,14 @@ test('recipe meshes run booleans with inline primitive cutters', () => {
     geometries: [{ id: 'bad', type: 'mesh', base: { type: 'box' }, edits: [{ op: 'boolean', operation: 'union', cutter: { type: 'box', id: 'x' } }] }],
     materials: [], nodes: [],
   }), /geometries\[0\]\.cutter: got \{"type":"box","id":"x"\}; expected a primitive or profile record without an id/);
+});
+
+test('a reused cutTag counts only the faces of the latest cutter', () => {
+  const shifted = offset => transformMesh(meshFromGeometry(box(0, 1)), { translation: [offset, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
+  const first = meshBoolean(meshFromGeometry(box(0, 1)), shifted(0.5), 'union', { cutTag: 'cut' });
+  const second = meshBoolean(first.mesh, shifted(-0.5), 'union', { cutTag: 'cut' });
+  assert.equal(first.cutterFaces, 5);
+  assert.equal(second.cutterFaces, 5);
+  assert.equal(second.mesh.attributes.face['boolean-cutter-faces'], undefined);
+  assert.equal(tagCounts(second.mesh).cut, 10);
 });
