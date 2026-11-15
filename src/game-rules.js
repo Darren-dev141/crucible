@@ -35,17 +35,21 @@ const COMPARISONS = {
   '!=': (left, right) => left !== right,
 };
 
-// A result that overflows or is not a number gives 0, like division by zero, so a state never turns Infinity or NaN.
-function finiteOrZero(value) {
-  return Number.isFinite(value) ? value : 0;
-}
-
 const ARITHMETIC = {
-  '+': (left, right) => finiteOrZero(left + right),
-  '-': (left, right) => finiteOrZero(left - right),
-  '*': (left, right) => finiteOrZero(left * right),
-  '/': (left, right) => (right === 0 ? 0 : finiteOrZero(left / right)),
+  '+': (left, right) => left + right,
+  '-': (left, right) => left - right,
+  '*': (left, right) => left * right,
+  '/': (left, right) => (right === 0 ? 0 : left / right), // division by zero gives 0, so a state never turns NaN
 };
+
+// A result that overflows or is not a number is reset to 0 (not clamped), so a state never turns Infinity or NaN.
+// `overflow.reset` records that it happened, so the event log can say so.
+function applyArithmetic(operator, left, right, overflow) {
+  const result = ARITHMETIC[operator](left, right);
+  if (Number.isFinite(result)) return result;
+  overflow.reset = true;
+  return 0;
+}
 
 function fail(path, problem, fix) {
   throw new RangeError(`Game rules ${path} ${problem}. ${fix}`);
@@ -326,14 +330,13 @@ export function validateGameRules(document, { hasInput = true } = {}) {
   return { version: 1, variables, zones, parts, prefabs, rules };
 }
 
-function evaluate(expression, variables) {
+function evaluate(expression, variables, overflow = { reset: false }) {
   if (typeof expression === 'number') return expression;
   if (typeof expression === 'string') return variables[expression];
   const [operator, left, right] = expression;
-  const leftValue = evaluate(left, variables);
-  const rightValue = evaluate(right, variables);
-  const arithmetic = ARITHMETIC[operator];
-  if (arithmetic !== undefined) return arithmetic(leftValue, rightValue);
+  const leftValue = evaluate(left, variables, overflow);
+  const rightValue = evaluate(right, variables, overflow);
+  if (ARITHMETIC[operator] !== undefined) return applyArithmetic(operator, leftValue, rightValue, overflow);
   return COMPARISONS[operator](leftValue, rightValue) ? 1 : 0;
 }
 
@@ -484,9 +487,10 @@ export function createGameRules(document, options = {}) {
     switch (action.type) {
       case 'set':
       case 'add': {
-        const value = evaluate(action.value, variables);
-        variables[action.variable] = action.type === 'set' ? value : ARITHMETIC['+'](variables[action.variable], value);
-        record({ ...base, variable: action.variable, value: variables[action.variable] });
+        const overflow = { reset: false };
+        const value = evaluate(action.value, variables, overflow);
+        variables[action.variable] = action.type === 'set' ? value : applyArithmetic('+', variables[action.variable], value, overflow);
+        record({ ...base, variable: action.variable, value: variables[action.variable], ...(overflow.reset ? { reset: 'overflow' } : {}) });
         return;
       }
       case 'show':

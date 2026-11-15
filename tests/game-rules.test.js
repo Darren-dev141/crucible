@@ -334,3 +334,22 @@ test('arithmetic that overflows or has no number as a result leaves the variable
   rules.fixedUpdate(1 / 60);
   assert.deepEqual(rules.state.variables, { big: 0, difference: 0, total: 0 });
 });
+
+test('a rules variable reset by overflow is marked in the event log, and division overflow resets too', () => {
+  const rules = createGameRules({
+    version: 1,
+    variables: { big: 1e308, quotient: 1, fine: 1 },
+    rules: [{
+      when: { type: 'timer', seconds: 0.01 },
+      do: [
+        { type: 'set', variable: 'big', value: ['*', 'big', 10] },
+        { type: 'set', variable: 'quotient', value: ['/', 1e308, 1e-10] },
+        { type: 'set', variable: 'fine', value: ['+', 'fine', 1] },
+      ],
+    }],
+  });
+  rules.fixedUpdate(1 / 60);
+  assert.deepEqual(rules.state.variables, { big: 0, quotient: 0, fine: 2 });
+  const sets = rules.eventLog.filter(entry => entry.action === 'set');
+  assert.deepEqual(sets.map(entry => entry.reset), ['overflow', 'overflow', undefined]);
+});

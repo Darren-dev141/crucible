@@ -22,7 +22,7 @@ const KEYBOARD_AXES = {
 };
 const MOVE_STICK = { name: 'move', area: { x: 0, y: 0, width: 0.5, height: 1 }, radius: 60 };
 
-function inputDefinition(preset) {
+export function inputDefinition(preset) {
   const actions = { jump: [...KEYBOARD_ACTIONS.jump], run: [...KEYBOARD_ACTIONS.run] };
   const axes = Object.fromEntries(Object.entries(KEYBOARD_AXES).map(([name, bindings]) => [name, [...bindings]]));
   if (preset === 'gamepad') {
