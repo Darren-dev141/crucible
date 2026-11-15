@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { open, readdir, realpath, lstat, stat } from 'node:fs/promises';
+import { open, readdir, realpath, lstat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { AGENT_ASSET_LIMITS, assetBytesLimitMessage } from '../src/agent-asset-limits.js';
@@ -286,11 +286,14 @@ export async function createAgentAssetCatalog(root, packFiles = []) {
     list() {
       return { assets: structuredClone([...entries.values()].map(entry => entry.metadata)), maximumBytes: MAXIMUM_BYTES, maximumAssets: MAXIMUM_ASSETS };
     },
-    /** The size of a catalog file on disk, read from its directory entry without loading the file. */
+    /**
+     * The length `read` returns, known from the catalog record without loading the file. A GLB whose images sit beside it is
+     * larger than its file on disk, because `read` embeds those images.
+     */
     async size(assetId) {
       const entry = entries.get(assetId);
       if (!entry) throw new Error(`Unknown asset ID ${String(assetId).slice(0, 12)}. Call scene_asset_catalog and pass an assetId it lists.`);
-      return (await stat(join(entry.directory, entry.filename))).size;
+      return entry.metadata.bytes;
     },
     async read(assetId) {
       const entry = entries.get(assetId);

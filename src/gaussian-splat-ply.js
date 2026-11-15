@@ -15,7 +15,7 @@ export const GAUSSIAN_SPLAT_HARD_COUNT_LIMIT = 4_000_000;
 
 const REQUIRED_PROPERTIES = ['x', 'y', 'z', 'f_dc_0', 'f_dc_1', 'f_dc_2', 'opacity', 'scale_0', 'scale_1', 'scale_2', 'rot_0', 'rot_1', 'rot_2', 'rot_3'];
 const SPHERICAL_HARMONIC_DC = 0.28209479177387814;
-const HEADER_END = 'end_header\n';
+const HEADER_END_PATTERN = /end_header\r?\n/;
 const MAXIMUM_HEADER_BYTES = 64 * 1024;
 
 const PROPERTY_TYPES = {
@@ -40,11 +40,11 @@ const PROPERTY_TYPES = {
 function readHeaderText(bytes) {
   const searchLimit = Math.min(bytes.length, MAXIMUM_HEADER_BYTES);
   const text = new TextDecoder('latin1').decode(bytes.subarray(0, searchLimit));
-  const endIndex = text.indexOf(HEADER_END);
-  if (!text.startsWith('ply') || endIndex < 0) {
+  const endMatch = HEADER_END_PATTERN.exec(text);
+  if (!text.startsWith('ply') || !endMatch) {
     throw new Error('Not a PLY file: the header must start with "ply" and end with "end_header"');
   }
-  return { text: text.slice(0, endIndex), bodyStart: endIndex + HEADER_END.length };
+  return { text: text.slice(0, endMatch.index), bodyStart: endMatch.index + endMatch[0].length };
 }
 
 function parseHeader(headerText) {
@@ -56,15 +56,29 @@ function parseHeader(headerText) {
   let vertexCount = 0;
   let inVertexElement = false;
   let vertexElementSeen = false;
+  let skippedElement = null;
+  let skippedBytes = 0;
   const properties = [];
+  const finishSkippedElement = () => {
+    if (skippedElement) skippedBytes += skippedElement.count * skippedElement.rowBytes;
+    skippedElement = null;
+  };
   for (const line of lines) {
     const words = line.split(/\s+/);
     if (words[0] === 'element') {
+      finishSkippedElement();
       inVertexElement = words[1] === 'vertex' && !vertexElementSeen;
       if (inVertexElement) {
         vertexElementSeen = true;
         vertexCount = Number(words[2]);
+      } else if (!vertexElementSeen) {
+        skippedElement = { name: words[1], count: Number(words[2]), rowBytes: 0 };
       }
+    } else if (words[0] === 'property' && skippedElement) {
+      if (words[1] === 'list' || !PROPERTY_TYPES[words[1]]) {
+        throw new Error(`Gaussian splat PLY element "${skippedElement.name}" before "vertex" has a variable-size or unsupported property, so its bytes cannot be skipped. Re-export the file with the vertex element first.`);
+      }
+      skippedElement.rowBytes += PROPERTY_TYPES[words[1]].bytes;
     } else if (words[0] === 'property' && inVertexElement) {
       if (words[1] === 'list' || !PROPERTY_TYPES[words[1]]) {
         throw new Error(`Gaussian splat PLY has an unsupported property type "${words[1]}"`);
@@ -75,7 +89,8 @@ function parseHeader(headerText) {
   if (!Number.isInteger(vertexCount) || vertexCount <= 0) {
     throw new Error('Gaussian splat PLY has no vertex element with a positive count');
   }
-  return { vertexCount, properties };
+  finishSkippedElement();
+  return { vertexCount, properties, skippedBytes };
 }
 
 function propertyLayout(properties) {
@@ -142,15 +157,19 @@ function openSplatPly(buffer, options, caller) {
   }
   const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   const { text, bodyStart } = readHeaderText(bytes);
-  const { vertexCount, properties } = parseHeader(text);
+  const { vertexCount, properties, skippedBytes } = parseHeader(text);
+  if (!Number.isSafeInteger(skippedBytes)) {
+    throw new Error('Gaussian splat PLY declares an element before "vertex" with an invalid count. Re-export the file.');
+  }
   if (vertexCount > maximumCount) {
     throw new RangeError(`Gaussian splat file holds ${vertexCount} splats, over the limit of ${maximumCount}`);
   }
   const { layout, stride } = propertyLayout(properties);
-  if (bytes.length - bodyStart < vertexCount * stride) {
-    throw new Error(`Gaussian splat PLY is truncated: ${vertexCount} splats need ${vertexCount * stride} bytes, ${bytes.length - bodyStart} are present`);
+  const vertexStart = bodyStart + skippedBytes;
+  if (bytes.length - vertexStart < vertexCount * stride) {
+    throw new Error(`Gaussian splat PLY is truncated: ${vertexCount} splats need ${vertexCount * stride} bytes, ${Math.max(0, bytes.length - vertexStart)} are present`);
   }
-  const body = new DataView(bytes.buffer, bytes.byteOffset + bodyStart, vertexCount * stride);
+  const body = new DataView(bytes.buffer, bytes.byteOffset + vertexStart, vertexCount * stride);
   return { view: body, vertexCount, layout, stride };
 }
 
@@ -184,6 +203,9 @@ function createSplatReader({ view, vertexCount: count, layout, stride }) {
       colors[index * 4 + axis] = toByte(0.5 + SPHERICAL_HARMONIC_DC * colorField.read(view, row + colorField.offset));
       const scaleField = scaleFields[axis];
       scales[index * 3 + axis] = Math.exp(scaleField.read(view, row + scaleField.offset));
+      if (!Number.isFinite(scales[index * 3 + axis])) {
+        throw new Error(`Gaussian splat ${index} has a non-finite scale (scale_${axis} is NaN or too large to exponentiate)`);
+      }
     }
     colors[index * 4 + 3] = toByte(1 / (1 + Math.exp(-opacityField.read(view, row + opacityField.offset))));
     writeUnitQuaternion(rotations, index, view, row, rotationFields);

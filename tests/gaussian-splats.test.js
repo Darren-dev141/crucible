@@ -70,7 +70,8 @@ test('createGaussianSplats packs position, colour and covariance and limits the 
   assert.deepEqual(Array.from(floats.subarray(0, 3)), [1, 2, 3]);
   const [xx, xy, xz, yy, yz, zz] = Array.from(floats.subarray(4, 10)).map(value => Number(value.toFixed(5)));
   assert.deepEqual([xx, xy, xz, yy, yz, zz], [0.01, 0, 0, 0.04, 0, 0.09]);
-  assert.throws(() => createGaussianSplats(data, { maximumCount: 0 }), /over the limit/);
+  const twoSplats = parseGaussianSplatPly(buildPly([IDENTITY_SPLAT(0, 0, 0), IDENTITY_SPLAT(1, 1, 1)]));
+  assert.throws(() => createGaussianSplats(twoSplats, { maximumCount: 1 }), /over the limit/);
   assert.throws(() => createGaussianSplats(data, { matrix: [1, 2, 3] }), /16 finite/);
 });
 
@@ -146,4 +147,57 @@ test('200,000 random splats sort back to front', () => {
     const current = positions[order[index] * 3 + 2];
     assert.ok(previous <= current + stepSize, `splat ${index} is farther than the one drawn before it`);
   }
+});
+
+function buildCustomPly(headerLines, bodyValues) {
+  const header = new TextEncoder().encode(headerLines.join(''));
+  const body = Float32Array.from(bodyValues);
+  const file = new Uint8Array(header.length + body.byteLength);
+  file.set(header, 0);
+  file.set(new Uint8Array(body.buffer), header.length);
+  return file.buffer;
+}
+
+function headerWith(lineEnding, ...extraLines) {
+  const lines = ['ply', 'format binary_little_endian 1.0', ...extraLines, 'element vertex 1', ...PROPERTIES.map(name => `property float ${name}`), 'end_header'];
+  return lines.map(line => `${line}${lineEnding}`);
+}
+
+test('a PLY with an element before vertex skips that element (#1282)', () => {
+  const file = buildCustomPly(headerWith('\n', 'element camera 1', 'property float fov'), [60, ...IDENTITY_SPLAT(1, 2, 3)]);
+  const data = parseGaussianSplatPly(file);
+  assert.deepEqual(Array.from(data.positions), [1, 2, 3]);
+  assert.deepEqual(Array.from(data.rotations), [1, 0, 0, 0]);
+});
+
+test('a PLY with a list element before vertex says the vertex element must come first (#1282)', () => {
+  const file = buildCustomPly(headerWith('\n', 'element face 1', 'property list uchar int vertex_indices'), IDENTITY_SPLAT(1, 2, 3));
+  assert.throws(() => parseGaussianSplatPly(file), /vertex element first/);
+});
+
+test('a non-finite scale throws with the splat index (#1282)', () => {
+  const notANumber = IDENTITY_SPLAT(0, 0, 0);
+  notANumber[7] = Number.NaN;
+  assert.throws(() => parseGaussianSplatPly(buildPly([IDENTITY_SPLAT(0, 0, 0), notANumber])), /splat 1 has a non-finite scale/);
+  const huge = IDENTITY_SPLAT(0, 0, 0);
+  huge[8] = 1000;
+  assert.throws(() => parseGaussianSplatPly(buildPly([huge])), /splat 0 has a non-finite scale/);
+});
+
+test('a PLY header with CRLF line endings parses (#1282)', () => {
+  const file = buildCustomPly(headerWith('\r\n'), IDENTITY_SPLAT(1, 2, 3));
+  assert.deepEqual(Array.from(parseGaussianSplatPly(file).positions), [1, 2, 3]);
+});
+
+test('createGaussianSplats rejects a maximumCount that is not a positive number (#1282)', () => {
+  const data = parseGaussianSplatPly(buildPly([IDENTITY_SPLAT(0, 0, 0)]));
+  for (const maximumCount of [Number.NaN, -5, 0, '10']) {
+    assert.throws(() => createGaussianSplats(data, { maximumCount }), /maximumCount must be a positive number/, String(maximumCount));
+  }
+});
+
+test('createGaussianSplats always refuses more than 4,000,000 splats (#1282)', () => {
+  const oversized = { count: 4_000_001 };
+  assert.throws(() => createGaussianSplats(oversized, { maximumCount: Number.POSITIVE_INFINITY }), /over the limit of 4000000/);
+  assert.throws(() => createGaussianSplats(oversized, { maximumCount: 10_000_000 }), /over the limit of 4000000/);
 });
