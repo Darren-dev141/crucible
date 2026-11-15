@@ -1,3 +1,4 @@
+import { after, before } from 'node:test';
 // Rooms shared by the agent-bake test files.
 
 export function closedRoom(extra = {}) {
@@ -59,4 +60,19 @@ export function clothRoom() {
   recipe.geometries.push({ id: 'sheet', type: 'grid', segments: 8 });
   recipe.nodes.push({ id: 'flag', geometry: 'sheet', material: 'white', translation: [0.5, 2, 0], scale: [1, 1, 1] });
   return recipe;
+}
+
+/**
+ * Stops the clock the light bake reads for its maxSeconds cap while the tests of the calling file run. A bake that takes a second on
+ * a quiet machine can take twenty on a loaded CI runner and trip the cap, and these tests check what the bake produces, not how fast it
+ * runs. A file that tests the cap itself must not call this.
+ */
+export function freezeBakeClockForFile() {
+  const realNow = performance.now;
+  before(() => {
+    performance.now = () => 0;
+  });
+  after(() => {
+    performance.now = realNow;
+  });
 }
