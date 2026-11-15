@@ -24,7 +24,7 @@ function assertOutward(mesh) {
 }
 
 // An edge with one quad is a hole, and a hole would pass for a solid in every later edit, so it fails. Saddle edges with
-// four quads are split before this check (splitSaddleVertices).
+// four quads are split before this check, or fail there when no pairing separates them (splitSaddleVertices).
 export function assertNoHoles(mesh) {
   const table = edgeCornerTable(mesh);
   for (let edge = 0; edge < mesh.edgeCount; edge++) {

@@ -51,9 +51,10 @@ const QUAD_OFFSETS = [[-1, -1], [0, -1], [0, 0], [-1, 0]];
 
 /**
  * One quad of cell vertices per grid edge that crosses the surface, wound so the normal points outward. When
- * `insidePoints` is an array, the inside grid point of each quad is pushed to it, for `splitSaddleVertices`.
+ * `insidePoints` and `outsidePoints`, when arrays, receive the inside and the outside grid point of each quad, for
+ * `splitSaddleVertices`.
  */
-export function quadsAroundEdges(distances, grid, cellVertex, insidePoints = null) {
+export function quadsAroundEdges(distances, grid, cellVertex, insidePoints = null, outsidePoints = null) {
   const cellsPerAxis = grid.points.map(count => count - 1);
   const [pointsX, pointsY, pointsZ] = grid.points;
   const strides = [1, pointsX, pointsX * pointsY];
@@ -75,6 +76,7 @@ export function quadsAroundEdges(distances, grid, cellVertex, insidePoints = nul
           if (quad.includes(-1)) continue;
           quads.push(here < 0 ? quad : quad.reverse());
           insidePoints?.push(here < 0 ? index : index + strides[axis]);
+          outsidePoints?.push(here < 0 ? index + strides[axis] : index);
         }
       }
     }
@@ -122,29 +124,28 @@ function quadsByEdge(quads) {
   return edges;
 }
 
-// The quads that stay one sheet at this edge: both of a plain edge, or the two that share an inside point on a saddle.
-function sheetPairs(quadIndices, insidePoints) {
+// The quads that stay one sheet at this edge: both of a plain edge, or the two that share a grid point on a saddle.
+function sheetPairs(quadIndices, sheetPoints) {
   if (quadIndices.length !== 4) return [quadIndices];
-  const byInside = new Map();
+  const byPoint = new Map();
   for (const quadIndex of quadIndices) {
-    const inside = insidePoints[quadIndex];
-    byInside.set(inside, [...(byInside.get(inside) ?? []), quadIndex]);
+    const point = sheetPoints[quadIndex];
+    byPoint.set(point, [...(byPoint.get(point) ?? []), quadIndex]);
   }
-  const groups = [...byInside.values()];
+  const groups = [...byPoint.values()];
   return groups.length === 2 && groups.every(group => group.length === 2) ? groups : [quadIndices];
 }
 
-/**
- * Splits cell vertices where four quads share an edge, so every such edge joins exactly two quads. `insidePoints` is
- * the array `quadsAroundEdges` filled. Returns new quads and positions; the input is left as it was.
- */
-export function splitSaddleVertices(quads, insidePoints, positions) {
+function hasFourQuadEdge(quads) {
+  return [...quadsByEdge(quads).values()].some(edge => edge.quadIndices.length === 4);
+}
+
+function splitBySheetPoints(quads, sheetPoints, positions) {
   const edges = quadsByEdge(quads);
-  if (![...edges.values()].some(edge => edge.quadIndices.length === 4)) return { quads, positions };
   const parents = Int32Array.from({ length: quads.length * 4 }, (value, slot) => slot);
   const slotOf = (quadIndex, vertex) => quadIndex * 4 + quads[quadIndex].indexOf(vertex);
   for (const { first, second, quadIndices } of edges.values()) {
-    for (const group of sheetPairs(quadIndices, insidePoints)) {
+    for (const group of sheetPairs(quadIndices, sheetPoints)) {
       for (const vertex of [first, second]) {
         const rootSlot = findRoot(parents, slotOf(group[0], vertex));
         for (const quadIndex of group.slice(1)) parents[findRoot(parents, slotOf(quadIndex, vertex))] = rootSlot;
@@ -152,6 +153,22 @@ export function splitSaddleVertices(quads, insidePoints, positions) {
     }
   }
   return rebuildWithCopies(quads, positions, parents);
+}
+
+/**
+ * Splits cell vertices where four quads share an edge, so every such edge joins exactly two quads. `insidePoints` and
+ * `outsidePoints` are the arrays `quadsAroundEdges` filled. The quads are paired by their shared inside point (a convex
+ * saddle); when a four-quad edge is left, by their shared outside point (a concave one). When neither pairing separates
+ * the sheets, it throws. Returns new quads and positions; the input is left as it was.
+ */
+export function splitSaddleVertices(quads, insidePoints, positions, outsidePoints = null) {
+  if (!hasFourQuadEdge(quads)) return { quads, positions };
+  const attempts = outsidePoints ? [insidePoints, outsidePoints] : [insidePoints];
+  for (const sheetPoints of attempts) {
+    const split = splitBySheetPoints(quads, sheetPoints, positions);
+    if (!hasFourQuadEdge(split.quads)) return split;
+  }
+  throw new RangeError('remesh met a saddle it could not separate: the surface is thinner than the voxel size where two parts touch at a corner. Use a smaller or a different voxelSize.');
 }
 
 function rebuildWithCopies(quads, positions, parents) {
