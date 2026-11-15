@@ -251,6 +251,7 @@ function validateGeometry(part, geometry) {
   if (geometry.uvs && geometry.uvs.length !== vertexCount * 2) throw new RangeError(`${label} needs one UV pair for every position.`);
   if (geometry.lightUvs && geometry.lightUvs.length !== vertexCount * 2) throw new RangeError(`${label} needs one lightUvs pair (TEXCOORD_1) for every position.`);
   if (geometry.colors && geometry.colors.length !== vertexCount * 3) throw new RangeError(`${label} needs one colour for every position.`);
+  if (geometry.lightUvs) requireFiniteNumbers(geometry.lightUvs, undefined, `${label} lightUvs`);
 }
 
 // The maps resolveMaterial reads: the emissive map only while the material emits, the clearcoat map among the layer maps.
