@@ -15,6 +15,9 @@ export const layerTextureSupport = {};
 // water-reflection.js sets bind(renderer, uniforms, batch): it binds the mirror picture for a batch the liquid pass draws.
 export const liquidWaterSupport = {};
 
+// reflection-probes.js sets bind(renderer, uniforms, batch) and finish(renderer, uniforms): a batch the liquid pass draws reflects its probe.
+export const liquidProbeSupport = {};
+
 // view-transform-shader.js sets apply(source, kind, viewTransform, hasLook), bindLook(renderer, program) and dispose(renderer).
 export const viewTransformShader = {};
 
