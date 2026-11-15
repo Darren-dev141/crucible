@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
 import { worldBounds } from '../src/probe-trace.js';
+import { markLiveGeometry } from '../src/live-geometry.js';
 import { applyFloorSkyVisibility } from '../src/floor-sky-visibility.js';
 import { startGame, lastOperationPerKey, operationsToSend } from '../src/game.js';
 
@@ -154,7 +155,15 @@ test('worldBounds follows a part whose geometry positions array is replaced', ()
   assert.deepEqual(worldBounds(part), { minimum: [-2, -2, -2], maximum: [2, 2, 2] }, 'a new positions array gives new bounds');
 });
 
-const STEP_MILLISECONDS = 1000 / 60;
+test('worldBounds follows live geometry whose positions are rewritten in place', () => {
+  const geometry = markLiveGeometry({ positions: Float32Array.from([-1, -1, -1, 1, 1, 1]) });
+  const part = { geometry, matrix: Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
+  assert.deepEqual(worldBounds(part), { minimum: [-1, -1, -1], maximum: [1, 1, 1] });
+  geometry.positions.set([-3, -3, -3, 3, 3, 3]);
+  assert.deepEqual(worldBounds(part), { minimum: [-3, -3, -3], maximum: [3, 3, 3] }, 'an in-place rewrite gives new bounds');
+});
+
+const STEP_MILLISECONDS =1000 / 60;
 const HOLD_FORWARD = { version: 1, samples: 600, events: [[1, 'keyboard/KeyW', 1]] };
 const EMPTY_RECORDING = { version: 1, samples: 0, events: [] };
 
@@ -215,4 +224,25 @@ test('lastOperationPerKey keeps the last of two operations that write the same f
   const other = { type: 'set-node', id: 'crate', visible: false };
   const elsewhere = { type: 'set-node', id: 'ball', translation: [1, 0, 0] };
   assert.deepEqual(lastOperationPerKey([first, other, elsewhere, second]), [second, other, elsewhere]);
+});
+
+test('an edit made outside the game loop does not stick: the next frame sends the pose again', async () => {
+  const previous = { request: globalThis.requestAnimationFrame, cancel: globalThis.cancelAnimationFrame };
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.cancelAnimationFrame = () => {};
+  try {
+    const renderer = { render() {}, resize() {}, updateParts() {}, replaceParts() {}, dispose() {} };
+    const game = await startGame({}, gameRecipe(), { replay: EMPTY_RECORDING, showStatus: false, createRenderer: () => renderer });
+    const creatureTranslation = () => game.scene.exportRecipe().nodes.find(node => node.id === 'creature').translation;
+    for (let frame = 0; frame < 5; frame++) game.runtime.step(STEP_MILLISECONDS);
+    const gameTranslation = creatureTranslation();
+    game.scene.apply([{ type: 'set-node', id: 'creature', translation: [40, 0, 40] }], { expectedRevision: game.scene.revision });
+    assert.deepEqual(creatureTranslation(), [40, 0, 40], 'the outside edit is applied first');
+    game.runtime.step(STEP_MILLISECONDS);
+    assert.deepEqual(creatureTranslation(), gameTranslation, 'the game pose wins again on the next frame');
+    game.dispose();
+  } finally {
+    globalThis.requestAnimationFrame = previous.request;
+    globalThis.cancelAnimationFrame = previous.cancel;
+  }
 });

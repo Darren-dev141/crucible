@@ -1,5 +1,6 @@
 import { computeIrradianceCoefficients, evaluateIrradiance } from './environment.js';
 import { createTracer } from './ray-query.js';
+import { isLiveGeometry } from './live-geometry.js';
 import {
   MAX_BAKE_PARTS, averageMapColor, buildWorld, createDirectIrradiance, createGatherer, emittedRadiance, hitNormal, normalizeLights, sceneScale, validatePart, withReach,
 } from './light-bake.js';
@@ -171,10 +172,11 @@ export function normalizeProbeList(list) {
 
 // A part keeps its bounds while its geometry and matrix stay the same, so a pose edit measures only the parts that moved.
 // The key is the identity of the positions array plus the matrix values: replacing the array is seen, editing the numbers
-// inside the same array in place is not supported (scene geometry is replaced, never edited in place).
+// inside the same array in place is not seen, so live geometry (cloth, rewritten in place) is never cached.
 const worldBoundsCache = new WeakMap();
 
 export function worldBounds(part) {
+  if (isLiveGeometry(part.geometry)) return measureWorldBounds(part);
   const cached = worldBoundsCache.get(part);
   if (cached && cached.positions === part.geometry.positions && cached.matrix.every((value, index) => value === part.matrix[index])) {
     return { minimum: [...cached.bounds.minimum], maximum: [...cached.bounds.maximum] };
