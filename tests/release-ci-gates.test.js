@@ -206,7 +206,7 @@ test('the 15 browser tests launch through the shared launcher and skip through t
   for (const name of MIGRATED_BROWSER_TESTS) {
     const source = readText(`tests/${name}.test.js`);
     assert.doesNotMatch(source, /chromium\.launch\(/, `${name} launches Chromium by itself`);
-    assert.doesNotMatch(source, /context\.skip\(/, `${name} skips without the CI guard`);
+    assert.doesNotMatch(source, /\.skip\(/, `${name} skips without the CI guard`);
     assert.match(source, /launchChrome\(chromium\)/, name);
   }
 });
