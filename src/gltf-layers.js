@@ -1,5 +1,5 @@
 // Reads and writes the glTF material extensions that map onto the material layers of material-layers.js.
-import { MATERIAL_LAYER_DEFAULTS, validateMaterialLayers } from './material-layers.js';
+import { MATERIAL_LAYER_DEFAULTS, MATERIAL_LAYER_SCALAR_RANGES, validateMaterialLayers } from './material-layers.js';
 
 export const GLTF_LAYER_EXTENSIONS = Object.freeze([
   'KHR_materials_clearcoat',
@@ -47,6 +47,25 @@ export function layerTextureReferences(definition) {
   return references;
 }
 
+const MAXIMUM_IOR = MATERIAL_LAYER_SCALAR_RANGES.ior[1];
+
+// glTF allows any ior of 1 or more (exporters write 1000 for a surface that reflects like a mirror), so a high value is kept at the top of the range instead of refusing the file.
+function isIorAboveRange(extension) {
+  return typeof extension?.ior === 'number' && extension.ior > MAXIMUM_IOR;
+}
+
+/** One warning per material whose KHR_materials_ior is above what the renderers support and was kept at the top of the range. */
+export function clampedIorWarnings(document) {
+  const warnings = [];
+  (document.materials ?? []).forEach((definition, index) => {
+    const extension = definition?.extensions?.KHR_materials_ior;
+    if (!isIorAboveRange(extension)) return;
+    const label = typeof definition.name === 'string' && definition.name ? `"${definition.name.slice(0, 64)}" (material ${index})` : `material ${index}`;
+    warnings.push(`The ior of ${label} is ${extension.ior}; it was set to ${MAXIMUM_IOR}, the highest the renderers support.`);
+  });
+  return warnings;
+}
+
 /** Layer fields of one glTF material definition, validated, as a plain object to spread onto a material. */
 export function materialLayersFromGltf(definition) {
   const layers = {};
@@ -57,6 +76,7 @@ export function materialLayersFromGltf(definition) {
       if (extension[property] !== undefined) layers[field] = extension[property];
     }
   }
+  if (layers.ior > MAXIMUM_IOR) layers.ior = MAXIMUM_IOR;
   validateMaterialLayers(layers);
   return layers;
 }
