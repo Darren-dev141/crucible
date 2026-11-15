@@ -169,7 +169,20 @@ export function normalizeProbeList(list) {
   });
 }
 
+// A part keeps its bounds while its geometry and matrix stay the same, so a pose edit measures only the parts that moved.
+const worldBoundsCache = new WeakMap();
+
 export function worldBounds(part) {
+  const cached = worldBoundsCache.get(part);
+  if (cached && cached.positions === part.geometry.positions && cached.matrix.every((value, index) => value === part.matrix[index])) {
+    return { minimum: [...cached.bounds.minimum], maximum: [...cached.bounds.maximum] };
+  }
+  const bounds = measureWorldBounds(part);
+  worldBoundsCache.set(part, { positions: part.geometry.positions, matrix: Float32Array.from(part.matrix), bounds });
+  return { minimum: [...bounds.minimum], maximum: [...bounds.maximum] };
+}
+
+function measureWorldBounds(part) {
   const { positions } = part.geometry;
   const { matrix } = part;
   const [xx, xy, xz, , yx, yy, yz, , zx, zy, zz, , tx, ty, tz] = matrix;

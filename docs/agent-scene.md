@@ -389,6 +389,7 @@ It rejects an empty command list.
 Each successful application increments the revision once, including a command that retains existing values.
 Stale revisions and invalid commands leave canonical state, published matrices, materials, and the revision unchanged.
 Every command in a batch stages before any command publishes.
+A batch of plain `set-node`, `set-material` and `set-camera` edits does not copy and check the whole recipe a second time, and part bounds are measured again only for parts whose matrix changed, so a pose edit at 961 parts takes about 20 ms instead of about 60 ms. The final recipe is still checked against `maxRecipeBytes`.
 
 Commands run sequentially against a private candidate recipe.
 Final resource references and hierarchy must be valid before publication.
