@@ -114,6 +114,9 @@ export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg',
   if (packs !== undefined && (typeof packs !== 'string' || !isAbsolute(packs))) {
     throw new TypeError('Packs root must be an explicit absolute directory path.');
   }
+  if (typeof ffmpeg !== 'string' || !ffmpeg || (ffmpeg !== 'ffmpeg' && (!isAbsolute(ffmpeg) || !existsSync(ffmpeg)))) {
+    throw new TypeError('FFmpeg must be on PATH or configured with an existing absolute executable path.');
+  }
   if (audio !== undefined) {
     createAudioLibrary(audio);
   }
