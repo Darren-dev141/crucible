@@ -878,6 +878,7 @@ export class CrucibleRenderer {
   // The second half of construction, which reads the link results. Reading a result waits for the driver, so a page that
   // builds a heavy renderer passes deferProgramLink and awaits programsReady() instead of freezing for the whole compile.
   finishConstruction() {
+    if (this.disposed || !this.pendingConstruction) return;
     const { pending, parts, environment } = this.pendingConstruction;
     this.pendingConstruction = null;
     const benchmark = this.benchmark;
@@ -925,12 +926,13 @@ export class CrucibleRenderer {
 
   /** Resolves once every program started by the constructor has linked, polling without blocking the main thread, then finishes construction. Needs deferProgramLink. */
   async programsReady() {
-    if (!this.pendingConstruction) return;
+    if (this.disposed || !this.pendingConstruction) return;
     const context = this.context;
     const parallelCompile = context.getExtension('KHR_parallel_shader_compile');
     const { pending } = this.pendingConstruction;
     const programs = [...Object.values(pending), ...(this.pendingEnvironmentPrograms?.values() ?? [])].map(started => started.program);
-    while (parallelCompile && programs.some(program => !context.getProgramParameter(program, parallelCompile.COMPLETION_STATUS_KHR))) {
+    // A renderer disposed during the wait has deleted these programs, which would never report complete.
+    while (!this.disposed && parallelCompile && programs.some(program => !context.getProgramParameter(program, parallelCompile.COMPLETION_STATUS_KHR))) {
       await new Promise(resolve => setTimeout(resolve, 8));
     }
     this.finishConstruction();
@@ -946,6 +948,7 @@ export class CrucibleRenderer {
    */
   async prepareFrame(frame, { timeoutMilliseconds = 6000 } = {}) {
     await this.programsReady();
+    if (this.disposed) return false;
     const context = this.context;
     const deadline = performance.now() + timeoutMilliseconds;
     setPreparing(context, true);
@@ -1910,6 +1913,8 @@ export class CrucibleRenderer {
   }
 
   resize() {
+    // A lost context answers every parameter query with null, so there is no size limit to plan against; the context restore path rebuilds the targets.
+    if (this.context.isContextLost()) return;
     const plan = planRenderSize({ width: Math.max(1, this.canvas.clientWidth), height: Math.max(1, this.canvas.clientHeight), pixelRatio: this.pixelRatio, samples: this.samples, memoryBudgetMiB: this.memoryBudgetMiB, geometryBytes: this.geometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !this.benchmark, depth: this.depth, maximumSize: Math.min(this.context.getParameter(this.context.MAX_RENDERBUFFER_SIZE), this.context.getParameter(this.context.MAX_TEXTURE_SIZE)) });
     const { width, height } = plan;
     this.memoryPlan = plan;
@@ -2812,7 +2817,21 @@ export class CrucibleRenderer {
     context.activeTexture(context.TEXTURE0);
   }
 
+  // Programs and shaders that deferProgramLink started and finishConstruction has not yet taken over.
+  releasePendingConstruction() {
+    const context = this.context;
+    const started = [...Object.values(this.pendingConstruction?.pending ?? {}), ...(this.pendingEnvironmentPrograms?.values() ?? [])];
+    for (const { program, shaders } of started) {
+      shaders.forEach((shader) => context.deleteShader(shader));
+      context.deleteProgram(program);
+    }
+    this.pendingConstruction = null;
+    this.pendingEnvironmentPrograms = null;
+  }
+
   dispose() {
+    this.disposed = true;
+    this.releasePendingConstruction();
     this.fogFieldTexture?.dispose();
     this.releaseFrameTargets();
     this.shadowCascades?.dispose(this.context, this.renderTargets);
