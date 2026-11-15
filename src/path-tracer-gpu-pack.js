@@ -13,7 +13,7 @@ const TRIANGLE_BYTES = TRIANGLE_TEXELS * 16;
 /**
  * How many triangles a device can hold in the tables above. The triangle table is the largest: TRIANGLE_TEXELS RGBA32F
  * texels each, DATA_TEXTURE_WIDTH to a row, so a WebGL2 texture of `maximumTextureSize` rows holds
- * maximumTextureSize * DATA_TEXTURE_WIDTH / TRIANGLE_TEXELS triangles (3,728,270 at the usual 16384). The BVH table needs
+ * maximumTextureSize * DATA_TEXTURE_WIDTH / TRIANGLE_TEXELS triangles (3,355,443 at the usual 16384). The BVH table needs
  * four texels a triangle at most and the other tables stay small, so the triangle table decides. A WebGPU storage buffer of
  * `maximumBufferBytes` (and `maximumBufferSize`, when given) holds that many whole table rows of triangles. Pass what the device reports; the result is also capped
  * at `ceiling`, the most the tracers hold on any device (MAX_GPU_TRACE_TRIANGLES).
@@ -57,16 +57,52 @@ export function packNodes(bvh) {
   return table;
 }
 
-/** Nine texels per triangle in leaf order: corner and material, two edges, three normals with u, three colours with v. */
-export function packTriangles(scene) {
-  const { positions, normals, uvs, colors, indices, triangleMaterial, bvh } = scene;
+// Material texel 5, third channel: a bit per map that is set when the map reads TEXCOORD_1 (bit 0 base colour, 1 normal, 2 surface, 3 emissive).
+export const UV_SET_SLOT = 22;
+const GPU_MAP_FIELDS = ['texture', 'normalTexture', 'surfaceTexture', 'emissiveTexture'];
+const GPU_MAP_UV_BITS = [['texture', 1], ['normalTexture', 2], ['surfaceTexture', 4], ['emissiveTexture', 8]];
+
+/** The bit mask of the maps of a material that read TEXCOORD_1; 0 when every map reads TEXCOORD_0. */
+export function materialUvSetMask(material) {
+  let mask = 0;
+  for (const [field, bit] of GPU_MAP_UV_BITS) {
+    if (material[field]?.uvSet === 1) mask |= bit;
+  }
+  return mask;
+}
+
+/**
+ * The UV set the native v1 record carries in its single UV pair per corner: the base colour's set, or the first map's when there is
+ * no base colour. The native export, its fallback and the native light bake read that pair for every map of the material.
+ */
+export function materialUvSet(material) {
+  const first = GPU_MAP_FIELDS.map(field => material[field]).find(Boolean);
+  return first?.uvSet === 1 ? 1 : 0;
+}
+
+/** The triangle record of the native Cook tracer: nine texels, no second UV set. Cook reads it with a fixed stride of 36 floats. */
+export const NATIVE_TRIANGLE_TEXELS = 9;
+
+/**
+ * Nine texels per triangle by default, the record the native tracer reads (Cook walks it with a fixed stride). That record keeps its
+ * old meaning: the UV pair in the normal and colour texels is the set `materialUvSet` names for the triangle's material. The WebGL and WebGPU
+ * tracers pass `{ secondUvSet: true }` for ten texels per triangle in leaf order: corner and material, two edges, three normals with u, three colours with v, then the second
+ * UV set. TEXCOORD_0 always sits in the w of the normal and colour texels. TEXCOORD_1 sits in texel 9 (u and v of the first two corners)
+ * and in the w of the two edge texels (u and v of the third corner), which no kernel reads as geometry. A scene without a second set
+ * leaves those floats at 0 and no material asks for them.
+ */
+export function packTriangles(scene, { secondUvSet = false } = {}) {
+  const { positions, normals, uvs, uvs1, colors, indices, triangleMaterial, bvh } = scene;
   const order = bvh.triangleOrder;
-  const table = createTable(order.length * TRIANGLE_TEXELS);
+  const nativeSecondSetMaterials = !secondUvSet && uvs1 ? scene.materials?.map(materialUvSet) : null;
+  const texelsPerTriangle = secondUvSet ? TRIANGLE_TEXELS : NATIVE_TRIANGLE_TEXELS;
+  const table = createTable(order.length * texelsPerTriangle);
   const { data } = table;
   for (let slot = 0; slot < order.length; slot++) {
     const triangle = order[slot];
-    const base = slot * TRIANGLE_TEXELS * 4;
+    const base = slot * texelsPerTriangle * 4;
     const corners = [indices[triangle * 3], indices[triangle * 3 + 1], indices[triangle * 3 + 2]];
+    const uvSource = nativeSecondSetMaterials?.[triangleMaterial[triangle]] === 1 ? uvs1 : uvs;
     for (let axis = 0; axis < 3; axis++) {
       const origin = positions[corners[0] * 3 + axis];
       data[base + axis] = origin;
@@ -80,11 +116,21 @@ export function packTriangles(scene) {
         data[base + (3 + corner) * 4 + axis] = normals[vertex * 3 + axis];
         data[base + (6 + corner) * 4 + axis] = colors[vertex * 3 + axis];
       }
-      data[base + (3 + corner) * 4 + 3] = uvs[vertex * 2];
-      data[base + (6 + corner) * 4 + 3] = uvs[vertex * 2 + 1];
+      data[base + (3 + corner) * 4 + 3] = uvSource[vertex * 2];
+      data[base + (6 + corner) * 4 + 3] = uvSource[vertex * 2 + 1];
     }
+    if (secondUvSet && uvs1) packSecondUvSet(data, base, uvs1, corners);
   }
   return table;
+}
+
+function packSecondUvSet(data, base, uvs1, corners) {
+  data[base + 9 * 4] = uvs1[corners[0] * 2];
+  data[base + 9 * 4 + 1] = uvs1[corners[0] * 2 + 1];
+  data[base + 9 * 4 + 2] = uvs1[corners[1] * 2];
+  data[base + 9 * 4 + 3] = uvs1[corners[1] * 2 + 1];
+  data[base + 4 + 3] = uvs1[corners[2] * 2];
+  data[base + 8 + 3] = uvs1[corners[2] * 2 + 1];
 }
 
 /** Shelf-packs the distinct material textures into one RGBA8 atlas; returns where each one went. */
@@ -165,6 +211,7 @@ export function packMaterials(materials, atlas, shadowOnlyParts = null) {
       data[base + 17 + fieldIndex] = textureFlags(texture);
       data.set([place.x, place.y, texture.width, texture.height], base + (6 + fieldIndex) * 4);
     });
+    data[base + UV_SET_SLOT] = materialUvSetMask(material);
     if (shadowOnlyParts?.[index] === 1) data[base + SHADOW_ONLY_SLOT] = 1;
   });
   return table;

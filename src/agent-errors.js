@@ -21,3 +21,8 @@ export function sessionProblem(requestedSessionId, activeSessionId, { openSessio
 
 /** How many scenes one server keeps open, and the resident geometry bytes they may hold together. */
 export const SCENE_STORE_LIMITS = Object.freeze({ maxOpenScenes: 4, maxOpenSceneBytes: 96 * 1024 * 1024 });
+
+/** A request made against an old revision: names both revisions, so the caller retries with the current one instead of guessing. */
+export function staleRevisionMessage(subject, expectedRevision, currentRevision) {
+  return `Stale revision for ${subject}: expectedRevision ${expectedRevision} is not the current revision ${currentRevision}. Pass expectedRevision ${currentRevision}; a failed scene_apply leaves the revision unchanged, and scene_inspect returns the current one.`;
+}

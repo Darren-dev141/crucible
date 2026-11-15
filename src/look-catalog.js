@@ -10,6 +10,8 @@ export const BUNDLED_CUBE_LOOK_NAMES = Object.freeze(['teal-orange', 'noir']);
 
 export const CATALOG_FILE_ID = /^[a-f0-9]{64}$/;
 export const MAXIMUM_CATALOG_LOOK_BYTES = 4 * 1024 * 1024;
+/** Large enough for the 2k Radiance files Poly Haven ships (about 5 to 7 MiB). */
+export const MAXIMUM_CATALOG_ENVIRONMENT_BYTES = 8 * 1024 * 1024;
 
 const environmentSources = new Map();
 let registrationCount = 0;

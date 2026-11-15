@@ -171,6 +171,38 @@ function runCleanups(cleanups) {
   while (cleanups.length > 0) cleanups.pop()();
 }
 
+function operationKey(operation) {
+  return `${operation.type}:${operation.id}:${Object.keys(operation).join(',')}`;
+}
+
+/**
+ * Two operations of one frame that write the same fields of the same node leave only the later one standing, so the earlier one is
+ * dropped before a frame is compared with the last one sent: otherwise the earlier write would be compared with what the later one sent.
+ */
+export function lastOperationPerKey(operations) {
+  const byKey = new Map();
+  for (const operation of operations) byKey.set(operationKey(operation), operation);
+  return [...byKey.values()];
+}
+
+function operationTarget(operation) {
+  return `${operation.type}:${operation.id}`;
+}
+
+/**
+ * The operations a frame must send. When any operation for a node changed, every operation for that node is sent again, in frame order:
+ * two operations that write overlapping fields with different field sets resolve by order, so sending only one of them could let an
+ * older write win over a newer one.
+ */
+export function operationsToSend(operations, lastSentOperations) {
+  const candidates = lastOperationPerKey(operations);
+  const changedTargets = new Set();
+  for (const operation of candidates) {
+    if (lastSentOperations.get(operationKey(operation)) !== JSON.stringify(operation)) changedTargets.add(operationTarget(operation));
+  }
+  return candidates.filter(operation => changedTargets.has(operationTarget(operation)));
+}
+
 async function buildGame(canvas, recipe, { replay, showStatus = true, assets: providedAssets, assetUrls, physicsUrl, createRenderer = (...rendererArguments) => new CrucibleRenderer(...rendererArguments) }, cleanups) {
   const setup = recipe.game;
   if (!setup) throw new Error('startGame needs a recipe with a game section. Add one with the set-game operation.');
@@ -256,6 +288,15 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
   const status = showStatus && rules ? createStatusLine(canvas) : null;
   if (status) cleanups.push(() => status.remove());
 
+  // A frame that sends the same pose as the last one changes nothing, so it skips scene.apply, which costs time in proportion
+  // to the scene. Anything else that edited the scene since (a restart, a script) bumps the revision and sends every pose again.
+  const lastSentOperations = new Map();
+  let lastAppliedRevision = -1;
+  function operationsChangedSinceLastFrame(operations) {
+    if (scene.revision !== lastAppliedRevision) lastSentOperations.clear();
+    return operationsToSend(operations, lastSentOperations);
+  }
+
   const sceneSystem = {
     name: 'scene',
     update(deltaSeconds, context) {
@@ -269,7 +310,12 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
         shownNodes.set(part.id, part.visible);
         operations.push({ type: 'set-node', id: part.id, visible: part.visible });
       }
-      scene.apply(operations, { expectedRevision: scene.revision });
+      const changedOperations = operationsChangedSinceLastFrame(operations);
+      if (changedOperations.length > 0) {
+        scene.apply(changedOperations, { expectedRevision: scene.revision });
+        lastAppliedRevision = scene.revision;
+        for (const operation of changedOperations) lastSentOperations.set(operationKey(operation), JSON.stringify(operation));
+      }
       if (hasPosedAssets) {
         for (const animation of animatedCharacters) if (animation.assetNode) scene.setAssetPose(animation.assetNode, animation.assetPose());
         scene.sampleMotion(context.elapsedSeconds % 3600);

@@ -139,16 +139,17 @@ export async function loadPack(folder, { packageVersion, label = basename(String
         packFiles.push({ directory, filename: item.file, assetId: result.assetId, metadata: describeCatalogFile(`${manifest.name}/${item.file}`, result) });
         items[kind].push({ id: item.id, assetId: result.assetId });
       }
-      if (item.preview) await readFileForKind(directory, item.preview, label, `${field}.preview`, 'images');
+      if (item.preview) await readFileForKind(directory, item.preview, label, `${field}.preview`, 'images', { enforceImageLimits: false });
     }
   }
   return Object.freeze({ name: manifest.name, folder: basename(directory), version: manifest.version, license: manifest.license, author: manifest.author, description: manifest.description, items, json, files: packFiles });
 }
 
-async function readFileForKind(directory, file, label, field, kind) {
+// A recipe preview is a picture for people, never a sequence frame, so it skips the frame pixel limits.
+async function readFileForKind(directory, file, label, field, kind, readOptions) {
   let result;
   try {
-    result = await readCatalogFile(directory, file);
+    result = await readCatalogFile(directory, file, readOptions);
   } catch (error) {
     throw invalidField(`pack "${label}" ${file}`, `${field}: ${error.message}`, 'a valid file of the listed kind (self-contained GLB, PNG/JPEG/WebP, Radiance .hdr, 3D .cube)');
   }

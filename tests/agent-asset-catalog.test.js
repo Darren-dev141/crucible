@@ -245,3 +245,58 @@ test('size() equals read().length for a pack file entry of a GLB with sibling im
   const stored = await packCatalog.read(metadata.assetId);
   assert.equal(await packCatalog.size(metadata.assetId), stored.length);
 });
+
+function pngHeaderOnly(width, height) {
+  const header = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header);
+  header.writeUInt32BE(13, 8);
+  header.write('IHDR', 12, 'latin1');
+  header.writeUInt32BE(width, 16);
+  header.writeUInt32BE(height, 20);
+  header[24] = 8;
+  return header;
+}
+
+test('an .hdr over 8 MiB and a .cube over 4 MiB are skipped with their own advice and the other assets stay listed (#1313)', async context => {
+  const { directory } = await fixture(context);
+  const mebibyte = 1024 * 1024;
+  const radiance = await readFile(new URL('../assets/looks/studio-softbox.hdr', import.meta.url));
+  await writeFile(join(directory, 'huge.hdr'), Buffer.concat([radiance, Buffer.alloc(8 * mebibyte)]));
+  await writeFile(join(directory, 'huge.cube'), Buffer.concat([Buffer.from('LUT_3D_SIZE 2\n'), Buffer.alloc(4 * mebibyte)]));
+  await writeFile(join(directory, 'room.hdr'), radiance);
+  const listing = (await createAgentAssetCatalog(directory)).list();
+  assert.deepEqual(listing.assets.map(asset => asset.name).sort(), ['cube.glb', 'room.hdr']);
+  assert.deepEqual(listing.skipped.map(entry => entry.name).sort(), ['huge.cube', 'huge.hdr']);
+  const reasons = Object.fromEntries(listing.skipped.map(entry => [entry.name, entry.reason]));
+  assert.match(reasons['huge.hdr'], /at most 8 MiB; this one is 8\.\d MiB\. Use a 2k or smaller HDRI\./);
+  assert.doesNotMatch(reasons['huge.hdr'], /LUT/);
+  assert.match(reasons['huge.cube'], /at most 4 MiB; this one is 4\.\d MiB\. Use a smaller LUT/);
+  assert.doesNotMatch(reasons['huge.cube'], /HDRI/);
+});
+
+test('a 2k HDRI of the size Poly Haven ships is listed, so the advice in the message is a size the catalog accepts (#1313)', async context => {
+  const { directory } = await fixture(context);
+  const radiance = await readFile(new URL('../assets/looks/studio-softbox.hdr', import.meta.url));
+  const studioSmall2kBytes = 6673807;
+  await writeFile(join(directory, 'studio-2k.hdr'), Buffer.concat([radiance, Buffer.alloc(studioSmall2kBytes - radiance.length)]));
+  const listing = (await createAgentAssetCatalog(directory)).list();
+  assert.ok(listing.assets.some(asset => asset.name === 'studio-2k.hdr' && asset.kind === 'environment'));
+  assert.equal('skipped' in listing, false);
+});
+
+test('a catalog with nothing skipped has no skipped field (#1313)', async context => {
+  const { directory } = await fixture(context);
+  assert.equal('skipped' in (await createAgentAssetCatalog(directory)).list(), false);
+});
+
+test('an image whose header declares a frame over the sequence limits is skipped before any decode (#1313)', async context => {
+  const { directory } = await fixture(context);
+  await writeFile(join(directory, 'huge.png'), pngHeaderOnly(16000, 16000));
+  await writeFile(join(directory, 'wide.png'), pngHeaderOnly(1025, 8));
+  await writeFile(join(directory, 'ok.png'), pngHeaderOnly(1024, 1024));
+  const listing = (await createAgentAssetCatalog(directory)).list();
+  assert.deepEqual(listing.assets.map(asset => asset.name).sort(), ['cube.glb', 'ok.png']);
+  const reasons = Object.fromEntries(listing.skipped.map(entry => [entry.name, entry.reason]));
+  assert.match(reasons['huge.png'], /16000x16000; frames are at most 1024 pixels on a side/);
+  assert.match(reasons['wide.png'], /1025x8; frames are at most 1024/);
+});

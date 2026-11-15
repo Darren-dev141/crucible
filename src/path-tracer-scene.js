@@ -16,7 +16,7 @@ import { liftRankedTriangles } from './flush-lift.js';
 
 export const MAX_TRACE_TRIANGLES = 400_000;
 // The most triangles the WebGL2 and WebGPU tracers are ever asked to hold, whatever the device could address: the triangle
-// table is 144 bytes a triangle, so this is 288 MB of texture or buffer, plus the BVH built in JavaScript. A device with
+// table is 160 bytes a triangle, so this is 320 MB of texture or buffer, plus the BVH built in JavaScript. A device with
 // smaller limits lowers it (`gpuTriangleCapacity` in path-tracer-gpu-pack.js); the option `gpuTriangleLimit` carries the result.
 export const MAX_GPU_TRACE_TRIANGLES = 2_000_000;
 // The bound a scene built for the native "cycles" tracer may ask for with `options.maximumTriangles` (unique triangles of an
@@ -183,6 +183,8 @@ export function resolveTexture(descriptor) {
     repeat: wrapUCode === WRAP_REPEAT && wrapVCode === WRAP_REPEAT,
     wrapU: wrapUCode,
     wrapV: wrapVCode,
+    // The UV set the map reads: 1 is TEXCOORD_1 (geometry.lightUvs), anything else is TEXCOORD_0 (geometry.uvs).
+    uvSet: descriptor.uvChannel === 1 ? 1 : 0,
   };
 }
 
@@ -247,12 +249,36 @@ function validateGeometry(part, geometry) {
     if (!(geometry.indices[slot] < vertexCount)) throw new RangeError(`${label} has an index past its last vertex.`);
   }
   if (geometry.uvs && geometry.uvs.length !== vertexCount * 2) throw new RangeError(`${label} needs one UV pair for every position.`);
+  if (geometry.lightUvs && geometry.lightUvs.length !== vertexCount * 2) throw new RangeError(`${label} needs one lightUvs pair (TEXCOORD_1) for every position.`);
   if (geometry.colors && geometry.colors.length !== vertexCount * 3) throw new RangeError(`${label} needs one colour for every position.`);
+}
+
+// The maps resolveMaterial reads: the emissive map only while the material emits, the clearcoat map among the layer maps.
+function tracedMapDescriptors(material) {
+  return [
+    material.map,
+    material.normalMap,
+    material.metallicRoughnessMap,
+    material.transmissionMap,
+    (material.emission ?? 0) > 0 ? material.emissiveMap : null,
+    material.layerMaps?.clearcoatTexture,
+  ];
+}
+
+function namesSecondUvSet(material) {
+  return tracedMapDescriptors(material).some(descriptor => descriptor?.uvChannel === 1);
+}
+
+function requireSecondUvSetGeometry(part, geometry) {
+  if (namesSecondUvSet(part.material ?? {}) && !geometry.lightUvs) {
+    throw new RangeError(`${partLabel(part)} has a map with uvChannel 1 but its geometry has no lightUvs. Set geometry.lightUvs (TEXCOORD_1), or use uvChannel 0.`);
+  }
 }
 
 function validatePart(part, geometry) {
   validateMatrix(part);
   validateGeometry(part, geometry);
+  requireSecondUvSetGeometry(part, geometry);
 }
 
 /**
@@ -269,11 +295,16 @@ function traceGeometry(part) {
   return boxProjectedGeometry(geometry, columnLengths(part.matrix ?? IDENTITY_MATRIX), boxMapScale, boxMapAxis);
 }
 
-function allocateWorld(vertexTotal, indexTotal) {
+function allocateWorld(vertexTotal, indexTotal, withSecondUvSet = false) {
+  const secondUvSet = withSecondUvSet ? new Float32Array(vertexTotal * 2) : null;
   return {
     positions: new Float32Array(vertexTotal * 3),
     normals: new Float32Array(vertexTotal * 3),
     uvs: new Float32Array(vertexTotal * 2),
+    // The second UV set, only when a part has one; a part without it leaves zeros, the (0, 0) texel.
+    uvs1: secondUvSet,
+    // The same array under the name the native packer reads (`uv1s`), so a native trace samples TEXCOORD_1 too.
+    ...(secondUvSet ? { uv1s: secondUvSet } : {}),
     colors: new Float32Array(vertexTotal * 3).fill(1),
     indices: new Uint32Array(indexTotal),
     triangleMaterial: new Uint32Array(indexTotal / 3),
@@ -305,6 +336,7 @@ function writeWorldPart(world, part, geometry, partIndex, vertexOffset, triangle
     world.normals[target + 2] = worldZ / length;
   }
   if (geometry.uvs) world.uvs.set(geometry.uvs, (vertexOffset) * 2);
+  if (geometry.lightUvs && world.uvs1) world.uvs1.set(geometry.lightUvs, vertexOffset * 2);
   if (geometry.colors) world.colors.set(geometry.colors, vertexOffset * 3);
   // A mirrored part keeps outward vertex normals, so its triangles swap their last two corners to keep the winding
   // (and the cross-product normal) outward too.
@@ -379,7 +411,7 @@ function flattenParts(parts, geometries = parts.map(traceGeometry), limits = res
   if (indexTotal / 3 > limits.unique) {
     throw new RangeError(flattenedLimitMessage(limits, indexTotal / 3));
   }
-  const world = allocateWorld(vertexTotal, indexTotal);
+  const world = allocateWorld(vertexTotal, indexTotal, geometries.some(geometry => geometry.lightUvs));
   let vertexOffset = 0;
   let triangleOffset = 0;
   parts.forEach((part, partIndex) => {
@@ -667,6 +699,7 @@ function measureInstancedParts(parts, geometries) {
   parts.forEach((part, index) => {
     const geometry = geometries[index];
     validateMatrix(part);
+    requireSecondUvSetGeometry(part, geometry);
     totalTriangles += geometry.indices.length / 3;
     if (sharesAuthoredGeometry(part, geometry)) {
       if (seen.has(geometry)) return;
@@ -696,16 +729,23 @@ function requireInstancedCaps(parts, { uniqueGeometries, uniqueTriangles, totalT
 
 // A part that cannot share its geometry is moved into world space once and traced with an identity matrix.
 function bakeWorldGeometry(part, geometry) {
-  const world = allocateWorld(geometry.positions.length / 3, geometry.indices.length);
+  const world = allocateWorld(geometry.positions.length / 3, geometry.indices.length, Boolean(geometry.lightUvs));
   writeWorldPart(world, part, geometry, 0, 0, 0);
   delete world.triangleMaterial;
   return world;
 }
 
-function instanceFor(part, geometry, partIndex, material) {
+// The native packer reads the second UV set from `uv1s`. One view per shared geometry keeps copies sharing one geometry.
+function nativeGeometryView(geometry, views) {
+  if (!geometry.lightUvs) return geometry;
+  if (!views.has(geometry)) views.set(geometry, { ...geometry, uv1s: geometry.lightUvs });
+  return views.get(geometry);
+}
+
+function instanceFor(part, geometry, partIndex, material, views) {
   const shared = sharesAuthoredGeometry(part, geometry);
   const instance = {
-    geometry: shared ? geometry : bakeWorldGeometry(part, geometry),
+    geometry: shared ? nativeGeometryView(geometry, views) : bakeWorldGeometry(part, geometry),
     matrix: shared ? part.matrix ?? IDENTITY_MATRIX : IDENTITY_MATRIX,
     materialIndex: partIndex,
     objectId: partIndex,
@@ -759,7 +799,8 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
   requireInstancedCaps(parts, measureInstancedParts(parts, geometries), limits);
   const traceMaterials = parts.map(part => resolveMaterial(part.material ?? {}));
   const materials = parts.map((part, index) => ({ ...(part.material ?? {}), ...traceMaterials[index] }));
-  const instances = parts.map((part, index) => instanceFor(part, geometries[index], index, materials[index]));
+  const geometryViews = new Map();
+  const instances = parts.map((part, index) => instanceFor(part, geometries[index], index, materials[index], geometryViews));
   const extent = instancedExtent(instances);
   return {
     instances,

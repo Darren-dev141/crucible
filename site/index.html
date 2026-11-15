@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" /><script>try{var c=localStorage.getItem("crucible-color");if(c==="light"||c==="dark")document.documentElement.dataset.color=c}catch(e){}</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f8f7f1" media="(prefers-color-scheme: light)" /><meta name="theme-color" content="#17161a" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f8f7f1" />
     <meta name="description" content="Crucible is a 3D engine that AI agents drive: the Glaze rasterizer on WebGL2, the Cook path tracer on CPU and WebGL2 (Vulkan with the optional Cook package), GLB, PNG and MP4 export, and an MCP server. Install with npm i @codepawlhq/crucible." />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="crucible" />
@@ -85,13 +85,12 @@
           <a href="/docs.html#getting-started" data-icon="book">Get started</a>
           <a href="https://www.npmjs.com/package/@codepawlhq/crucible"><span class="package-logo package-logo-npm brand-npm" aria-hidden="true"></span>npm</a>
         </div>
+        <p class="rename-note"><a href="/changelog.html">67js is now Crucible: install <code>@codepawlhq/crucible</code></a></p>
       </div>
       <div class="scene-bar">
         <div class="attribution" id="attribution" hidden></div>
-        <div class="credits-panel" id="credits-panel" hidden></div>
         <button class="play-live" id="play-live" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path class="play-icon" d="M8 5.5v13l10-6.5-10-6.5Z"/><circle class="play-wait" cx="12" cy="12" r="8"/></svg><span class="play-label">Play live 3D</span></button>
         <nav class="scene-tabs" id="scene-tabs" aria-label="Scenes"></nav>
-        <button class="credits-toggle" id="credits-toggle" type="button" aria-expanded="false" aria-controls="credits-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/></svg><span class="credits-label">Credits</span></button>
       </div>
     </section>
     <main id="content">
@@ -137,9 +136,9 @@ renderer.render({ eye: [58, 31, 84], target: [-8, 3, -18] });</code></pre>
           <li>PBR materials</li><li>Shadows</li><li>HDR and bloom</li><li>MSAA</li><li>Mesh blend</li><li>Live cloth</li><li>Volumetric fog</li><li>Skinning and morphs</li><li>Physics</li><li>Spume liquid</li><li>Glass and leaf cutouts</li><li>HDRI lighting</li><li>Textured terrain</li><li>Trees and grass</li><li>Vehicles</li><li>GLB import and export</li><li>Cook path tracer</li>
         </ul>
         <div class="gallery">
-          <a class="example is-lead" href="./showcase.html?scene=airport" data-glow="#ff6a2b"><span class="work-media"><img src="./previews/showcase-airport.webp" alt="Airport ramp, rendered by Crucible" width="1280" height="720" loading="lazy" /></span><span class="work-title"><span class="work-index" aria-hidden="true">01</span><span class="work-name">Airport ramp</span><span class="work-date">A widebody at the stand with its service trucks</span></span></a>
-          <a class="example" href="./showcase.html?scene=datacenter" data-glow="#3b82f6"><span class="work-media"><img src="./previews/showcase-datacenter.webp" alt="AI data center, rendered by Crucible" width="1280" height="720" loading="lazy" /></span><span class="work-title"><span class="work-index" aria-hidden="true">02</span><span class="work-name">AI data center</span><span class="work-date">Rows of racks, power and cooling, cut open</span></span></a>
-          <a class="example" href="./showcase.html?scene=port" data-glow="#f59e0b"><span class="work-media"><img src="./previews/showcase-port.webp" alt="Container port, rendered by Crucible" width="1280" height="720" loading="lazy" /></span><span class="work-title"><span class="work-index" aria-hidden="true">03</span><span class="work-name">Container port</span><span class="work-date">A ship at berth under the quay cranes</span></span></a>
+          <a class="example is-lead" href="./showcase.html?scene=airport"><span class="work-media"><img src="./previews/showcase-airport.webp" alt="Airport ramp, rendered by Crucible" width="1280" height="720" loading="lazy" /></span><span class="work-title"><span class="work-name">Airport ramp</span><span class="work-date">A widebody at the stand with its service trucks</span></span></a>
+          <a class="example" href="./showcase.html?scene=datacenter"><span class="work-media"><img src="./previews/showcase-datacenter.webp" alt="AI data center, rendered by Crucible" width="1280" height="720" loading="lazy" /></span><span class="work-title"><span class="work-name">AI data center</span><span class="work-date">Rows of racks, power and cooling, cut open</span></span></a>
+          <a class="example" href="./showcase.html?scene=port"><span class="work-media"><img src="./previews/showcase-port.webp" alt="Container port, rendered by Crucible" width="1280" height="720" loading="lazy" /></span><span class="work-title"><span class="work-name">Container port</span><span class="work-date">A ship at berth under the quay cranes</span></span></a>
         </div>
       </section>
 

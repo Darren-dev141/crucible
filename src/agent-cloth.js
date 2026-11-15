@@ -5,6 +5,7 @@ import { normalizeForceFields } from './force-fields.js';
 import { BEND_MODELS } from './cloth-bending.js';
 import { bakeCloth, sampleClothFrames, weldVertices, CLOTH_LIMITS } from './cloth.js';
 import { recomputeNormals } from './geometry-normals.js';
+import { markLiveGeometry, isLiveGeometry } from './live-geometry.js';
 import { invalidField } from './field-error.js';
 import { bakingContext, boundedArray, finiteNumber, knownKeys, rootNodeWithGeometry, vectorOfThree } from './agent-recipe-checks.js';
 import { boneNodeId, boneTails, restWorldMatrix } from './rig.js';
@@ -435,17 +436,17 @@ function bakeSheet(sheet, cloth, node, geometry, colliders, frameCount, movingSe
 }
 
 // One geometry per sheet whose arrays every seek rewrites, so a renderer keeps the same part and only uploads new values.
-const liveGeometries = new WeakSet();
+// The marker lives in live-geometry.js so probe-trace can read it without loading the cloth baker.
 
 function liveGeometry(geometry) {
   const live = Object.freeze({ ...geometry, positions: Float32Array.from(geometry.positions), normals: Float32Array.from(geometry.normals) });
-  liveGeometries.add(live);
+  markLiveGeometry(live);
   return live;
 }
 
 /** True for a sheet geometry that every cloth sample rewrites in place; a renderer uploads its positions and normals after a seek. */
 export function isLiveClothGeometry(geometry) {
-  return liveGeometries.has(geometry);
+  return isLiveGeometry(geometry);
 }
 
 function sampleLiveGeometry(baked, time) {

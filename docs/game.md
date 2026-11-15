@@ -75,7 +75,9 @@ const game = await startGame(canvas, recipe, { replay, showStatus: true });
 game.dispose();
 ```
 
-`startGame` loads the scene modules the recipe needs, builds the scene and renderer, and runs input, controller, camera rig and rules as [runtime](runtime.md) systems. Each frame it moves the player node with `set-node`, so a large scene pays a scene update per frame. Not yet in the web build: sound and post effects.
+The `scene` system sends each frame's poses through `scene.apply`, and sends only the poses that differ from the last frame it sent. A game standing still calls `scene.apply` zero times per frame.
+
+`startGame` loads the scene modules the recipe needs, builds the scene and renderer, and runs input, controller, camera rig and rules as [runtime](runtime.md) systems. A frame where a pose changed moves the node with `set-node`, so a large scene pays a scene update on those frames only. Not yet in the web build: sound and post effects.
 
 ## Physics
 

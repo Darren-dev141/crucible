@@ -4,7 +4,9 @@ import test from 'node:test';
 import { createAgentScene } from '../src/agent-scene.js';
 import { normalizeAgentBake } from '../src/agent-bake.js';
 import { BAKE_PRESETS } from '../src/agent-scene-capabilities.js';
-import { closedRoom, closedRoomWithoutBake, lightmapBytes } from './support/agent-bake-rooms.mjs';
+import { closedRoom, closedRoomWithoutBake, lightmapBytes, freezeBakeClockForFile } from './support/agent-bake-rooms.mjs';
+
+freezeBakeClockForFile();
 
 // One baked room for the tests that only read a scene (inspect, parts, bytes) or call an apply that throws. A test that edits a scene makes its own.
 let sharedRoom = null;

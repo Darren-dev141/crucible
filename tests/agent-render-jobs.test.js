@@ -182,7 +182,8 @@ test('cancel acknowledges immediately and blocks output publication after runner
 
 test('deadline aborts a cooperative callback and close detects an uncooperative callback without releasing its lock', async context => {
   const root = await temporary(context);
-  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 10 }, async run({ signal }) {
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 10 }, async run({ signal, startRenderClock }) {
+    startRenderClock();
     await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
     throw signal.reason;
   } });
@@ -637,6 +638,62 @@ test('a path tracer job runs on the cpu unless it asks for the gpu, and film job
   await controller.close();
 });
 
+test('the elapsed deadline starts when rendering starts, so queue wait does not count against it (#1256)', async context => {
+  const root = await temporary(context);
+  // Mocked timers make the clocks deterministic: no wall-clock stall on a shared runner can expire the deadline.
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const queueWaitedPastDeadline = deferred();
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 100, queueWaitMs: 2000 }, async run(argumentsValue) {
+    await queueWaitedPastDeadline.promise;
+    argumentsValue.startRenderClock();
+    return writeImage(argumentsValue);
+  } });
+  const { jobId } = await controller.submit(request());
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  while (controller.status(jobId).state !== 'running') await settle();
+  context.mock.timers.tick(300);
+  assert.equal(controller.status(jobId).state, 'running', 'queue wait past the deadline must not fail the job');
+  queueWaitedPastDeadline.resolve();
+  while (!['completed', 'failed'].includes(controller.status(jobId).state)) await settle();
+  assert.equal(controller.status(jobId).state, 'completed');
+  context.mock.timers.reset();
+  await controller.close();
+});
+
+test('the queue wait must be a finite whole number of milliseconds within the bound (#1256)', async context => {
+  const root = await temporary(context);
+  for (const queueWaitMs of [Number.NaN, -1, 0, 1.5, 5 * 60 * 1000 + 1]) {
+    await assert.rejects(createAgentRenderJobs({ root, limits: { ...limits, queueWaitMs }, async run() {} }), /queueWaitMs must be within 1 and 300000/);
+  }
+});
+
+test('a job that waits past the queue bound fails with its own message (#1256)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 5000, queueWaitMs: 30 }, async run({ signal }) {
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    throw signal.reason;
+  } });
+  const { jobId } = await controller.submit(request());
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.reason, /queue wait deadline/);
+  await controller.close();
+});
+
+test('rendering that outlasts the elapsed deadline after the clock started still fails (#1256)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 40, queueWaitMs: 2000 }, async run({ signal, startRenderClock }) {
+    startRenderClock();
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    throw signal.reason;
+  } });
+  const { jobId } = await controller.submit(request());
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.reason, /elapsed deadline/);
+  await controller.close();
+});
+
 test('the deadline of a traced film covers every frame', () => {
   const renderer = { type: 'pathTracer', maxSeconds: 10 };
   const single = jobDeadlineMs({ frameCount: 1, width: 64, height: 64, renderer });
@@ -809,4 +866,57 @@ test('a job folder that lost only its owner file is healed on restart, and an un
     assert.match(error.message, /Delete that folder by hand/);
     return true;
   });
+});
+
+test('a job waits for the GPU queue as queued, and the elapsed deadline starts only once the card is granted', async context => {
+  const root = await temporary(context);
+  const events = [];
+  const granted = deferred();
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 150 },
+    async acquireGpu() {
+      events.push('wait');
+      await granted.promise;
+      events.push('granted');
+      return () => events.push('released');
+    },
+    async run(argumentsValue) {
+      events.push('run');
+      return writeImage(argumentsValue);
+    } });
+  const { jobId } = await controller.submit(request());
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.equal(controller.status(jobId).state, 'queued');
+  assert.deepEqual(events, ['wait']);
+  granted.resolve();
+  assert.equal((await terminal(controller, jobId)).state, 'completed');
+  assert.deepEqual(events, ['wait', 'granted', 'run', 'released']);
+  await controller.close();
+});
+
+test('cancelling a job that waits for the GPU queue ends it cancelled without running it', async context => {
+  const root = await temporary(context);
+  const events = [];
+  const controller = await createAgentRenderJobs({ root, limits,
+    acquireGpu: signal => new Promise((resolve, reject) => {
+      events.push('wait');
+      signal.addEventListener('abort', () => reject(new Error('The GPU queue wait was cancelled.')), { once: true });
+    }),
+    async run() { events.push('run'); } });
+  const { jobId } = await controller.submit(request());
+  assert.equal(controller.cancel(jobId).state, 'cancelling');
+  assert.equal((await terminal(controller, jobId)).state, 'cancelled');
+  assert.deepEqual(events, ['wait']);
+  await controller.close();
+});
+
+test('a GPU queue that fails the wait fails the job with the queue message', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits,
+    acquireGpu: async () => { throw new Error('The GPU queue command did not grant the card within 1 seconds.'); },
+    async run() { throw new Error('must not run'); } });
+  const { jobId } = await controller.submit(request());
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.reason, /GPU queue command did not grant/);
+  await controller.close();
 });
