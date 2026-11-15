@@ -14,6 +14,7 @@ import './skinning.js';
 const FLOATS_PER_MATRIX = 16;
 const TEXELS_PER_MATRIX = 4;
 const DEFAULT_FRAME_RATE = 30;
+const MAXIMUM_PALETTE_FRAMES = 7200; // 2 minutes at 60 fps
 const DEFAULT_LEVEL_CELLS = Object.freeze([0.02, 0.05]);
 const JOINT_STRIDE = 4096;
 const WEIGHT_STEPS = 4095;
@@ -179,6 +180,9 @@ export function bakeCrowdPalette(rig, poseAt, { duration, loop = true, frameRate
   if (!Number.isFinite(duration) || duration <= 0) throw new RangeError('Crowd duration must be positive.');
   if (!Number.isFinite(frameRate) || frameRate <= 0) throw new RangeError('Crowd frame rate must be positive.');
   const frameCount = Math.max(2, Math.round(duration * frameRate) + (loop ? 0 : 1));
+  if (frameCount > MAXIMUM_PALETTE_FRAMES) {
+    throw new RangeError(`Crowd palette would bake ${frameCount} frames (duration ${duration} s at ${frameRate} fps), over the limit of ${MAXIMUM_PALETTE_FRAMES}. Lower frameRate or use a shorter clip.`);
+  }
   const frameStep = loop ? duration / frameCount : duration / (frameCount - 1);
   const matricesPerFrame = rig.jointCount * FLOATS_PER_MATRIX;
   const data = new Float32Array(frameCount * matricesPerFrame);

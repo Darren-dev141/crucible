@@ -44,6 +44,18 @@ function geometryBounds(positions) {
   return { minimumX, minimumZ, maximumX, maximumZ };
 }
 
+function assertUsableGeometry(positions, indices, bounds) {
+  if (![bounds.minimumX, bounds.maximumX, bounds.minimumZ, bounds.maximumZ].every(Number.isFinite)) {
+    throw new RangeError('navmesh positions must be finite.');
+  }
+  const vertexCount = Math.floor(positions.length / 3);
+  for (let offset = 0; offset < indices.length; offset++) {
+    if (!(indices[offset] >= 0 && indices[offset] < vertexCount)) {
+      throw new RangeError(`navmesh index ${offset} is ${indices[offset]}; use 0 to ${vertexCount - 1}.`);
+    }
+  }
+}
+
 // Binary heap ordered by cost, then by cell index, so equal costs always leave in the same order.
 function createOpenSet() {
   const costs = [];
@@ -111,6 +123,7 @@ export function createNavmesh({ positions, indices, agentRadius, maxSlopeDegrees
   }
 
   const bounds = geometryBounds(positions);
+  assertUsableGeometry(positions, indices, bounds);
   const columns = Math.max(1, Math.ceil((bounds.maximumX - bounds.minimumX) / size));
   const rows = Math.max(1, Math.ceil((bounds.maximumZ - bounds.minimumZ) / size));
   if (columns * rows > cellBudget) {
@@ -366,6 +379,9 @@ function rasterizeTopSurface(positions, indices, bounds, size, columns, rows, he
 function blockFootprint(obstacle, bounds, size, columns, rows, blocked) {
   const minimum = pointXZ(obstacle?.min, 'obstacle min');
   const maximum = pointXZ(obstacle?.max, 'obstacle max');
+  if (minimum[0] > maximum[0] || minimum[1] > maximum[1]) {
+    throw new RangeError('navmesh obstacle min must not exceed max; swap them.');
+  }
   const firstColumn = Math.max(0, Math.floor((minimum[0] - bounds.minimumX) / size));
   const lastColumn = Math.min(columns - 1, Math.floor((maximum[0] - bounds.minimumX) / size));
   const firstRow = Math.max(0, Math.floor((minimum[1] - bounds.minimumZ) / size));
