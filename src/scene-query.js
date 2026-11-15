@@ -188,8 +188,10 @@ export function createSceneQuery(parts, options = {}) {
   const indexOptions = { ...INDEX_OPTIONS, ...options };
   const entries = parts.map((part, position) => ({
     part, position, id: part.id ?? part.name ?? `part-${position}`, index: null, failed: null,
-    bounds: worldBounds(localBounds(part.geometry.positions), part.matrix),
+    localBounds: localBounds(part.geometry.positions),
   }));
+  // Parts often share the retained world matrix of a scene graph, so the box follows the matrix as it is now.
+  const currentBounds = entry => worldBounds(entry.localBounds, entry.part.matrix);
   const skipped = [];
   let disposed = false;
   let droppedTriangles = 0;
@@ -198,7 +200,7 @@ export function createSceneQuery(parts, options = {}) {
     if (entry.failed) return null;
     if (!entry.index) {
       try {
-        const surface = withoutSlivers(entry.part.geometry, entry.part.matrix, entry.bounds);
+        const surface = withoutSlivers(entry.part.geometry, entry.part.matrix, currentBounds(entry));
         entry.index = createMeshQueryIndex(surface.geometry, indexOptions);
         entry.surface = surface.geometry;
         droppedTriangles += surface.dropped;
@@ -219,9 +221,12 @@ export function createSceneQuery(parts, options = {}) {
     const unit = direction.map(value => value / length);
     const origin = Array.from(ray.origin);
     const maxDistance = ray.maxDistance ?? Infinity;
+    if (typeof maxDistance !== 'number' || Number.isNaN(maxDistance)) {
+      throw new TypeError('Ray maxDistance must be a number (Infinity for no limit).');
+    }
     const candidates = [];
     for (const entry of entries) {
-      const enter = enterDistance(origin, unit, entry.bounds, maxDistance);
+      const enter = enterDistance(origin, unit, currentBounds(entry), maxDistance);
       if (enter !== Infinity) candidates.push({ entry, enter });
     }
     candidates.sort((first, second) => first.enter - second.enter);
