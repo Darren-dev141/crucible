@@ -116,8 +116,11 @@ test('the default triangle record keeps the nine texels the native tracer reads'
   const scene = buildTraceScene([distinctUvPart()]);
   const table = packTriangles(scene);
   assert.equal(NATIVE_TRIANGLE_TEXELS, 9);
-  assert.equal(table.data.length >= scene.bvh.triangleOrder.length * 36, true);
+  const rowsForNineTexels = Math.max(1, Math.ceil((scene.bvh.triangleOrder.length * NATIVE_TRIANGLE_TEXELS) / table.width));
+  assert.equal(table.height, rowsForNineTexels, 'the table is padded to whole rows for a nine-texel stride');
+  assert.equal(table.data.length, table.width * rowsForNineTexels * 4);
   const { corners, base } = packedTriangle(scene, table.data, 1, NATIVE_TRIANGLE_TEXELS);
+  assert.equal(table.data[36 + 3 * 4 + 3], Math.fround(SECOND_SET[corners[0]][0]), 'slot 1 starts at float 36, so the stride is nine texels');
   assert.equal(table.data[base + 3], 0, 'material index of the single material');
   assert.equal(table.data[base + 4 + 3], 0, 'no second set in the edge texel');
   assert.equal(table.data[base + 3 * 4 + 3], Math.fround(SECOND_SET[corners[0]][0]), 'the base colour set (here TEXCOORD_1) stays where the native readers expect it');
