@@ -97,7 +97,7 @@ Each problem has `kind`, `severity`, `count`, up to eight sample indices and a s
 | Kind | Severity | Sample indices |
 | --- | --- | --- |
 | `non-manifold-edge` | error | edges used by three or more faces |
-| `inconsistent-winding` | error | edges whose two faces wind the same way; `count` is edges, `sample` lists the faces to flip with `flip_normals` |
+| `inconsistent-winding` | error | edges whose two faces wind the same way; `count` is edges, `sample` lists the faces to flip with `flip_normals`, at most 8, so lint again until clean |
 | `inverted-part` | error | closed parts with negative volume |
 | `degenerate-face` | error | faces with near-zero area |
 | `boundary-edge` | warning | edges with one face (open surfaces) |

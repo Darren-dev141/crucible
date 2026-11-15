@@ -10,7 +10,7 @@ const FOLDED_NORMAL_DOT = -0.99;
 // Every problem names the operation that usually fixes it, so an agent can act without another lookup.
 export const MESH_PROBLEMS = Object.freeze({
   'non-manifold-edge': { severity: 'error', fix: 'Delete the extra faces or split the edge; booleans and solidify need two faces per edge.' },
-  'inconsistent-winding': { severity: 'error', fix: 'Run flip_normals with select { faces: sample }: sample lists faces (not edges) that wind against their neighbours.' },
+  'inconsistent-winding': { severity: 'error', fix: 'Run flip_normals with select { faces: sample }: sample lists faces (not edges) that wind against their neighbours, at most 8 of them, so lint again after flipping until it comes back clean.' },
   'inverted-part': { severity: 'error', fix: 'Run flip_normals on the part; its normals point inward.' },
   'degenerate-face': { severity: 'error', fix: 'Run merge_by_distance, or dissolve_faces on the zero-area faces.' },
   'loose-vertex': { severity: 'warning', fix: 'Run delete_loose to remove them; loose vertices do not render and confuse bounds.' },
