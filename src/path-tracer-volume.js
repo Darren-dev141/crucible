@@ -331,12 +331,12 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
 
 /**
  * Builds the function that dims the sun's direct light at a surface by the local volumes that cast shadows (#1047), or returns null when none does.
- * It writes `exp(-depth)` per channel into `out`, where depth sums, over the box and sphere volumes with `castShadow` not false, the optical depth between
+ * It writes `exp(-depth)` per channel into `out`, where depth sums, over the box and sphere volumes with `castShadow` true, the optical depth between
  * the point and the sun from midpoint taps of the saturated profile with its noise. The rasterizer's `localVolumeSurfaceShadow` repeats it
  * (its post pass scales the surface colour by mix(1, exp(-depth), sun visibility): the sky and fill light reach the frame after it and stay as they were).
  */
 export function createLocalVolumeSurfaceShadow(volumes) {
-  const casters = volumes.filter(volume => volume.castShadow !== false && !volume.mesh && !volume.gridData && volume.shape !== 'grid' && volume.shape !== 'mesh');
+  const casters = volumes.filter(volume => volume.castShadow === true && !volume.mesh && !volume.gridData && volume.shape !== 'grid' && volume.shape !== 'mesh');
   if (casters.length === 0) return null;
   const span = new Float64Array(2);
   return function writeSurfaceShadow(x, y, z, directionX, directionY, directionZ, out) {

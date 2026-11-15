@@ -12,7 +12,8 @@ import { encodePng } from '../src/export-png.js';
 
 const SIZE = 256;
 const DIFFERENCE_GAIN = 8;
-const SMOKE = { shape: 'box', center: [0, 2, 0], size: [4, 2, 4], density: 0.6, falloff: 0.3, absorption: [0.7, 0.8, 1], noiseAmount: 0.6, noiseScale: 2, steps: 16 };
+const SMOKE = { castShadow: true, shape: 'box', center: [0, 2, 0], size: [4, 2, 4], density: 0.6, falloff: 0.3, absorption: [0.7, 0.8, 1], noiseAmount: 0.6, noiseScale: 2, steps: 16 };
+const { castShadow: _castShadow, ...withoutFlag } = SMOKE;
 const SUN_TOWARD = [0.6, 1, 0].map(component => component / Math.hypot(0.6, 1, 0));
 const SUN = { keyColor: [3, 3, 3], lightDirection: SUN_TOWARD, keyIntensity: 1, fillIntensity: 0, ambientIntensity: 0, environmentIntensity: 0, skyTop: [0.02, 0.02, 0.02], skyBottom: [0.02, 0.02, 0.02] };
 const CAMERA = { eye: [0, 12, 0], target: [0, 0, 0], up: [0, 0, -1], fov: 50 };
@@ -122,9 +123,10 @@ test('the rasterizer darkens the floor under a smoke box as the CPU path tracer 
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
     await page.goto(`http://127.0.0.1:${port}/`);
-    const { frames, glError } = await rasterFrames(page, [[SMOKE], [{ ...SMOKE, castShadow: false }]]);
+    const { frames, glError } = await rasterFrames(page, [[SMOKE], [{ ...SMOKE, castShadow: false }], [withoutFlag]]);
     assert.equal(glError, 0);
-    const [shadowed, open] = frames;
+    const [shadowed, open, byDefault] = frames;
+    assert.deepEqual(Array.from(byDefault), Array.from(open), 'a volume without castShadow draws the same frame as castShadow false');
     const rasterRatio = columnMean(shadowed, UNDER_COLUMN, 4) / columnMean(open, UNDER_COLUMN, 4);
     const rasterOpenRatio = columnMean(shadowed, OPEN_COLUMN, 4) / columnMean(open, OPEN_COLUMN, 4);
     const cpuShadowed = await cpuFrame(SMOKE);
