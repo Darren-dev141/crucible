@@ -505,6 +505,62 @@ fn sampleEnvironment(rowUnit: f32, columnUnit: f32, columnJitter: f32, rowJitter
   return environmentPdf(sampledDirection);
 }
 
+// ---- Light portals (#1144) ----
+// The window rectangles of the scene sit at the end of environmentTables: sixteen floats each (position, width, normal, height, across, along),
+// then the count in the last float. A scene with a portal draws the sky's next-event light through them, as the CPU tracer and Cook do.
+const PORTAL_FLOATS: u32 = 16u;
+
+fn portalCount() -> u32 {
+  return u32(environmentTables[arrayLength(&environmentTables) - 1u]);
+}
+
+fn portalRecord(index: u32) -> u32 {
+  return arrayLength(&environmentTables) - 1u - PORTAL_FLOATS * (portalCount() - index);
+}
+
+fn portalVector(base: u32) -> vec3<f32> {
+  return vec3<f32>(environmentTables[base], environmentTables[base + 1u], environmentTables[base + 2u]);
+}
+
+// The solid-angle density of a direction from the point through the portals: the sum over the portals it crosses of d^2 / (area cos), over their count.
+fn portalPdf(point: vec3<f32>, towards: vec3<f32>) -> f32 {
+  let count = portalCount();
+  var pdf = 0.0;
+  for (var index = 0u; index < count; index++) {
+    let base = portalRecord(index);
+    let normal = portalVector(base + 4u);
+    let facing = dot(towards, normal);
+    if (facing > -1e-9) { continue; }
+    let position = portalVector(base);
+    let toPlane = dot(position - point, normal);
+    if (toPlane >= 0.0) { continue; }
+    let distance = toPlane / facing;
+    let offset = point + towards * distance - position;
+    let width = environmentTables[base + 3u];
+    let height = environmentTables[base + 7u];
+    if (abs(dot(offset, portalVector(base + 8u))) > width * 0.5 || abs(dot(offset, portalVector(base + 12u))) > height * 0.5) { continue; }
+    pdf += distance * distance / (width * height * -facing);
+  }
+  return pdf / f32(count);
+}
+
+// Draws a direction from the point through one portal chosen uniformly into sampledDirection; returns its pdf, or 0 when the point is outside the room.
+fn samplePortalDirection(point: vec3<f32>, portalUnit: f32, acrossUnit: f32, alongUnit: f32) -> f32 {
+  let count = portalCount();
+  let base = portalRecord(min(count - 1u, u32(portalUnit * f32(count))));
+  let width = environmentTables[base + 3u];
+  let height = environmentTables[base + 7u];
+  let windowPoint = portalVector(base) + portalVector(base + 8u) * ((acrossUnit - 0.5) * width) + portalVector(base + 12u) * ((alongUnit - 0.5) * height);
+  let delta = windowPoint - point;
+  let reach = sqrt(dot(delta, delta));
+  if (!(reach > 1e-9)) { return 0.0; }
+  let towards = delta / reach;
+  let pdf = portalPdf(point, towards);
+  if (!(pdf > 0.0)) { return 0.0; }
+  sampledDirection = towards;
+  return pdf;
+}
+
 // Where a camera ray starts: at the eye, or with a clip start (forward.w, a distance along the view axis) where the ray has gone that far along it.
 fn cameraOrigin(rayDirection: vec3<f32>) -> vec3<f32> {
   return params.eye.xyz + rayDirection * (params.forward.w / dot(rayDirection, params.forward.xyz));
@@ -1017,11 +1073,18 @@ fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
       }
       distance -= params.environmentRotationAndRays.z;
     } else {
-      let rowUnit = nextRandom();
-      let columnUnit = nextRandom();
-      let columnJitter = nextRandom();
-      let rowJitter = nextRandom();
-      environmentSampledPdf = sampleEnvironment(rowUnit, columnUnit, columnJitter, rowJitter);
+      if (portalCount() > 0u) {
+        let portalUnit = nextRandom();
+        let acrossUnit = nextRandom();
+        let alongUnit = nextRandom();
+        environmentSampledPdf = samplePortalDirection(hitPoint, portalUnit, acrossUnit, alongUnit);
+      } else {
+        let rowUnit = nextRandom();
+        let columnUnit = nextRandom();
+        let columnJitter = nextRandom();
+        let rowJitter = nextRandom();
+        environmentSampledPdf = sampleEnvironment(rowUnit, columnUnit, columnJitter, rowJitter);
+      }
       lightDirection = sampledDirection;
       if (!(environmentSampledPdf > 0.0)) { return; }
       lightRadiance = environmentRadiance(lightDirection);
@@ -1032,12 +1095,12 @@ fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
   addDirect(depth, normal, distance, weightMode);
 }
 
-fn addEscape(depth: i32, previousPdf: f32, afterMirror: bool) {
+fn addEscape(depth: i32, previousPdf: f32, afterMirror: bool, rayOrigin: vec3<f32>) {
   if (params.emittersFlagsSample.z == 0) { return; }
   let sky = environmentRadiance(direction);
   var weight = 1.0;
   if (!afterMirror) {
-    let environmentSide = environmentPdf(direction) * selectionProbability;
+    let environmentSide = select(environmentPdf(direction), portalPdf(rayOrigin, direction), portalCount() > 0u) * selectionProbability;
     weight = previousPdf * previousPdf / (previousPdf * previousPdf + environmentSide * environmentSide);
   }
   addRadiance(depth, throughput * sky * weight);
@@ -1157,7 +1220,7 @@ fn tracePath(origin: vec3<f32>, startDirection: vec3<f32>, pixel: u32, sampleInd
     ${hasVolume ? 'let inFog = scatterInFog(position, select(params.environmentRotationAndRays.w, hitDistance, found));' : 'let inFog = false;'}
     if (!inFog && !found) {
       if (depth == 0) { firstLegEscaped = 1.0; }
-      addEscape(depth, previousPdf, afterMirror);
+      addEscape(depth, previousPdf, afterMirror, position);
       break;
     }
     var isGlass = false;
@@ -1403,7 +1466,7 @@ fn extendPaths(@builtin(global_invocation_id) id: vec3<u32>) {
   throughput = loadVector(base + 2u).xyz;
   radiance = radianceData.xyz;
   selectionProbability = directionSelection.w;
-  addEscape(currentDepth(), originPrevious.w, (flags & FLAG_AFTER_MIRROR) != 0u);
+  addEscape(currentDepth(), originPrevious.w, (flags & FLAG_AFTER_MIRROR) != 0u, originPrevious.xyz);
   storeVector(base + 3u, vec4<f32>(radiance, radianceData.w));
   pathMeta.y = flags & ~(FLAG_ALIVE | FLAG_HIT);
   pathState[base + 8u] = pathMeta;
