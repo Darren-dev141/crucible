@@ -194,12 +194,22 @@ export function createTemporalAccumulator(options = {}) {
     const pastCamera = past.camera;
     const { position, forward, right, up, lensShift } = camera;
     let pixelsWithHistory = 0;
+    const debugTally = process.env.JS67_TEMPORAL_DEBUG ? { edge: 0, noDistance: 0, behind: 0, offscreen: 0, view: 0, depthRejectsAll: 0, normalRejectsAll: 0, lowFetch: 0, accepted: 0, partialDepth: 0 } : null;
     for (let y = 0; y < height; y++) {
       const sensorY = 1 - ((y + 0.5) / height) * 2 + 2 * lensShift[1];
       for (let x = 0; x < width; x++) {
         const pixel = y * width + x;
         const colorIndex = pixel * 3;
         const distance = depth[pixel];
+        let edgeHere = false;
+        if (debugTally) {
+          for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+            const other = depth[ny * width + nx];
+            if (Math.abs(other - distance) > settings.depthTolerance * Math.max(other, distance, 1e-6)) edgeHere = true;
+          }
+          if (edgeHere) debugTally.cornersTried = (debugTally.cornersTried ?? 0) + 4;
+        }
         let pastRed = 0;
         let pastGreen = 0;
         let pastBlue = 0;
@@ -218,6 +228,7 @@ export function createTemporalAccumulator(options = {}) {
           const offsetY = position[1] + directionY - pastCamera.position[1];
           const offsetZ = position[2] + directionZ - pastCamera.position[2];
           const along = offsetX * pastCamera.forward[0] + offsetY * pastCamera.forward[1] + offsetZ * pastCamera.forward[2];
+          if (edgeHere && !(along > 1e-4)) debugTally.behind += 1;
           if (along > 1e-4) {
             const pastSensorX = (offsetX * pastCamera.right[0] + offsetY * pastCamera.right[1] + offsetZ * pastCamera.right[2]) / (along * pastCamera.rightSquaredLength);
             const pastSensorY = (offsetX * pastCamera.up[0] + offsetY * pastCamera.up[1] + offsetZ * pastCamera.up[2]) / (along * pastCamera.upSquaredLength);
@@ -229,6 +240,8 @@ export function createTemporalAccumulator(options = {}) {
             const expectedDistance = Math.hypot(offsetX, offsetY, offsetZ);
             const viewCosine = (offsetX * directionX + offsetY * directionY + offsetZ * directionZ) / (expectedDistance * distance);
             const onScreen = sourceX >= -0.5 && sourceY >= -0.5 && sourceX <= width - 0.5 && sourceY <= height - 0.5;
+            if (edgeHere && !onScreen) debugTally.offscreen += 1;
+            if (edgeHere && onScreen && !(viewCosine >= settings.viewAgreement)) debugTally.view += 1;
             if (onScreen && viewCosine >= settings.viewAgreement) {
               const allowedDifference = settings.depthTolerance * expectedDistance;
               const fractionX = sourceX - left;
@@ -245,11 +258,13 @@ export function createTemporalAccumulator(options = {}) {
                 const sourceRow = Math.min(height - 1, Math.max(0, top + cornerY));
                 const source = sourceRow * width + sourceColumn;
                 if (Math.abs(past.depth[source] - expectedDistance) > allowedDifference) {
+                  if (edgeHere) debugTally.depthRejectsAll += 1;
                   continue;
                 }
                 const sourceIndex = source * 3;
                 const agreement = normalX * past.normal[sourceIndex] + normalY * past.normal[sourceIndex + 1] + normalZ * past.normal[sourceIndex + 2];
                 if (agreement < settings.normalAgreement) {
+                  if (edgeHere) debugTally.normalRejectsAll += 1;
                   continue;
                 }
                 pastRed += past.color[sourceIndex] * weight;
@@ -260,6 +275,12 @@ export function createTemporalAccumulator(options = {}) {
               }
             }
           }
+        }
+        if (debugTally && edgeHere) {
+          debugTally.edge += 1;
+          if (distance <= 0) debugTally.noDistance += 1;
+          else if (fetchWeight > settings.minimumFetchWeight) debugTally.accepted += 1;
+          else debugTally.lowFetch += 1;
         }
         if (fetchWeight > settings.minimumFetchWeight) {
           const count = pastCount / fetchWeight + 1;
@@ -277,6 +298,11 @@ export function createTemporalAccumulator(options = {}) {
           counts[pixel] = 1;
         }
       }
+    }
+    if (debugTally) {
+      globalThis.JS67_TEMPORAL_TALLIES = (globalThis.JS67_TEMPORAL_TALLIES ?? []);
+      globalThis.JS67_TEMPORAL_TALLIES.push(debugTally);
+      import('node:fs').then(({ appendFileSync }) => appendFileSync(process.env.JS67_TEMPORAL_DEBUG, JSON.stringify(debugTally) + String.fromCharCode(10)));
     }
     return pixelsWithHistory;
   }
