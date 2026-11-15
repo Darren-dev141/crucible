@@ -209,6 +209,7 @@ test('createGaussianSplats rejects a maximumCount that is not a positive number 
   }
 });
 
+// Pins behaviour that already held on main; the NaN bypass is covered by the maximumCount validation test.
 test('createGaussianSplats always refuses more than 4,000,000 splats (#1282)', () => {
   const oversized = { count: 4_000_001 };
   assert.throws(() => createGaussianSplats(oversized, { maximumCount: Number.POSITIVE_INFINITY }), /over the limit of 4000000/);

@@ -547,12 +547,26 @@ runTest('two textured GLBs whose embedded images pass the combined limit are ref
     await writeFile(join(directory, 'Textures', 'colormap.png'), sharedImageBytes);
     const onDiskTotal = boat.length + secondBoat.length + sharedImageBytes.length;
     assert.ok(onDiskTotal < AGENT_ASSET_LIMITS.maxCombinedBytes, 'on disk the files fit, so only the embedded sizes can trip the limit');
-    const { runtime } = await reviewRuntimeHarness({ runtimeOptions: { assets: directory } });
-    const assetIds = (await createAgentAssetCatalog(directory)).list().assets.map(asset => asset.assetId);
+    const realCatalog = await createAgentAssetCatalog(directory);
+    let reads = 0;
+    const countingRealCatalog = {
+      list: () => realCatalog.list(),
+      size: assetId => realCatalog.size(assetId),
+      read: assetId => {
+        reads++;
+        return realCatalog.read(assetId);
+      },
+    };
+    const { runtime } = await reviewRuntimeHarness({
+      runtimeOptions: { assets: directory },
+      contextOverrides: { createAgentAssetCatalog: async () => countingRealCatalog },
+    });
+    const assetIds = realCatalog.list().assets.map(asset => asset.assetId);
     assert.equal(assetIds.length, 2);
     const recipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [],
       nodes: assetIds.map((assetId, index) => ({ id: `boat-${index}`, asset: { id: assetId } })) };
     await assert.rejects(runtime.create({ recipe }), error => error instanceof RangeError && error.message.includes('maxCombinedBytes'));
+    assert.equal(reads, 0, 'the refusal comes from size() before any file is read and base64 encoded');
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

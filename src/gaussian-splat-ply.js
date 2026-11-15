@@ -208,7 +208,7 @@ function createSplatReader({ view, vertexCount: count, layout, stride }) {
       const scaleField = scaleFields[axis];
       scales[index * 3 + axis] = Math.exp(scaleField.read(view, row + scaleField.offset));
       if (!Number.isFinite(scales[index * 3 + axis])) {
-        throw new Error(`Gaussian splat ${index} has a non-finite scale (scale_${axis} is NaN or too large to exponentiate)`);
+        throw new Error(`Gaussian splat ${index} has a non-finite scale (scale_${axis} is NaN or too large to exponentiate). Re-export the file or drop that splat.`);
       }
     }
     colors[index * 4 + 3] = toByte(1 / (1 + Math.exp(-opacityField.read(view, row + opacityField.offset))));
