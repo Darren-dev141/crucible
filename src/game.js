@@ -8,7 +8,7 @@ import { createInput, gamepadSource, keyboardSource } from './input.js';
 import { replaySource, touchSource } from './input-sources.js';
 import { createCharacterController, createChaseCamera, createController, createCameraRigOfKind, createFirstPersonCamera, createFollowCamera, createTopDownCamera, createVehicleController } from './player.js';
 import { createGameRules } from './game-rules.js';
-import { hasTexturedMaterial } from './game-needs.js';
+import { hasTexturedMaterial, parentTranslation } from './game-needs.js';
 
 // Plays the `game` section of a scene recipe in a page: the scene, the input preset, the character controller, the camera rig
 // and the game rules, all run by the live runtime. scene_export_web writes a folder whose index.html calls startGame.
@@ -66,32 +66,6 @@ function nodeTranslation(nodes, id) {
   return position;
 }
 
-const IDENTITY_TOLERANCE = 1e-6;
-
-function hasIdentityTransform(node) {
-  const [x = 0, y = 0, z = 0, w = 1] = node.rotation ?? [];
-  const scale = node.scale ?? [1, 1, 1];
-  return Math.abs(x) < IDENTITY_TOLERANCE && Math.abs(y) < IDENTITY_TOLERANCE && Math.abs(z) < IDENTITY_TOLERANCE
-    && Math.abs(Math.abs(w) - 1) < IDENTITY_TOLERANCE
-    && scale.every(component => Math.abs(component - 1) < IDENTITY_TOLERANCE);
-}
-
-// The summed translation of the parents above a node. The controller works in world space, so the node's own translation is the
-// world position minus this offset. A parent that rotates or scales cannot be undone this way, so it is refused with the fix.
-function parentTranslation(nodes, id, field) {
-  const byId = new Map(nodes.map(node => [node.id, node]));
-  const offset = [0, 0, 0];
-  const visited = new Set([id]);
-  for (let parent = byId.get(byId.get(id)?.parent); parent && !visited.has(parent.id); parent = byId.get(parent.parent)) {
-    visited.add(parent.id);
-    if (!hasIdentityTransform(parent)) {
-      throw new Error(`${field} "${id}" sits under the parent "${parent.id}", which has a rotation or scale. startGame places a player or NPC in world space, so give "${parent.id}" only a translation, or use a node whose parents have no rotation or scale.`);
-    }
-    for (let axis = 0; axis < 3; axis++) offset[axis] += parent.translation?.[axis] ?? 0;
-  }
-  return offset;
-}
-
 // The node a controller or follower moves: its feet position and the heading about the vertical axis.
 // A placed glTF character faces +Z, while yaw 0 faces -Z, so its node is turned half a circle.
 const GLTF_FACING_YAW = Math.PI;
@@ -133,9 +107,15 @@ function modelYawOf(animation) {
   return animation?.assetNode ? GLTF_FACING_YAW : 0;
 }
 
-function describeState(state) {
+// The hint names the way the page can restart: a replay has none, a phone has no R key, so it takes a tap.
+function restartHintFor(inputPreset, replay) {
+  if (replay) return '';
+  return inputPreset === 'touch' ? '   (tap to restart)' : '   (R to restart)';
+}
+
+function describeState(state, restartHint) {
   const variables = Object.entries(state.variables).map(([name, value]) => `${name} ${value}`).join('   ');
-  const verdict = state.status === 'won' ? '   YOU WIN   (R to restart)' : state.status === 'lost' ? '   GAME OVER   (R to restart)' : '';
+  const verdict = state.status === 'won' ? `   YOU WIN${restartHint}` : state.status === 'lost' ? `   GAME OVER${restartHint}` : '';
   return `${variables}${verdict}`;
 }
 
@@ -285,7 +265,7 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
         renderer.replaceParts(scene.parts);
         drawnTopology = scene.topologyRevision;
       }
-      if (status) status.textContent = describeState(rules.state);
+      if (status) status.textContent = describeState(rules.state, restartHintFor(game.input, replay));
     },
   };
 
@@ -303,7 +283,6 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
       npc.graph.reset();
       npc.follower.follow(npc.path);
     }
-    shownNodes.clear();
     if (physics) {
       physicsRestart = physics.restart();
       physicsRestart.catch(() => {});
@@ -326,13 +305,20 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
   globalThis.addEventListener?.('resize', resize);
   cleanups.push(() => globalThis.removeEventListener?.('resize', resize));
   resize();
-  // After a win or a loss, R starts the game again. A replay drives the input itself, so it has no key.
+  // After a win or a loss, R (or a tap on a touch game) starts the game again. A replay drives the input itself, so it has neither.
   const restartOnKey = event => {
     if (event.code === 'KeyR' && !event.repeat && rules && rules.state.status !== 'playing') restart();
+  };
+  const restartOnTap = () => {
+    if (rules && rules.state.status !== 'playing') restart();
   };
   if (!replay) {
     globalThis.addEventListener?.('keydown', restartOnKey);
     cleanups.push(() => globalThis.removeEventListener?.('keydown', restartOnKey));
+    if (game.input === 'touch') {
+      canvas.addEventListener?.('pointerdown', restartOnTap);
+      cleanups.push(() => canvas.removeEventListener?.('pointerdown', restartOnTap));
+    }
   }
   runtime.start();
 

@@ -158,6 +158,19 @@ test('an NPC follows a path from the recipe, blends into walk and stops at the e
   }
 });
 
+test('restart() resets the player animation graph to time 0', async () => {
+  const recipe = setGame(sceneWith(characterNodes()), { player: { node: 'Walker', walkSpeed: WALK_SPEED, runSpeed: RUN_SPEED, animation: locomotionAnimation() } });
+  const { game, finish } = await startRecipe(recipe, { version: 1, samples: 600, events: [[1, 'keyboard/KeyW', 1]] });
+  try {
+    for (let frame = 0; frame < 30; frame++) game.runtime.step(FRAME_MILLISECONDS);
+    assert.ok(game.animation.time > 0, 'the graph advanced while the player walked');
+    await game.restart();
+    assert.equal(game.animation.time, 0);
+  } finally {
+    finish();
+  }
+});
+
 test('restart() puts an NPC back at its start and sends it along its path again', async () => {
   const nodes = [...characterNodes(), ...characterNodes('Npc').map(node => ({ ...node, ...(node.id === 'NpcWalker' ? { translation: [4, 0, 0] } : {}) }))];
   const npc = { node: 'NpcWalker', path: [[4, -6], [8, -6]], cruiseSpeed: WALK_SPEED, animation: prefixedAnimation('Npc') };

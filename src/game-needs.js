@@ -19,3 +19,29 @@ export function gamePhysicsProblem(recipe) {
 export function hasTexturedMaterial(recipe) {
   return (recipe.materials ?? []).some(material => Object.keys(material).some(key => key === 'pattern' || key === 'map' || key.endsWith('Map')));
 }
+
+const IDENTITY_TOLERANCE = 1e-6;
+
+function hasIdentityTransform(node) {
+  const [x = 0, y = 0, z = 0, w = 1] = node.rotation ?? [];
+  const scale = node.scale ?? [1, 1, 1];
+  return Math.abs(x) < IDENTITY_TOLERANCE && Math.abs(y) < IDENTITY_TOLERANCE && Math.abs(z) < IDENTITY_TOLERANCE
+    && Math.abs(Math.abs(w) - 1) < IDENTITY_TOLERANCE
+    && scale.every(component => Math.abs(component - 1) < IDENTITY_TOLERANCE);
+}
+
+// The summed translation of the parents above a node. The controller works in world space, so the node's own translation is the
+// world position minus this offset. A parent that rotates or scales cannot be undone this way, so it is refused with the fix.
+export function parentTranslation(nodes, id, field) {
+  const byId = new Map(nodes.map(node => [node.id, node]));
+  const offset = [0, 0, 0];
+  const visited = new Set([id]);
+  for (let parent = byId.get(byId.get(id)?.parent); parent && !visited.has(parent.id); parent = byId.get(parent.parent)) {
+    visited.add(parent.id);
+    if (!hasIdentityTransform(parent)) {
+      throw new Error(`${field} "${id}" sits under the parent "${parent.id}", which has a rotation or scale. A game places a player or NPC in world space, so give "${parent.id}" only a translation, or use a node whose parents have no rotation or scale.`);
+    }
+    for (let axis = 0; axis < 3; axis++) offset[axis] += parent.translation?.[axis] ?? 0;
+  }
+  return offset;
+}

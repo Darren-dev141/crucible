@@ -82,8 +82,12 @@ export async function createGamePhysics({ recipe, scene, playerNode, physicsUrl 
       system = null;
       previous?.dispose();
       sentPoses.clear();
-      rebuilding = rebuilding.then(async () => {
-        const next = await createSystem();
+      // A failed rebuild must not block the next restart, so each one starts after the earlier one settles, whichever way.
+      rebuilding = rebuilding.catch(() => {}).then(async () => {
+        const next = await createSystem().catch(error => {
+          console.error(`The physics world could not be rebuilt on restart: ${error.message}`);
+          throw error;
+        });
         if (disposed) next.dispose();
         else {
           // A second restart may have queued behind the first, which already installed a world.

@@ -2,7 +2,10 @@ import './support/load-agent-scene-modules.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { startGame } from '../src/game.js';
+import { writeWebBuild } from '../scripts/web-export.mjs';
 
 const EMPTY_RECORDING = { version: 1, samples: 0, events: [] };
 const HOLD_FORWARD = { version: 1, samples: 600, events: [[1, 'keyboard/KeyW', 1]] };
@@ -73,12 +76,80 @@ test('a player under a translated parent stays where the recipe put it on the fi
   }
 });
 
-test('a player under a rotated or scaled parent is refused with the parent and the fix', async () => {
+test('a player under a rotated or scaled parent is refused by set-game, with the parent and the fix', () => {
+  assert.throws(() => parentedRecipe({ scale: [2, 2, 2] }), /game\.player\.node "creature" sits under the parent "rig".*only a translation/);
+  assert.throws(() => parentedRecipe({ rotation: [0, 0.7071068, 0, 0.7071068] }), /parent "rig"/);
+});
+
+test('startGame still refuses a hand-written recipe whose player parent turns, and the web export does too', async () => {
+  const recipe = parentedRecipe();
+  recipe.nodes.find(node => node.id === 'rig').rotation = [0, 0.7071068, 0, 0.7071068];
   const restore = withAnimationFrameStubs();
   try {
-    await assert.rejects(start(parentedRecipe({ scale: [2, 2, 2] })), /game\.player\.node "creature" sits under the parent "rig".*only a translation/);
-    await assert.rejects(start(parentedRecipe({ rotation: [0, 0.7071068, 0, 0.7071068] })), /parent "rig"/);
+    await assert.rejects(start(recipe), /game\.player\.node "creature" sits under the parent "rig"/);
   } finally {
+    restore();
+  }
+  await assert.rejects(
+    writeWebBuild({ recipe, buildDirectory: tmpdir(), outputDirectory: join(tmpdir(), 'crucible-never-written-1263') }),
+    /game\.player\.node "creature" sits under the parent "rig".*only a translation/,
+  );
+});
+
+test('the camera rig goes back to its start heading when the game restarts', async () => {
+  const restore = withAnimationFrameStubs();
+  const frames = [];
+  const renderer = { ...standInRenderer(), render: frame => frames.push(frame.eye ? [...frame.eye] : JSON.stringify(frame.camera ?? frame)) };
+  try {
+    const turnThenStop = { version: 1, samples: 600, events: [[2, 'keyboard/ArrowRight', 1], [40, 'keyboard/ArrowRight', 0]] };
+    const game = await startGame({}, playerRecipe({ rules: [] }), { replay: turnThenStop, showStatus: false, createRenderer: () => renderer });
+    stepFrames(game, 1);
+    const startPose = JSON.stringify(frames.at(-1));
+    stepFrames(game, 60);
+    assert.notEqual(JSON.stringify(frames.at(-1)), startPose, 'holding the arrow turned the camera');
+    await game.restart();
+    stepFrames(game, 1);
+    assert.equal(JSON.stringify(frames.at(-1)), startPose, 'the camera is back at its start heading');
+    game.dispose();
+  } finally {
+    restore();
+  }
+});
+
+test('the restart hint names the key on a keyboard page, a tap on a touch page and nothing on a replay', async () => {
+  const restore = withAnimationFrameStubs();
+  const previous = { document: globalThis.document, add: globalThis.addEventListener, remove: globalThis.removeEventListener };
+  globalThis.addEventListener = () => {};
+  globalThis.removeEventListener = () => {};
+  let label = '';
+  globalThis.document = { addEventListener() {}, removeEventListener() {}, createElement: () => ({ style: {}, remove() {}, set textContent(value) { label = value; } }) };
+  const taps = [];
+  const canvas = { parentNode: { appendChild() {} }, addEventListener: (name, listener) => taps.push([name, listener]), removeEventListener() {} };
+  const winRule = { rules: [{ id: 'done', when: { type: 'timer', seconds: 0.2 }, do: [{ type: 'win' }] }] };
+  const labelAfterWin = async (recipe, options) => {
+    const game = await startGame(canvas, recipe, { createRenderer: () => standInRenderer(), ...options });
+    stepFrames(game, 30);
+    const shown = label;
+    game.dispose();
+    return { shown, game };
+  };
+  try {
+    const keyboard = await labelAfterWin(playerRecipe(winRule), {});
+    assert.match(keyboard.shown, /YOU WIN\s+\(R to restart\)/);
+    const replayed = await labelAfterWin(playerRecipe(winRule), { replay: EMPTY_RECORDING });
+    assert.match(replayed.shown, /YOU WIN$/);
+    const touchRecipe = playerRecipe(winRule);
+    touchRecipe.game.input = 'touch';
+    taps.length = 0;
+    const game = await startGame(canvas, touchRecipe, { createRenderer: () => standInRenderer() });
+    stepFrames(game, 30);
+    assert.match(label, /\(tap to restart\)/);
+    assert.equal(game.rules.state.status, 'won');
+    taps.find(([name]) => name === 'pointerdown')[1]();
+    assert.equal(game.rules.state.status, 'playing', 'a tap restarts a finished touch game');
+    game.dispose();
+  } finally {
+    Object.assign(globalThis, { document: previous.document, addEventListener: previous.add, removeEventListener: previous.remove });
     restore();
   }
 });
