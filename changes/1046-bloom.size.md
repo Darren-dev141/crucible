@@ -4,3 +4,7 @@
 - goal:agent-scene: the composite path in the frame loop.
 - goal:lit-box: the guarded composite call in the frame path.
 - goal:gltf-box: the same guarded call.
+- entry:core: the hook in the renderer that draws glowing local volumes before bloom extraction, so a fireball blooms.
+- entry:core+lazy: same hook.
+- scene:lit-box+lazy: same hook in a scene that uses the renderer.
+- scene:gltf-box+lazy: same hook.
