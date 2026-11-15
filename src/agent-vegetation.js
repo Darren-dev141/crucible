@@ -48,6 +48,9 @@ function planePoint(value, path) {
 function normalizeExclusion(value, path) {
   knownKeys(value, EXCLUSION_FIELDS, path);
   if (value.min !== undefined || value.max !== undefined) {
+    if (value.center !== undefined || value.radius !== undefined || value.node !== undefined) {
+      throw invalidField(path, value, 'either the box form "min", "max" or the circle form "center", "radius", not both');
+    }
     const min = planePoint(value.min, `${path}.min`);
     const max = planePoint(value.max, `${path}.max`);
     if (max[0] <= min[0] || max[1] <= min[1]) throw invalidField(`${path}.max`, max, `[x, z] above min ${JSON.stringify(min)} on both axes`);

@@ -74,3 +74,29 @@ test('a cloth pin group that the mesh lacks names the sheet that asked for it', 
   };
   assert.throws(() => createAgentScene(recipe), /cloth\.sheets\[1\]\.pinGroup: got "hem"/);
 });
+
+test('a vegetation exclusion that mixes the box form with the circle form names both forms and its index', () => {
+  const mixed = { ground: 'hills', exclude: [{ center: [0, 0], radius: 2 }, { min: [-3, -3], max: [3, 3], radius: 4 }] };
+  assert.throws(() => createAgentScene(vegetationRecipe(mixed)), /vegetation\.scatter\.exclude\[1\]: got .*expected either the box form.*"min".*"max".*or the circle form.*"center".*"radius"/s);
+  const withNode = { ground: 'hills', exclude: [{ min: [-3, -3], max: [3, 3], node: 'hills' }] };
+  assert.throws(() => createAgentScene(vegetationRecipe(withNode)), /vegetation\.scatter\.exclude\[0\]/);
+  const boxOnly = { ground: 'hills', exclude: [{ min: [-3, -3], max: [3, 3] }] };
+  assert.doesNotThrow(() => createAgentScene(vegetationRecipe(boxOnly)));
+});
+
+test('hair swayRate without sway is refused and names sway', () => {
+  const hairRecipe = system => ({
+    format: 'crucible.scene', schemaVersion: 1,
+    geometries: [{ id: 'ball', type: 'sphere' }, { id: 'strand', type: 'box' }],
+    materials: [{ id: 'paint' }],
+    nodes: [{ id: 'head', geometry: 'ball', material: 'paint' }, { id: 'fur', geometry: 'strand', material: 'paint' }],
+    particles: { systems: [{ type: 'hair', node: 'fur', surface: 'head', seed: 5, count: 10, ...system }] },
+  });
+  assert.throws(() => createAgentScene(hairRecipe({ swayRate: 2 })), /particles\.systems\[0\]\.swayRate: got 2; expected .*sway/);
+  assert.doesNotThrow(() => createAgentScene(hairRecipe({ sway: 0.05, swayRate: 2 })));
+});
+
+test('a box particle emitter with a radius is refused and points to halfExtents', () => {
+  assert.throws(() => createAgentScene(particleRecipe({ shape: 'box', radius: 2 })), /particles\.systems\[1\]\.emitter\.radius: got 2; expected .*halfExtents/);
+  assert.doesNotThrow(() => createAgentScene(particleRecipe({ shape: 'sphere', radius: 2 })));
+});
