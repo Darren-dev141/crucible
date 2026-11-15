@@ -77,7 +77,7 @@ function knownKeys(value, fields, label) {
   plainObject(value, label);
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key !== 'string' || !fields.includes(key)) {
-      throw new TypeError(`Unknown ${label} field: ${String(key)}.`);
+      throw new TypeError(`Unknown ${label} field: ${String(key)}. Use ${fields.join(', ')}.`);
     }
   }
 }

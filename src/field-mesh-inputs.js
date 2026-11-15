@@ -113,12 +113,13 @@ function incidentFaceCounts(mesh) {
 }
 
 function edgeAngles(mesh, topology) {
-  const { normals } = faceNormals(mesh);
+  const { normals, areas } = faceNormals(mesh);
   const pointAngles = new Float64Array(mesh.vertexCount);
   const edgeAngleValues = new Float64Array(topology.edgeEnds.length);
   topology.edgeFaces.forEach((faces, edge) => {
     if (faces.length !== 2) return;
     const [first, second] = faces;
+    if (areas[first] === 0 || areas[second] === 0) return;
     const cosine = normals[first * 3] * normals[second * 3] + normals[first * 3 + 1] * normals[second * 3 + 1] + normals[first * 3 + 2] * normals[second * 3 + 2];
     const angle = Math.acos(Math.min(1, Math.max(-1, cosine)));
     edgeAngleValues[edge] = angle;

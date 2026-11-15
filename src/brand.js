@@ -24,12 +24,13 @@ const paths = {
   leaf:'M20 3C8 2 2 8 5 15s15 6 15-12ZM4 21 15 10',
   image:'M3 3h18v18H3V3Zm0 14 6-6 5 5 3-3 4 4M16 8h.01',
   package:'M3 7 12 2l9 5v10l-9 5-9-5V7Zm0 0 9 5 9-5M12 12v10M7.5 4.5l9 5v4',
+  store:'M4 9.5 5.6 4h12.8L20 9.5M4 9.5V20h16V9.5M4 9.5c0 1.700 1.200 2.500 2.700 2.500s2.600-.8 2.600-2.500c0 1.700 1.200 2.500 2.700 2.500s2.600-.8 2.600-2.500c0 1.700 1.200 2.500 2.700 2.500S20 11.200 20 9.500M9.500 20v-5h5v5',
   history:'M3 12a9 9 0 1 0 2.6-6.4L3 8M3 3v5h5M12 7v5l3.5 2',
   motion:'M4 12c3-8 5 8 8 0s5 8 8 0',
   heart:'M12 20s-7-4.4-9-9a4.8 4.8 0 0 1 9-3 4.8 4.8 0 0 1 9 3c-2 4.6-9 9-9 9Z',
   github:'M9 19c-4 1-4-2-6-2m12 5v-4a3.5 3.5 0 0 0-1-2.7c3.3-.4 6.7-1.6 6.7-7.3a5.7 5.7 0 0 0-1.5-4 5.3 5.3 0 0 0-.1-4S18 0 15 2a14 14 0 0 0-7 0C5 0 3.9 0 3.9 0a5.3 5.3 0 0 0-.1 4 5.7 5.7 0 0 0-1.5 4c0 5.7 3.4 6.9 6.7 7.3A3.5 3.5 0 0 0 8 18v4',
 };
-const labels = { Examples:'cube', Showcase:'cube', Docs: 'book', Changelog:'history', Documentation:'book', 'Getting started':'book', Downloads:'download', 'Package source':'code', Object:'cube', Nature:'leaf', Film:'film', Motion:'motion', Animation:'film', 'Save PNG':'image', 'Export GLB':'download' };
+const labels = { Examples:'cube', Showcase:'cube', Docs: 'book', Marketplace:'store', Changelog:'history', Documentation:'book', 'Getting started':'book', Downloads:'download', 'Package source':'code', Object:'cube', Nature:'leaf', Film:'film', Motion:'motion', Animation:'film', 'Save PNG':'image', 'Export GLB':'download' };
 for (const element of document.querySelectorAll('nav a, [data-icon], #save-image, #export')) {
   // Footer links stay plain text; only header and page navigation get an icon by label.
   const labelIcon = element.closest('.footer-links') ? undefined : labels[element.textContent.trim().replace(/[↓↗]/g, '').trim()];

@@ -181,10 +181,13 @@ export const SKY_GRID_POINTS = 2048;
 export const SKY_GRID_LONGEST_AXIS = 32;
 export const SKY_GRID_RAYS = 24;
 
-/** Cells per axis: roughly cubic cells, at most SKY_GRID_POINTS in total and SKY_GRID_LONGEST_AXIS along any axis. */
+/** Cells per axis: roughly cubic cells, at most SKY_GRID_POINTS in total and SKY_GRID_LONGEST_AXIS along any axis. A box with no extent gets the smallest grid. */
 export function skyGridSize(minimum, maximum) {
   const extent = maximum.map((high, axis) => high - minimum[axis]);
   const spacing = Math.max(Math.cbrt(extent[0] * extent[1] * extent[2] / SKY_GRID_POINTS), Math.max(...extent) / SKY_GRID_LONGEST_AXIS);
+  if (!(spacing > 0)) {
+    return [2, 2, 2];
+  }
   return extent.map(length => Math.min(SKY_GRID_LONGEST_AXIS, Math.max(2, Math.ceil(length / spacing))));
 }
 

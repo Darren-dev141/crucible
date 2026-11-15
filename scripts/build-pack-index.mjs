@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { extname, join, resolve } from 'node:path';
+import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateRawSync } from 'node:zlib';
 import packageMetadata from '../package.json' with { type: 'json' };
@@ -140,10 +140,23 @@ async function describePack(folder, outputDirectory) {
   };
 }
 
+function isSameOrInside(folder, path) {
+  const inside = relative(folder, path);
+  return inside === '' || (inside !== '..' && !inside.startsWith(`..${sep}`) && !isAbsolute(inside));
+}
+
+/** The output folder is emptied before every build, so it must not be, hold or sit inside the packs folder. */
+function assertOutputIsSeparate(source, output) {
+  if (isSameOrInside(source, output) || isSameOrInside(output, source)) {
+    throw new Error(`The output folder ${output} overlaps the packs folder ${source}, and the build empties the output folder first. Pass an --out folder that is separate from --packs, such as public/packs.`);
+  }
+}
+
 /** Validates and zips every pack folder. Throws one error that lists every pack that failed. */
 export async function buildPackIndex({ packsDirectory = join(repositoryRoot, 'packs'), outputDirectory = join(repositoryRoot, 'public/packs') } = {}) {
   const source = resolve(packsDirectory);
   const output = resolve(outputDirectory);
+  assertOutputIsSeparate(source, output);
   const folders = [];
   for (const entry of await readdir(source, { withFileTypes: true }).catch(() => [])) {
     if (entry.isDirectory() || entry.isSymbolicLink()) folders.push(entry.name);

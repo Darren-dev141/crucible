@@ -146,11 +146,17 @@ function heightFromArray(heights, size) {
 
 function resolveHeightFunction(height, size, seed) {
   if (typeof height === 'function') return height;
-  if (height instanceof Float32Array) return heightFromArray(height, size);
+  if (Array.isArray(height) || (ArrayBuffer.isView(height) && !(height instanceof DataView))) return heightFromArray(height, size);
+  if (height !== undefined && height !== null && typeof height !== 'object') {
+    throw new TypeError('height must be a function (x, z) => metres, a square array of heights, or an options object such as { amplitude: 10 }.');
+  }
   return createNoiseHeight(height ?? {}, seed);
 }
 
-function validateOptions({ size, resolution, chunks, levels, mirrorLevels }) {
+function validateOptions({ size, resolution, chunks, levels, mirrorLevels, lodDistance }) {
+  if (lodDistance !== undefined && !(lodDistance > 0 && Number.isFinite(lodDistance))) {
+    throw new RangeError(`lodDistance must be a positive number of metres, such as ${size / 8}; got ${lodDistance}.`);
+  }
   if (!(size > 0) || !Number.isFinite(size)) throw new RangeError('size must be a positive number of metres.');
   if (!Number.isInteger(chunks) || chunks < 1) throw new RangeError('chunks must be a positive integer.');
   if (!Number.isInteger(levels) || levels < 1) throw new RangeError('levels must be a positive integer.');
@@ -198,7 +204,7 @@ function pointInsideHoles(holes, pointX, pointZ) {
 export function createTerrain({ size = 512, resolution = 32, chunks = 8, levels = 4, height, seed = 1, material = DEFAULT_MATERIAL, lodDistance, eye, holes, mirrorLevels } = {}) {
   const mirrorLevelsExplicit = mirrorLevels !== undefined;
   let activeMirrorLevels = mirrorLevelsExplicit ? mirrorLevels : 0;
-  validateOptions({ size, resolution, chunks, levels, mirrorLevels: activeMirrorLevels });
+  validateOptions({ size, resolution, chunks, levels, mirrorLevels: activeMirrorLevels, lodDistance });
   const holeCircles = normalizeTerrainHoles(holes);
   const isHole = (worldX, worldZ) => holeCircles !== null && pointInsideHoles(holeCircles, worldX, worldZ);
   const heightFunction = resolveHeightFunction(height, size, seed);
@@ -225,8 +231,11 @@ export function createTerrain({ size = 512, resolution = 32, chunks = 8, levels 
   const gridHeight = (column, row) => heights[clamp(row, 0, gridCells) * gridSide + clamp(column, 0, gridCells)];
 
   function gridNormal(column, row, step, target, offset) {
-    const slopeX = (gridHeight(column + step, row) - gridHeight(column - step, row)) / (2 * step * spacing);
-    const slopeZ = (gridHeight(column, row + step) - gridHeight(column, row - step)) / (2 * step * spacing);
+    // On the outer border one neighbour is clamped to the vertex itself, so the difference spans fewer cells.
+    const spanColumns = clamp(column + step, 0, gridCells) - clamp(column - step, 0, gridCells);
+    const spanRows = clamp(row + step, 0, gridCells) - clamp(row - step, 0, gridCells);
+    const slopeX = (gridHeight(column + step, row) - gridHeight(column - step, row)) / (spanColumns * spacing);
+    const slopeZ = (gridHeight(column, row + step) - gridHeight(column, row - step)) / (spanRows * spacing);
     const inverseLength = 1 / Math.hypot(slopeX, 1, slopeZ);
     target[offset] = -slopeX * inverseLength;
     target[offset + 1] = inverseLength;
@@ -460,6 +469,9 @@ export function createTerrain({ size = 512, resolution = 32, chunks = 8, levels 
   let triangleTotal = 0;
   function update(eyePosition) {
     if (!Array.isArray(eyePosition) && !(eyePosition instanceof Float32Array)) throw new TypeError('update needs an eye position [x, y, z].');
+    if (eyePosition.length < 3 || !(Number.isFinite(eyePosition[0]) && Number.isFinite(eyePosition[1]) && Number.isFinite(eyePosition[2]))) {
+      throw new TypeError('update needs an eye position [x, y, z] of finite numbers.');
+    }
     for (const state of chunkStates) state.targetLevel = levelFor(state, eyePosition);
     const changed = [];
     for (const state of chunkStates) {

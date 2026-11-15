@@ -35,7 +35,7 @@ test('the recipe field is true, an integer node count or off, and anything else 
   assert.equal(normalizeIrradianceGrid(false), null);
   assert.equal(normalizeIrradianceGrid(true), true);
   assert.equal(normalizeIrradianceGrid(16), 16);
-  for (const bad of [4, 49, 1.5, 'big', {}]) {
+  for (const bad of [4, 41, 48, 49, 1.5, 'big', {}]) {
     assert.throws(() => normalizeIrradianceGrid(bad), /bake\.irradianceGrid/);
   }
   assert.equal(normalizeAgentBake({ preset: 'draft' }).irradianceGrid, undefined);

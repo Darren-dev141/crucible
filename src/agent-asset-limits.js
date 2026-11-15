@@ -22,10 +22,10 @@ export const AGENT_ASSET_LIMITS = Object.freeze({
 
 const MEBIBYTE = 1024 * 1024;
 
-/** The options `parseGltf` takes for a catalog file. */
+/** The options `parseGltf` takes for a catalog file. An MCP decode fetches no external resource, so a uri in the file never reaches the network. */
 export function agentAssetDecodeOptions() {
   const { maxBytes, maxVertices, maxParts, maxTexturePixels, maxJoints } = AGENT_ASSET_LIMITS;
-  return { maxBytes, maxVertices, maxParts, maxTexturePixels, maxJoints };
+  return { maxBytes, maxVertices, maxParts, maxTexturePixels, maxJoints, allowExternalResources: false };
 }
 
 /** "64 MiB" for byte limits, so a message and the docs read the same. */

@@ -121,6 +121,10 @@ export default defineConfig({
         netcode: 'src/netcode.js',
         'update-part-vertices':'src/update-part-vertices.js',
         'replace-textured-parts': 'src/replace-textured-parts.js',
+        'reflection-probes': 'src/reflection-probes.js',
+        fracture: 'src/fracture.js',
+        morph: 'src/morph.js',
+        skinning: 'src/skinning.js',
         // Page of the MCP preview. It imports the engine chunks above instead of bundling its own copy.
         'mcp/preview': 'scripts/agent-preview-browser.js',
       },

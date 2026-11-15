@@ -85,7 +85,7 @@ joint's own frame (`local = local * delta`), and weight scales the delta. An add
 | `weight` | 0 to 1 (default 1), or a function of time |
 | `keepEndRotation` | Default `true`: the end joint keeps its world rotation, so a foot stays flat while the leg moves |
 | `limits` | `{ root: { x: [min, max], y, z }, middle: {...} }` in degrees: the turn away from the joint's rest rotation, per axis of its own, as Euler XYZ. Applied after the solve; `ikResults[n].limited` lists each change as `{ joint, axis, requested, applied }` |
-| `bendToward` | World direction the middle joint should bend toward. `ikResults[n].warnings` gets `wrong-bend` when the solve bends the other way, and `hyperextended` when the limb is locked straight. Without it, a limb that rests bent is checked against its rest bend |
+| `bendToward` | World direction (not the zero vector) the middle joint should bend toward. `ikResults[n].warnings` gets `wrong-bend` when the solve bends the other way, and `hyperextended` when the limb is locked straight. Without it, a limb that rests bent is checked against its rest bend |
 
 The solve is analytic, keeps bone lengths, and turns the two upper joints by the shortest rotations, so twist already in
 the pose survives. A limb that is straight in the pose with its target straight ahead has no bend direction, so give
@@ -100,7 +100,7 @@ perfectly straight limb has no defined bend for the next frame.
 | --- | --- |
 | `joint` or `joints` | One joint, or a chain listed from its base to the aiming joint. A chain shares the turn evenly |
 | `worldForward` | The world direction the character faces in its rest pose, such as `[0, 0, 1]`. Use this on real rigs, where bone axes differ |
-| `forward` | Instead of `worldForward`: the aiming joint's local axis to point at the target (default `[0, 0, 1]`) |
+| `forward` | Instead of `worldForward`: the aiming joint's local axis to point at the target (default `[0, 0, 1]`, never the zero vector) |
 | `target` | World position, or `(time, jointPosition) => position` |
 | `maxAngle` | Degrees (default 180). Limits the whole turn; past it the joint stops at the limit |
 | `weight` | 0 to 1 (default 1), or a function of time |

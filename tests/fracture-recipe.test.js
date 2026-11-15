@@ -105,3 +105,17 @@ test('an impact point and radius reach the pieces and bad input says what to pas
   assert.throws(() => applyOperations(base, [{ type: 'fracture-node', node: 'nope', cells: 4, strength: 5 }]), /node: got "nope"; expected the ID of an existing node/);
   assert.throws(() => applyOperations(base, [{ type: 'fracture-node', node: 'wall', cells: 4, strength: 5, extra: 1 }]), /extra/);
 });
+
+test('fracture-node on a node that already has a physics body says to drop that body first', () => {
+  const scene = createAgentScene(wallRecipe());
+  applyOperations(scene, [{
+    type: 'set-physics',
+    physics: { duration: 2, bodies: [{ node: 'floor', type: 'fixed', shape: 'box' }, { node: 'wall', type: 'fixed', shape: 'box' }] },
+  }]);
+  const revisionBefore = scene.inspect({}).revision;
+  assert.throws(
+    () => applyOperations(scene, [{ type: 'fracture-node', node: 'wall', cells: 8, strength: 5 }]),
+    /node: got "wall"; expected a node without a physics body; the pieces get their own bodies, so drop the body of wall with set-physics first/,
+  );
+  assert.equal(scene.inspect({}).revision, revisionBefore);
+});

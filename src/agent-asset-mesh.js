@@ -25,8 +25,9 @@ export function normalizeMeshEditEntries(input, records) {
   const seen = new Set();
   const entries = [];
   for (const [index, entry] of input.entries()) {
-    const unknownKey = Object.keys(entry ?? {}).find(key => key !== 'id' && key !== 'edits');
-    if (!entry || typeof entry !== 'object' || unknownKey || !Array.isArray(entry.edits)) {
+    const isObject = entry !== null && typeof entry === 'object' && !Array.isArray(entry);
+    const unknownKey = isObject ? Object.keys(entry).find(key => key !== 'id' && key !== 'edits') : undefined;
+    if (!isObject || unknownKey || !Array.isArray(entry.edits)) {
       throw invalidField(`meshEdits[${index}]${unknownKey ? `.${unknownKey}` : ''}`, unknownKey ? entry[unknownKey] : entry, 'an object with only id and edits, such as { "id": "mesh-0", "edits": [] }', TypeError);
     }
     if (!records.some(record => record.id === entry.id) || seen.has(entry.id)) {

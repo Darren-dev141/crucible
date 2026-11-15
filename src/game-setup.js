@@ -8,6 +8,8 @@ import { parentTranslation } from './game-needs.js';
 export const GAME_CAMERAS = Object.freeze(['follow', 'first-person', 'top-down', 'chase']);
 export const GAME_INPUT_PRESETS = Object.freeze(['keyboard', 'gamepad', 'touch']);
 export const GAME_CONTROLLERS = Object.freeze(['character', 'vehicle']);
+// The actions startGame binds for every input preset (src/game.js); a rules input trigger can only name these.
+export const GAME_INPUT_ACTIONS = Object.freeze(['jump', 'run']);
 
 export const GAME_SETUP_LIMITS = Object.freeze({
   maxSpeed: 100,
@@ -76,7 +78,7 @@ function normalizePlayer(player, nodeIds, nodes, controllerNames) {
     maximumSpeed: boundedNumber(player.maximumSpeed, 20, 0, GAME_SETUP_LIMITS.maxVehicleSpeed, 'player.maximumSpeed'),
     footOffset: boundedNumber(player.footOffset, 0, -GAME_SETUP_LIMITS.maxFootOffset, GAME_SETUP_LIMITS.maxFootOffset, 'player.footOffset'),
   };
-  if (player.animation !== undefined) normalized.animation = normalizeGameAnimation(player.animation, nodes, player.node, { path: 'player.animation' });
+  if (player.animation !== undefined) normalized.animation = normalizeGameAnimation(player.animation, nodes, player.node, { path: 'player.animation', controller: normalized.controller });
   return normalized;
 }
 
@@ -135,6 +137,11 @@ function normalizeRules(rules, playerNode) {
   } catch (error) {
     throw new RangeError(`Game setup rules: ${error.message}`);
   }
+  checked.rules.forEach((rule, index) => {
+    if (rule.when.type === 'input' && !GAME_INPUT_ACTIONS.includes(rule.when.action)) {
+      fail(`rules.rules[${index}].when.action`, `is ${JSON.stringify(rule.when.action)}, which the game does not bind. Use one of: ${GAME_INPUT_ACTIONS.join(', ')}.`);
+    }
+  });
   if (!checked.parts.some(part => part.id === playerNode)) {
     fail('rules.parts', `has no part "${playerNode}", the player node. Add { "id": "${playerNode}", "tags": ["player"] } so zones can see the player.`);
   }

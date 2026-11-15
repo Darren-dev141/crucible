@@ -333,7 +333,8 @@ export function expandVegetation(recipe, limits, cache, placedRuntime) {
           translation: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1],
           geometry: geometryId, material: materialId, assetPart: { placement: node.id, index: instanceIndex, matrix: Array.from(instance.matrix) },
         });
-        if (part.shadowLods) runtime.partExtras.set(partNodeId, { shadowLods: part.shadowLods });
+        // `group` makes the growing node, not each generated part, the node that per-node lines and object IDs name.
+        runtime.partExtras.set(partNodeId, { group: node.id, ...(part.shadowLods ? { shadowLods: part.shadowLods } : {}) });
         triangles += part.geometry.indices.length / 3;
       });
     });

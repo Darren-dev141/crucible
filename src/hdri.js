@@ -1,5 +1,6 @@
 import { createSlicer } from './cooperative.js';
 import { createEnvironmentMap, MAXIMUM_ENVIRONMENT_SIZE } from './environment.js';
+import { alignEnvironmentRows } from './environment-orientation.js';
 
 const MAXIMUM_FILE_BYTES = 256 * 1024 ** 2;
 const MINIMUM_RUN_LENGTH_WIDTH = 8;
@@ -122,7 +123,7 @@ export async function loadHdri(url, { intensity, rotation, showBackground, backg
   const response = await fetchImplementation(url, { signal });
   if (!response.ok) throw new Error(`HDRI download failed: HTTP ${response.status}.`);
   const parsed = await parseRadianceHdrInSlices(await response.arrayBuffer(), createSlicer());
-  return createEnvironmentMap({ ...parsed, intensity, rotation, showBackground, backgroundBlur });
+  return createEnvironmentMap({ ...alignEnvironmentRows(parsed), intensity, rotation, showBackground, backgroundBlur });
 }
 
 export { createEnvironmentMap };
