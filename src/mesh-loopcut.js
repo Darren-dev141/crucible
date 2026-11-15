@@ -1,6 +1,9 @@
 import { editMesh } from './mesh-edit.js';
 import { MeshBuilder } from './mesh-stack.js';
 import { selectEdges, edgeFaces } from './mesh-bevel.js';
+import { requireNumberInRange, requireWholeNumberInRange } from './modeling-limits.js';
+
+export const MAX_LOOP_CUTS = 16;
 
 // Loop cut, as Blender's: an edge ring is walked across quads (from an edge to the opposite edge of each quad), every
 // ring edge is split into cuts + 1 pieces, and each quad of the ring is split into bands between the new points.
@@ -69,6 +72,8 @@ function edgeRings(edit, seeds, positionOf) {
  * `<name>.band-0` (low side) to `<name>.band-<cuts>`; they keep the face's other tags.
  */
 export function loopCut(mesh, edgeRule, { cuts = 1, factor = 0.5, name = 'loop' } = {}) {
+  requireWholeNumberInRange('loopCut', 'cuts', cuts, { minimum: 1, maximum: MAX_LOOP_CUTS, example: 1 });
+  requireNumberInRange('loopCut', 'factor', factor, { minimum: 0, maximum: 1, exclusiveMinimum: true, exclusiveMaximum: true, example: 0.5 });
   const table = edgeFaces(mesh);
   const seeds = [];
   selectEdges(mesh, edgeRule, table).forEach((selected, edge) => {

@@ -1,5 +1,6 @@
 import { createMeshData, deriveEdges } from './mesh-data.js';
 import { selectEdges, edgeFaces } from './mesh-bevel.js';
+import { requireNumberInRange, requireWholeNumberInRange } from './modeling-limits.js';
 
 // Catmull-Clark subdivision with semi-sharp creases, on the rules Pixar published and OpenSubdiv implements
 // (Sdc::Crease, "uniform" creasing): a crease of sharpness s acts fully sharp for s levels, and a fraction blends the
@@ -314,6 +315,8 @@ function refineLevel(level) {
  * and edge attributes follow each half of a split edge. Point attributes are not carried.
  */
 export function subdivideMesh(mesh, { levels = 1, crease, sharpness = MAX_CREASE_SHARPNESS } = {}) {
+  requireWholeNumberInRange('subdivideMesh', 'levels', levels, { minimum: 1, maximum: MAX_SUBDIVISION_LEVELS, example: 1 });
+  requireNumberInRange('subdivideMesh', 'sharpness', sharpness, { minimum: 0, maximum: MAX_CREASE_SHARPNESS, example: 2 });
   let level = {
     positions: Float64Array.from(mesh.positions),
     vertexCount: mesh.vertexCount, edgeCount: mesh.edgeCount, faceCount: mesh.faceCount, cornerCount: mesh.cornerCount,

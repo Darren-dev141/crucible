@@ -1,6 +1,8 @@
 // Spline sources for the curve geometry: arc, spiral and star primitives, poly and NURBS splines, and trimming.
 // Every function is deterministic and returns plain arrays; modeling.js validates the public input first.
 import { fillZeroTangents, resolveHandles, sampleBezierSpans } from './modeling-bezier.js';
+import { MAX_RESAMPLE_COUNT } from './curve-operations.js';
+import { requireWholeNumberInRange } from './modeling-limits.js';
 
 const TWO_PI = Math.PI * 2;
 export const NURBS_DEFAULT_ORDER = 4;
@@ -267,6 +269,7 @@ export function trimSamples(samples, closed, { start = 0, end = 1, length: byLen
 
 /** Spreads `count` samples evenly by arc length along an open curve, so curves of any length share one topology. */
 export function resampleSamples(samples, count) {
+  requireWholeNumberInRange('resampleSamples', 'count', count, { minimum: 2, maximum: MAX_RESAMPLE_COUNT, example: 12 });
   const { points, tangents } = samples;
   const distances = [0];
   for (let index = 1; index < points.length; index++) {

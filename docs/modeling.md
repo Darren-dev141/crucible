@@ -143,6 +143,7 @@ This bounds geometry size, not total browser memory.
 Account for maps, instance counts and render targets separately.
 Polygon intersection validation uses quadratic edge comparisons, bounded by the input limit.
 Nonfinite output, invalid normals and entirely collapsed Float32 meshes throw.
+The mesh library calls check the same limits as the recipe layer and throw an error that names the parameter, the value and the range: `bevelEdges` segments 1 to 16, `loopCut` cuts 1 to 16, `subdivideMesh` levels 1 to 4, finite `width`, `profile`, `factor`, `sharpness` and `distance`, a `bisectPlane` `point` and nonzero `normal`, `resampleCurve` and `resampleSamples` counts of at least 2 (closed curves: 1), and a `filletCurve` radius above 0 with no coincident points.
 Center small geometry near the origin and place it with part transforms when working at large world coordinates.
 
 ## API choice
