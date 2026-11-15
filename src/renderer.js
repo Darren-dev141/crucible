@@ -757,8 +757,9 @@ export class CrucibleRenderer {
     this.selectViewTransform(viewTransform, look);
     this.hdr = Boolean(hdr && !benchmark && this.context.getExtension('EXT_color_buffer_float'));
     if (volume.density > 0 && !this.hdr) throw new Error('Volume fog requires EXT_color_buffer_float for HDR rendering');
-    const requestedSamples = denseSamples === null ? samples : samplesForDensity(parts, canvas, pixelRatio, samples, denseSamples);
-    this.multisampleSamples = benchmark ? 0 : sampleCount(this.context, this.hdr ? this.context.RGBA16F : this.context.RGBA8, Math.min(shading === 'light' ? Math.min(requestedSamples, LIGHT_SHADING_MAXIMUM_SAMPLES) : requestedSamples, this.context.getParameter(this.context.MAX_SAMPLES)));
+    this.baseSamples = samples;
+    this.denseSamples = denseSamples;
+    this.multisampleSamples = this.chooseMultisampleSamples(parts);
     this.capabilities = { hdr: this.hdr, hdrRequested: Boolean(hdr), hdrFallbackReason: hdr && !this.hdr ? benchmark ? 'HDR is disabled in benchmark mode' : 'EXT_color_buffer_float is unavailable' : null, samples: this.multisampleSamples };
     this.geometryBytes = 0;
     this.geometryBuffers = new Map();
@@ -1054,6 +1055,14 @@ export class CrucibleRenderer {
       const uniform = context.getActiveUniform(this.program, index);
       if (uniform.type === context.SAMPLER_2D) context.uniform1iv(context.getUniformLocation(this.program, uniform.name), new Int32Array(uniform.size).fill(1));
     }
+  }
+
+  /** The MSAA sample count for these parts at the canvas's current size: `samples`, or `denseSamples` when the scene is dense (#1163). */
+  chooseMultisampleSamples(parts) {
+    if (this.benchmark) return 0;
+    const requestedSamples = this.denseSamples == null ? this.baseSamples : samplesForDensity(parts, this.canvas, this.pixelRatio, this.baseSamples, this.denseSamples);
+    const shaded = this.shading === 'light' ? Math.min(requestedSamples, LIGHT_SHADING_MAXIMUM_SAMPLES) : requestedSamples;
+    return sampleCount(this.context, this.hdr ? this.context.RGBA16F : this.context.RGBA8, Math.min(shaded, this.context.getParameter(this.context.MAX_SAMPLES)));
   }
 
   get samples() {
@@ -1932,10 +1941,17 @@ export class CrucibleRenderer {
   resize() {
     // A lost context answers every parameter query with null, so there is no size limit to plan against. This class has no restore path: the caller disposes the renderer and builds a new one when the context comes back.
     if (this.context.isContextLost()) return;
+    // A canvas that grew or shrank changes the triangles per pixel, so denseSamples is judged again; a new count needs new render targets.
+    const previousSamples = this.multisampleSamples;
+    if (this.denseSamples != null) {
+      this.multisampleSamples = this.chooseMultisampleSamples(this.fitParts);
+      this.capabilities.samples = this.multisampleSamples;
+    }
     const plan = planRenderSize({ width: Math.max(1, this.canvas.clientWidth), height: Math.max(1, this.canvas.clientHeight), pixelRatio: this.pixelRatio, samples: this.samples, memoryBudgetMiB: this.memoryBudgetMiB, geometryBytes: this.geometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !this.benchmark, depth: this.depth, maximumSize: Math.min(this.context.getParameter(this.context.MAX_RENDERBUFFER_SIZE), this.context.getParameter(this.context.MAX_TEXTURE_SIZE)), maximumMemoryBudgetMiB: this.maximumMemoryBudgetMiB });
     const { width, height } = plan;
     this.memoryPlan = plan;
-    if (this.canvas.width !== width || this.canvas.height !== height) {
+    const sizeChanged = this.canvas.width !== width || this.canvas.height !== height;
+    if (sizeChanged || this.multisampleSamples !== previousSamples) {
       this.canvas.width = width;
       this.canvas.height = height;
       if (!this.benchmark) this.allocateFrameTargets(width, height);
