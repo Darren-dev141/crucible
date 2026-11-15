@@ -15,12 +15,13 @@ test('a game setup whose nodes have a parent cycle answers instead of hanging', 
     try {
       normalizeGameSetup({ player: { node: 'hero' }, npcs: [{ node: 'a', path: [[0, 0]], animation }] }, nodes);
     } catch (error) {
-      console.log('threw');
+      console.log(error.message);
     }
   `;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 8000, encoding: 'utf8' });
   assert.notEqual(result.error?.code, 'ETIMEDOUT', 'normalizeGameSetup never returned');
   assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /Invalid array length/, 'a parent cycle must not grow the descendant walk without bound');
 });
 
 function walkGraph() {
