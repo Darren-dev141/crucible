@@ -304,6 +304,9 @@ function surfaceInWorld(geometry, matrix) {
       positions[offset + axis] = matrix[axis] * geometry.positions[offset] + matrix[4 + axis] * geometry.positions[offset + 1] + matrix[8 + axis] * geometry.positions[offset + 2] + matrix[12 + axis];
       normals[offset + axis] = normalMatrix[axis] * geometry.normals[offset] + normalMatrix[3 + axis] * geometry.normals[offset + 1] + normalMatrix[6 + axis] * geometry.normals[offset + 2];
     }
+    // A scaled node shrinks or stretches the inverse-transpose normal; callers need unit normals for speeds and orientation.
+    const length = Math.hypot(normals[offset], normals[offset + 1], normals[offset + 2]) || 1;
+    for (let axis = 0; axis < 3; axis++) normals[offset + axis] /= length;
   }
   return { positions, normals };
 }

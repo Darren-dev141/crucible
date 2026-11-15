@@ -20,6 +20,8 @@ export const OCCLUDED_GAIN_LOSS = 0.7;
 const OCCLUDED_LOW_PASS_HERTZ = 400;
 const OPEN_LOW_PASS_HERTZ = 20000;
 const PARAMETER_SMOOTHING_SECONDS = 0.01;
+const MINIMUM_VOICE_PITCH = 0.1;
+const MAXIMUM_VOICE_PITCH = 16;
 const DISTANCE_MODELS = ['inverse', 'linear', 'exponential'];
 const GESTURE_EVENTS = ['pointerdown', 'keydown', 'touchend'];
 
@@ -495,14 +497,16 @@ export function createAudio(options = {}) {
     startBackend();
     const volume = sound.volume * requireNumberInRange(playOptions.volume ?? 1, `play ${soundName} volume`, 0, 4);
     const variance = sound.pitchVariance === 0 ? 0 : (random() * 2 - 1) * sound.pitchVariance;
-    const pitch = sound.pitch * requireNumberInRange(playOptions.pitch ?? 1, `play ${soundName} pitch`, 0.1, 4) * (1 + variance);
+    const basePitch = requireNumberInRange(sound.pitch * requireNumberInRange(playOptions.pitch ?? 1, `play ${soundName} pitch`, 0.1, 4), `play ${soundName} resulting pitch`, MINIMUM_VOICE_PITCH, MAXIMUM_VOICE_PITCH);
+    // Random variance is the sound's own setting, so it must never make a valid play throw; it stays inside the playable range.
+    const pitch = Math.min(Math.max(basePitch * (1 + variance), MINIMUM_VOICE_PITCH), MAXIMUM_VOICE_PITCH);
     const voice = {
       id: nextVoiceId,
       sound,
       node: playOptions.node ?? null,
       position: null,
       volume,
-      pitch: requireNumberInRange(pitch, `play ${soundName} resulting pitch`, 0.1, 16),
+      pitch,
       loop: playOptions.loop ?? sound.loop,
       occlusion: 0,
       level: 0,
