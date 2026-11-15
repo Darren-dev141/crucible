@@ -38,6 +38,43 @@ export const TEMPORAL_DEFAULTS = Object.freeze({
   viewAgreement: 0.995,
 });
 
+// A depth step is wider than the slope of a surface seen at a grazing angle, which crosses a few percent between neighbours.
+const STEP_TOLERANCE_FACTOR = 4;
+
+/**
+ * The nearest and the farthest hit among a pixel and its eight neighbours (misses leave the range out), and whether the
+ * two differ by more than `STEP_TOLERANCE_FACTOR` times `depthTolerance` (a slanted floor or wall must not count): the pixel then sits on a depth step, such as the edge of a leaf in front of a
+ * room. Under depth of field the first hit of such a pixel changes between frames from one sample to the next.
+ */
+function computeDepthRanges(depth, width, height, depthTolerance) {
+  const nearest = new Float32Array(depth.length);
+  const farthest = new Float32Array(depth.length);
+  const onStep = new Uint8Array(depth.length);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let low = Infinity;
+      let high = 0;
+      for (let rowOffset = -1; rowOffset <= 1; rowOffset++) {
+        const row = y + rowOffset;
+        if (row < 0 || row >= height) continue;
+        for (let columnOffset = -1; columnOffset <= 1; columnOffset++) {
+          const column = x + columnOffset;
+          if (column < 0 || column >= width) continue;
+          const neighbour = depth[row * width + column];
+          if (neighbour <= 0) continue;
+          low = Math.min(low, neighbour);
+          high = Math.max(high, neighbour);
+        }
+      }
+      const pixel = y * width + x;
+      nearest[pixel] = high > 0 ? low : 0;
+      farthest[pixel] = high;
+      onStep[pixel] = high - low > STEP_TOLERANCE_FACTOR * depthTolerance * high ? 1 : 0;
+    }
+  }
+  return { nearest, farthest, onStep };
+}
+
 function requirePlane(plane, name, floatsPerPixel, pixelCount) {
   if (!(plane instanceof Float32Array) || plane.length !== pixelCount * floatsPerPixel) {
     const got = plane instanceof Float32Array ? `a Float32Array of ${plane.length}` : typeof plane;
@@ -175,41 +212,33 @@ export function createTemporalAccumulator(options = {}) {
     const restarted = reasonToRestart(kernelParams, sceneChanged, camera);
     const blended = new Float32Array(pixelCount * 3);
     const counts = new Float32Array(pixelCount);
+    const depthRanges = computeDepthRanges(depth, width, height, settings.depthTolerance);
     let pixelsWithHistory = 0;
     if (restarted !== null) {
       blended.set(color);
       counts.fill(1);
     } else {
       const minimumShare = sameCameraBytes(history.kernelParams, kernelParams) ? 0 : settings.minimumWeight;
-      pixelsWithHistory = blendWithHistory({ color, depth, normal, camera, blended, counts, minimumShare });
+      pixelsWithHistory = blendWithHistory({ color, depth, normal, camera, blended, counts, minimumShare, depthRanges });
     }
-    history = { color: blended, depth, normal, counts, camera, kernelParams: Uint8Array.from(kernelParams) };
+    history = { color: blended, depth, normal, depthRanges, counts, camera, kernelParams: Uint8Array.from(kernelParams) };
     pendingRestartReason = null;
     return { color: blended, historyShare: pixelsWithHistory / pixelCount, restarted };
   }
 
   // Writes `blended` and `counts`, and returns how many pixels found their surface in the history.
-  function blendWithHistory({ color, depth, normal, camera, blended, counts, minimumShare }) {
+  function blendWithHistory({ color, depth, normal, camera, blended, counts, minimumShare, depthRanges }) {
     const past = history;
     const pastCamera = past.camera;
     const { position, forward, right, up, lensShift } = camera;
     let pixelsWithHistory = 0;
-    const debugTally = process.env.JS67_TEMPORAL_DEBUG ? { edge: 0, noDistance: 0, behind: 0, offscreen: 0, view: 0, depthRejectsAll: 0, normalRejectsAll: 0, lowFetch: 0, accepted: 0, partialDepth: 0 } : null;
     for (let y = 0; y < height; y++) {
       const sensorY = 1 - ((y + 0.5) / height) * 2 + 2 * lensShift[1];
       for (let x = 0; x < width; x++) {
         const pixel = y * width + x;
         const colorIndex = pixel * 3;
         const distance = depth[pixel];
-        let edgeHere = false;
-        if (debugTally) {
-          for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
-            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-            const other = depth[ny * width + nx];
-            if (Math.abs(other - distance) > settings.depthTolerance * Math.max(other, distance, 1e-6)) edgeHere = true;
-          }
-          if (edgeHere) debugTally.cornersTried = (debugTally.cornersTried ?? 0) + 4;
-        }
+        const pixelOnStep = depthRanges.onStep[pixel] === 1;
         let pastRed = 0;
         let pastGreen = 0;
         let pastBlue = 0;
@@ -228,7 +257,6 @@ export function createTemporalAccumulator(options = {}) {
           const offsetY = position[1] + directionY - pastCamera.position[1];
           const offsetZ = position[2] + directionZ - pastCamera.position[2];
           const along = offsetX * pastCamera.forward[0] + offsetY * pastCamera.forward[1] + offsetZ * pastCamera.forward[2];
-          if (edgeHere && !(along > 1e-4)) debugTally.behind += 1;
           if (along > 1e-4) {
             const pastSensorX = (offsetX * pastCamera.right[0] + offsetY * pastCamera.right[1] + offsetZ * pastCamera.right[2]) / (along * pastCamera.rightSquaredLength);
             const pastSensorY = (offsetX * pastCamera.up[0] + offsetY * pastCamera.up[1] + offsetZ * pastCamera.up[2]) / (along * pastCamera.upSquaredLength);
@@ -240,8 +268,6 @@ export function createTemporalAccumulator(options = {}) {
             const expectedDistance = Math.hypot(offsetX, offsetY, offsetZ);
             const viewCosine = (offsetX * directionX + offsetY * directionY + offsetZ * directionZ) / (expectedDistance * distance);
             const onScreen = sourceX >= -0.5 && sourceY >= -0.5 && sourceX <= width - 0.5 && sourceY <= height - 0.5;
-            if (edgeHere && !onScreen) debugTally.offscreen += 1;
-            if (edgeHere && onScreen && !(viewCosine >= settings.viewAgreement)) debugTally.view += 1;
             if (onScreen && viewCosine >= settings.viewAgreement) {
               const allowedDifference = settings.depthTolerance * expectedDistance;
               const fractionX = sourceX - left;
@@ -257,15 +283,22 @@ export function createTemporalAccumulator(options = {}) {
                 const sourceColumn = Math.min(width - 1, Math.max(0, left + cornerX));
                 const sourceRow = Math.min(height - 1, Math.max(0, top + cornerY));
                 const source = sourceRow * width + sourceColumn;
-                if (Math.abs(past.depth[source] - expectedDistance) > allowedDifference) {
-                  if (edgeHere) debugTally.depthRejectsAll += 1;
-                  continue;
-                }
                 const sourceIndex = source * 3;
-                const agreement = normalX * past.normal[sourceIndex] + normalY * past.normal[sourceIndex + 1] + normalZ * past.normal[sourceIndex + 2];
-                if (agreement < settings.normalAgreement) {
-                  if (edgeHere) debugTally.normalRejectsAll += 1;
-                  continue;
+                if (Math.abs(past.depth[source] - expectedDistance) > allowedDifference) {
+                  // A step in both frames: the hit of a blurred edge pixel is a draw between the surfaces on either side, so
+                  // the history counts when its depth lies within the range this frame saw around the pixel. A surface that
+                  // only just stepped in front of a flat one has no step in the frame before and starts again.
+                  const sameStep = pixelOnStep && past.depthRanges.onStep[source] === 1
+                    && past.depth[source] >= expectedDistance * (depthRanges.nearest[pixel] / distance) - allowedDifference
+                    && past.depth[source] <= expectedDistance * (depthRanges.farthest[pixel] / distance) + allowedDifference;
+                  if (!sameStep) {
+                    continue;
+                  }
+                } else {
+                  const agreement = normalX * past.normal[sourceIndex] + normalY * past.normal[sourceIndex + 1] + normalZ * past.normal[sourceIndex + 2];
+                  if (agreement < settings.normalAgreement) {
+                    continue;
+                  }
                 }
                 pastRed += past.color[sourceIndex] * weight;
                 pastGreen += past.color[sourceIndex + 1] * weight;
@@ -275,12 +308,6 @@ export function createTemporalAccumulator(options = {}) {
               }
             }
           }
-        }
-        if (debugTally && edgeHere) {
-          debugTally.edge += 1;
-          if (distance <= 0) debugTally.noDistance += 1;
-          else if (fetchWeight > settings.minimumFetchWeight) debugTally.accepted += 1;
-          else debugTally.lowFetch += 1;
         }
         if (fetchWeight > settings.minimumFetchWeight) {
           const count = pastCount / fetchWeight + 1;
@@ -298,11 +325,6 @@ export function createTemporalAccumulator(options = {}) {
           counts[pixel] = 1;
         }
       }
-    }
-    if (debugTally) {
-      globalThis.JS67_TEMPORAL_TALLIES = (globalThis.JS67_TEMPORAL_TALLIES ?? []);
-      globalThis.JS67_TEMPORAL_TALLIES.push(debugTally);
-      import('node:fs').then(({ appendFileSync }) => appendFileSync(process.env.JS67_TEMPORAL_DEBUG, JSON.stringify(debugTally) + String.fromCharCode(10)));
     }
     return pixelsWithHistory;
   }

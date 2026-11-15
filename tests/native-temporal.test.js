@@ -224,3 +224,44 @@ test('each frame of a blended job gets its own seed, and the switch reads the en
   assert.equal(chooseNativeTemporal({}), true);
   assert.equal(chooseNativeTemporal({ JS67_NATIVE_TEMPORAL: 'off' }), false);
 });
+
+function nearColumns(frame, columns) {
+  for (let row = 0; row < HEIGHT; row++) {
+    for (const column of columns) {
+      frame.depth[row * WIDTH + column] *= 0.5;
+    }
+  }
+}
+
+test('a pixel on a depth step in both frames keeps the history of a texel inside the range around it (#1214)', () => {
+  const accumulator = createTemporalAccumulator({ width: WIDTH, height: HEIGHT });
+  const kernelParams = paramsForCamera([0, 0, 0]);
+  const before = flatFrame(1);
+  nearColumns(before, [10]);
+  accumulator.accumulate({ ...before, kernelParams });
+  const next = flatFrame(0);
+  nearColumns(next, [9]);
+  const result = accumulator.accumulate({ ...next, kernelParams });
+  const edgePixel = 10 * WIDTH + 10;
+  assert.ok(Math.abs(result.color[edgePixel * 3] - 0.5) < 1e-6, 'the blurred edge pixel blends with its history');
+  assert.ok(result.historyShare > (PIXEL_COUNT - HEIGHT * 3) / PIXEL_COUNT, 'the step pixels count as found in the frame before');
+});
+
+test('a step that is new in this frame starts again, and so does a past depth outside the range (#1214)', () => {
+  const accumulator = createTemporalAccumulator({ width: WIDTH, height: HEIGHT });
+  const kernelParams = paramsForCamera([0, 0, 0]);
+  const before = flatFrame(1);
+  accumulator.accumulate({ ...before, kernelParams });
+  const next = flatFrame(0);
+  nearColumns(next, [9, 10]);
+  const result = accumulator.accumulate({ ...next, kernelParams });
+  assert.equal(result.color[(10 * WIDTH + 10) * 3], 0, 'the past frame had no step there, so a surface that stepped in trails nothing');
+  const secondAccumulator = createTemporalAccumulator({ width: WIDTH, height: HEIGHT });
+  const farBefore = flatFrame(1);
+  nearColumns(farBefore, [10]);
+  secondAccumulator.accumulate({ ...farBefore, kernelParams });
+  const farNext = flatFrame(0);
+  nearColumns(farNext, [20]);
+  const farResult = secondAccumulator.accumulate({ ...farNext, kernelParams });
+  assert.equal(farResult.color[(10 * WIDTH + 10) * 3], 0, 'a texel whose depth no neighbour of the pixel reaches is another surface');
+});
