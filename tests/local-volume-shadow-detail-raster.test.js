@@ -10,6 +10,9 @@ import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
 import { encodePng } from '../src/export-png.js';
 
 const SIZE = 96;
+const STILL_SIZE_DEFAULT = SIZE;
+const STILL_SIZE = 512;
+const DIFFERENCE_GAIN = 8;
 
 async function startServer(port) {
   const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -33,7 +36,7 @@ const SMOKE = { shape: 'box', center: [0, 1.5, 0], size: [2.2, 1.5, 2.2], densit
 const SUN = { keyColor: [3, 3, 3], lightDirection: [1, 0.1, 0], keyIntensity: 1, fillIntensity: 0, skyTop: [0.15, 0.15, 0.15], skyBottom: [0.15, 0.15, 0.15] };
 const LOOKING_DOWN = { eye: [0, 3, 0], target: [0, 0, 0], up: [0, 0, -1], fov: 40 };
 
-async function rasterFrames(page, volumeLists) {
+async function rasterFrames(page, volumeLists, size = SIZE) {
   const task = async ({ size, lists, camera, light }) => {
     const { box } = await import('/src/geometry.js');
     const { CrucibleRenderer } = await import('/src/renderer.js');
@@ -58,7 +61,7 @@ async function rasterFrames(page, volumeLists) {
     renderer.dispose?.();
     return { frames, glError };
   };
-  return page.evaluate(task, { size: SIZE, lists: volumeLists, camera: LOOKING_DOWN, light: SUN });
+  return page.evaluate(task, { size, lists: volumeLists, camera: LOOKING_DOWN, light: SUN });
 }
 
 // Mean green of the left (away from the sun) and right (toward the sun) halves of the middle band, where the smoke box is.
@@ -96,7 +99,7 @@ function detailOf(frame) {
   return Math.sqrt(total / count);
 }
 
-function writeStill(path, frames) {
+function writeStill(path, frames, SIZE = STILL_SIZE_DEFAULT) {
   const pixels = new Uint8Array(SIZE * frames.length * SIZE * 4);
   frames.forEach((frame, index) => {
     for (let row = 0; row < SIZE; row++) {
@@ -109,6 +112,12 @@ function writeStill(path, frames) {
     }
   });
   writeFileSync(path, encodePng(pixels, SIZE * frames.length, SIZE));
+}
+
+// The two frames side by side and, as a third panel, their absolute difference times DIFFERENCE_GAIN.
+function writeComparisonStill(path, before, after, size) {
+  const difference = before.map((value, index) => (index % 4 === 3 ? 1 : Math.abs(after[index] - value) * DIFFERENCE_GAIN));
+  writeStill(path, [before, after, difference], size);
 }
 
 test('shadowDetail makes the side of a noisy smoke box away from the sun darker than its sunlit side, and off draws as before', async context => {
@@ -142,8 +151,9 @@ test('shadowDetail makes the side of a noisy smoke box away from the sun darker 
     const folder = process.env.SHADOW_DETAIL_ARTIFACTS;
     if (folder) {
       mkdirSync(folder, { recursive: true });
-      writeStill(join(folder, 'shadow-detail-before-after.png'), [off, on]);
-      writeFileSync(join(folder, 'shadow-detail.json'), JSON.stringify({ volume: SMOKE, farOverNear: { off: smoothRatio, on: detailedRatio }, structure: { off: detailOf(off), on: detailOf(on) }, note: 'Left: shadowDetail false. Right: true. Smoke box seen from above, sun from +x (the right half), 96 px rasterizer.' }, null, 2) + '\n');
+      const { frames: [stillOff, stillOn] } = await rasterFrames(page, [[{ ...SMOKE, shadowDetail: false }], [{ ...SMOKE, shadowDetail: true }]], STILL_SIZE);
+      writeComparisonStill(join(folder, 'shadow-detail-before-after.png'), stillOff, stillOn, STILL_SIZE);
+      writeFileSync(join(folder, 'shadow-detail.json'), JSON.stringify({ volume: SMOKE, farOverNear: { off: smoothRatio, on: detailedRatio }, structure: { off: detailOf(off), on: detailOf(on) }, note: 'Left: shadowDetail false. Middle: true. Right: absolute difference times 8 (512 px panels, the pass assertions use 96 px). Smoke box seen from above, sun from +x (the right half), 96 px rasterizer.' }, null, 2) + '\n');
     }
     assert.ok(detailedRatio < 0.85, 'far side over near side is ' + detailedRatio + ' with shadowDetail and ' + smoothRatio + ' without');
     assert.ok(detailOf(on) > detailOf(off) * 1.05, 'shadowDetail should add shading structure: ' + detailOf(on) + ' against ' + detailOf(off));
