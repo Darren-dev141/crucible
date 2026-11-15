@@ -105,9 +105,20 @@ test('on a WebGPU adapter a portal keeps the mean of a room lit through a window
     }
     const page = await browser.newPage({ viewport: { width: 128, height: 128 } });
     await page.goto(`http://127.0.0.1:${port}/`);
-    if (!await page.evaluate(async () => Boolean(navigator.gpu && await navigator.gpu.requestAdapter()))) {
-      // Most CI runners have no adapter, so this skips there too instead of failing the shard.
-      context.skip('Chrome has no WebGPU adapter');
+    const adapter = await page.evaluate(async () => {
+      const found = navigator.gpu ? await navigator.gpu.requestAdapter() : null;
+      if (!found) return null;
+      const info = found.info ?? {};
+      const description = [info.vendor, info.architecture, info.device, info.description].join(' ');
+      return { software: Boolean(found.isFallbackAdapter || info.isFallbackAdapter) || /swiftshader|llvmpipe|software|lavapipe/i.test(description), description };
+    });
+    if (!adapter) {
+      skipOrThrow(context, 'Chrome has no WebGPU adapter');
+      return;
+    }
+    if (adapter.software) {
+      // The CI runners expose a software adapter (SwiftShader) that took over five minutes on this room, so the check runs on real hardware only.
+      context.skip(`the WebGPU adapter is software (${adapter.description.trim()}) and traces this room too slowly`);
       return;
     }
     const spp = process.env.CI ? 16 : 64;
