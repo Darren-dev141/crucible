@@ -24,17 +24,23 @@ async function startServer(port) {
   return server;
 }
 
-// The Google Chrome install ships dxcompiler.dll, which Dawn needs to compile the path tracer kernel for D3D12 on Windows; the bundled test Chromium does not, and its FXC fallback fails on the kernel.
-async function launchWebGpuChrome(chromium) {
-  try {
-    return await chromium.launch({ headless: true, channel: 'chrome', args: WEBGPU_ARGUMENTS });
-  } catch {
-    return chromium.launch({ headless: true, args: WEBGPU_ARGUMENTS });
+// The Google Chrome install ships dxcompiler.dll, which Dawn uses to compile the path tracer kernel for D3D12 on Windows. The bundled test Chromium does not,
+// so there Dawn is told to use FXC, which compiles the kernel since #1350 (without that flag the bundled Chromium cannot create a device at all).
+const BUNDLED_WINDOWS_ARGUMENTS = process.platform === 'win32' ? ['--disable-dawn-features=use_dxc'] : [];
+
+async function launchWebGpuChrome(chromium, { bundled = false } = {}) {
+  if (!bundled) {
+    try {
+      return await chromium.launch({ headless: true, channel: 'chrome', args: WEBGPU_ARGUMENTS });
+    } catch {
+      // Falls through to the bundled Chromium.
+    }
   }
+  return chromium.launch({ headless: true, args: [...WEBGPU_ARGUMENTS, ...BUNDLED_WINDOWS_ARGUMENTS] });
 }
 
-/** Runs `body(page)` on the dev server's page in headless Chrome with a WebGPU adapter, and cleans up. */
-export async function withWebGpuPage(testContext, body) {
+/** Runs `body(page)` on the dev server's page in headless Chrome with a WebGPU adapter, and cleans up. `{ bundled: true }` uses the bundled Chromium, not the Chrome install. */
+export async function withWebGpuPage(testContext, body, options = {}) {
   let chromium;
   try {
     ({ chromium } = await import('playwright'));
@@ -47,7 +53,7 @@ export async function withWebGpuPage(testContext, body) {
   let browser;
   try {
     try {
-      browser = await launchWebGpuChrome(chromium);
+      browser = await launchWebGpuChrome(chromium, options);
     } catch (error) {
       skipOrThrow(testContext, `Chrome did not start: ${error.message.split('\n')[0]}`);
       return;
