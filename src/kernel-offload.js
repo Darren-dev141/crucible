@@ -185,10 +185,32 @@ function abortError(signal) {
   return signal.reason ?? new DOMException('The build was cancelled.', 'AbortError');
 }
 
-/** One job on one worker: resolves with the worker's answer, or rejects when the worker itself fails. */
-function requestKernel(worker, job, signal) {
+// A worker that is gone without an error event never answers; the page can only notice by waiting.
+const DEFAULT_KERNEL_TIMEOUT_MILLISECONDS = 60000;
+const MAXIMUM_KERNEL_TIMEOUT_MILLISECONDS = 3600000;
+
+function validateKernelTimeout(milliseconds) {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0 || milliseconds > MAXIMUM_KERNEL_TIMEOUT_MILLISECONDS) {
+    throw new RangeError(`kernelTimeoutMilliseconds must be a finite number above 0 and at most ${MAXIMUM_KERNEL_TIMEOUT_MILLISECONDS}, got ${milliseconds}. Omit it for ${DEFAULT_KERNEL_TIMEOUT_MILLISECONDS}.`);
+  }
+}
+
+/** One job on one worker: resolves with the worker's answer, or rejects when the worker fails or stays silent too long. */
+function requestKernel(worker, job, signal, timeoutMilliseconds) {
   return new Promise((resolve, reject) => {
-    const cleanUp = () => signal?.removeEventListener('abort', onAbort);
+    const timer = setTimeout(() => {
+      cleanUp();
+      const error = new Error(`Kernel worker gave no answer for ${job.name} within ${timeoutMilliseconds} ms.`);
+      error.timedOut = true;
+      reject(error);
+    }, timeoutMilliseconds);
+    const cleanUp = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      worker.onmessage = null;
+      worker.onerror = null;
+      worker.onmessageerror = null;
+    };
     const onAbort = () => {
       cleanUp();
       reject(abortError(signal));
@@ -220,7 +242,8 @@ function requestKernel(worker, job, signal) {
  * built from identical bytes. `createWorker` replaces the browser Worker (tests, other hosts); `signal` cancels the
  * build and ends the worker. Hosts without workers just run the build.
  */
-export async function buildWithKernels(build, { createWorker = defaultWorkerFactory, signal, available = kernelWorkersAvailable(), pageKernels } = {}) {
+export async function buildWithKernels(build, { createWorker = defaultWorkerFactory, signal, available = kernelWorkersAvailable(), pageKernels, kernelTimeoutMilliseconds = DEFAULT_KERNEL_TIMEOUT_MILLISECONDS } = {}) {
+  validateKernelTimeout(kernelTimeoutMilliseconds);
   if (!available || activeSession) {
     return build();
   }
@@ -249,7 +272,7 @@ export async function buildWithKernels(build, { createWorker = defaultWorkerFact
           continue;
         }
         worker ??= createWorkerOrNull(createWorker);
-        await computeOnWorker(session, worker, error.job, signal);
+        await computeOnWorker(session, worker, error.job, signal, kernelTimeoutMilliseconds);
       } finally {
         activeSession = null;
       }
@@ -287,7 +310,7 @@ function createWorkerOrNull(createWorker) {
 
 // A worker that cannot start or dies leaves the job to the inline path, which then does the work and raises its own
 // errors, so a failure never depends on the worker.
-async function computeOnWorker(session, worker, job, signal) {
+async function computeOnWorker(session, worker, job, signal, timeoutMilliseconds) {
   if (!worker) {
     session.inlineKeys.add(job.key);
     recordFallback(job.name, `the worker could not start: ${workerStartFailure}`);
@@ -295,10 +318,15 @@ async function computeOnWorker(session, worker, job, signal) {
   }
   let answer;
   try {
-    answer = await requestKernel(worker, job, signal);
+    answer = await requestKernel(worker, job, signal, timeoutMilliseconds);
   } catch (error) {
     if (signal?.aborted) {
       throw error;
+    }
+    if (error.timedOut) {
+      // A silent worker may be gone for good: end it and finish the build inline instead of waiting once per kernel.
+      worker.terminate();
+      session.inlineAll = true;
     }
     session.inlineKeys.add(job.key);
     recordFallback(job.name, `the worker failed: ${error.message}`);

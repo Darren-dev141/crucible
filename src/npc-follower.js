@@ -249,7 +249,8 @@ export function createPathFollower(options = {}) {
           follower.step(stepSeconds);
         },
         update(deltaSeconds, context) {
-          if (context.mode === 'variable') follower.step(deltaSeconds);
+          // The first frame of the loop has a delta of 0; a frame path skips it, since step() refuses a step of 0.
+          if (context.mode === 'variable' && deltaSeconds > 0) follower.step(deltaSeconds);
         },
       };
     },

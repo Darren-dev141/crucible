@@ -14,9 +14,11 @@ function numberIn(owner, label, value, fallback, minimum, maximum) {
 }
 
 // Exponential approach with a time constant, driven by the pose time. The first call, a jump back in time and a long gap snap to the goal.
+// A time that is not a number moves nothing and is not remembered: one bad frame must not leave the smoothed value NaN for good.
 function createSmoother(smoothSeconds) {
   let lastTime = null;
   return function amount(time) {
+    if (!Number.isFinite(time)) return 0;
     const elapsed = lastTime === null ? Infinity : time - lastTime;
     if (elapsed === 0) return 0;
     lastTime = time;

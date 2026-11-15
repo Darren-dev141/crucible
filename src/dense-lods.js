@@ -1,4 +1,4 @@
-import { generateGeometryLods, DEFAULT_LOD_RATIOS } from './mesh-lod.js';
+import { generateGeometryLods, checkRatios, DEFAULT_LOD_RATIOS } from './mesh-lod.js';
 import { MAXIMUM_SIMPLIFY_TRIANGLES } from './geometry-simplify.js';
 import { DENSE_TRIANGLES_PER_PIXEL, partTakesLods } from './renderer.js';
 
@@ -23,6 +23,8 @@ export function trianglesPerPixel(parts, pixels) {
  */
 export function addLodsToDenseParts(parts, { pixels, minimumTrianglesPerPixel = DENSE_TRIANGLES_PER_PIXEL, minimumTriangles = DEFAULT_MINIMUM_TRIANGLES, ratios = DEFAULT_LOD_RATIOS } = {}) {
   if (!Array.isArray(parts)) throw new TypeError('parts must be the array of parts that goes to CrucibleRenderer.');
+  // Checked here so bad ratios fail on a sparse scene too, not only on the frame a scene turns dense.
+  checkRatios(ratios);
   if (trianglesPerPixel(parts, pixels) <= minimumTrianglesPerPixel) return parts;
   const levelsByGeometry = new Map();
   return parts.map(part => {

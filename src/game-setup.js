@@ -84,8 +84,10 @@ function normalizePlayer(player, nodeIds, nodes, controllerNames) {
 
 function isAncestor(nodes, ancestorId, nodeId) {
   const parentById = new Map(nodes.map(node => [node.id, node.parent]));
-  for (let id = parentById.get(nodeId); id !== undefined; id = parentById.get(id)) {
+  const visited = new Set([nodeId]);
+  for (let id = parentById.get(nodeId); id !== undefined && !visited.has(id); id = parentById.get(id)) {
     if (id === ancestorId) return true;
+    visited.add(id);
   }
   return false;
 }
