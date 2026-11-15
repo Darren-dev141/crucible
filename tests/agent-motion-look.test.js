@@ -163,3 +163,18 @@ test('a sunset changes the sun and sky between two frames of a render', async (c
     server.kill();
   }
 });
+
+test('a recipe path such as environment.lightDirection is not a track; the error names the sun track that moves the key light (#1342)', () => {
+  const pathTrack = { target: 'environment.lightDirection', keyframes: keys([0.3, 0.9, 0.2], [-0.6, 0.5, 0.1]) };
+  assert.throws(() => createAgentScene(sceneRecipe([pathTrack])), /motion\.tracks\[0\]\.target.*not a path.*use \{ "kind": "sun", "property": "direction" \}.*an HDRI included/);
+  assert.throws(() => createAgentScene(sceneRecipe([{ ...pathTrack, target: 'environment.keyIntensity' }])), /"property": "intensity"/);
+  assert.throws(() => createAgentScene(sceneRecipe([{ ...pathTrack, target: 'effects.exposure' }])), /kinds: node, material, camera/);
+});
+
+test('a sun direction track sweeps the key light under a world sky as it does without one (#1342)', () => {
+  for (const environment of [{}, { world: true }]) {
+    const scene = createAgentScene(sceneRecipe([{ kind: 'sun', property: 'direction', keyframes: keys([0.3, 0.9, 0.2], [-0.6, 0.5, 0.1]) }], { environment }));
+    scene.sampleMotion(2);
+    assert.deepEqual(scene.environment.lightDirection.map(value => Number(value.toFixed(3))), [-0.6, 0.5, 0.1]);
+  }
+});
