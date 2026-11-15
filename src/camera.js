@@ -63,7 +63,7 @@ export function cameraFieldOfView(frame, aspect) {
 
 export const MAX_APERTURE_BLADES = 64;
 
-function requirePositiveFinite(value, name) {
+export function requirePositiveFinite(value, name) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     throw new RangeError(`Camera ${name} must be a positive finite number, got ${JSON.stringify(value)}.`);
   }
