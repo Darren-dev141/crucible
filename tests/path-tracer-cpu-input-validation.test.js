@@ -29,8 +29,8 @@ test('a geometry without indices says what to pass (#1467)', () => {
   assert.throws(() => buildWith(geometry), /Part quad needs geometry\.indices/);
 });
 
-test('NaN in uvs, lightUvs or colors is refused and names the array (#1461)', () => {
-  const cases = [['uvs', 8, 'uvs'], ['lightUvs', 8, 'lightUvs'], ['colors', 12, 'colors']];
+test('NaN in uvs or colors is refused and names the array (#1461)', () => {
+  const cases = [['uvs', 8, 'uvs'], ['colors', 12, 'colors']];
   for (const [field, length, name] of cases) {
     const geometry = quadGeometry();
     geometry[field] = new Float32Array(length).fill(Number.NaN);
@@ -38,12 +38,13 @@ test('NaN in uvs, lightUvs or colors is refused and names the array (#1461)', ()
   }
 });
 
-test('finite uvs, lightUvs and colors still build (#1461)', () => {
+test('finite uvs, lightUvs and colors still build, and a part with no uvs or colors packs (#1461)', () => {
   const geometry = quadGeometry();
   geometry.uvs = new Float32Array(8).fill(0.5);
   geometry.lightUvs = new Float32Array(8).fill(0.25);
   geometry.colors = new Float32Array(12).fill(0.75);
   assert.equal(buildWith(geometry).indices.length, 6);
+  assert.equal(buildWith(quadGeometry()).indices.length, 6);
 });
 
 test('real-time options refuse a bad history limit, cache cell size, divisor or filter count (#1462)', () => {

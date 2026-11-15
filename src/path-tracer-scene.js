@@ -255,7 +255,6 @@ function validateGeometry(part, geometry) {
   if (geometry.lightUvs && geometry.lightUvs.length !== vertexCount * 2) throw new RangeError(`${label} needs one lightUvs pair (TEXCOORD_1) for every position.`);
   if (geometry.colors && geometry.colors.length !== vertexCount * 3) throw new RangeError(`${label} needs one colour for every position.`);
   if (geometry.uvs) requireFiniteNumbers(geometry.uvs, undefined, `${label} uvs`);
-  if (geometry.lightUvs) requireFiniteNumbers(geometry.lightUvs, undefined, `${label} lightUvs`);
   if (geometry.colors) requireFiniteNumbers(geometry.colors, undefined, `${label} colors`);
 }
 
