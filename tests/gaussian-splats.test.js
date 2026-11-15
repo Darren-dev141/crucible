@@ -215,3 +215,20 @@ test('createGaussianSplats always refuses more than 4,000,000 splats (#1282)', (
   assert.throws(() => createGaussianSplats(oversized, { maximumCount: Number.POSITIVE_INFINITY }), /over the limit of 4000000/);
   assert.throws(() => createGaussianSplats(oversized, { maximumCount: 10_000_000 }), /over the limit of 4000000/);
 });
+
+test('a non-finite rotation, opacity or colour throws with the splat index', () => {
+  const withValue = (position, value) => {
+    const splat = IDENTITY_SPLAT(0, 0, 0);
+    splat[position] = value;
+    return buildPly([IDENTITY_SPLAT(1, 1, 1), splat]);
+  };
+  assert.throws(() => parseGaussianSplatPly(withValue(10, Infinity)), /splat 1 has a non-finite rot_0/);
+  assert.throws(() => parseGaussianSplatPly(withValue(13, NaN)), /splat 1 has a non-finite rot_3/);
+  assert.throws(() => parseGaussianSplatPly(withValue(6, NaN)), /splat 1 has a non-finite opacity/);
+  assert.throws(() => parseGaussianSplatPly(withValue(4, NaN)), /splat 1 has a non-finite f_dc_1/);
+});
+
+test('createGaussianSplats refuses a covariance that overflows 32-bit floats', () => {
+  const data = parseGaussianSplatPly(buildPly([IDENTITY_SPLAT(0, 0, 0), [0, 0, 0, 0, 0, 0, 0, 45, 0, 0, 1, 0, 0, 0]]));
+  assert.throws(() => createGaussianSplats(data), /splat 1 has a covariance that overflows/);
+});

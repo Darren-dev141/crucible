@@ -204,14 +204,14 @@ function createSplatReader({ view, vertexCount: count, layout, stride }) {
       if (coordinate < minimum[axis]) minimum[axis] = coordinate;
       if (coordinate > maximum[axis]) maximum[axis] = coordinate;
       const colorField = colorFields[axis];
-      colors[index * 4 + axis] = toByte(0.5 + SPHERICAL_HARMONIC_DC * colorField.read(view, row + colorField.offset));
+      colors[index * 4 + axis] = toByte(0.5 + SPHERICAL_HARMONIC_DC * readFiniteField(view, row, colorField, index, `f_dc_${axis}`));
       const scaleField = scaleFields[axis];
       scales[index * 3 + axis] = Math.exp(scaleField.read(view, row + scaleField.offset));
       if (!Number.isFinite(scales[index * 3 + axis])) {
         throw new Error(`Gaussian splat ${index} has a non-finite scale (scale_${axis} is NaN or too large to exponentiate). Re-export the file or drop that splat.`);
       }
     }
-    colors[index * 4 + 3] = toByte(1 / (1 + Math.exp(-opacityField.read(view, row + opacityField.offset))));
+    colors[index * 4 + 3] = toByte(1 / (1 + Math.exp(-readFiniteField(view, row, opacityField, index, 'opacity'))));
     writeUnitQuaternion(rotations, index, view, row, rotationFields);
   }
   function result() {
@@ -220,10 +220,18 @@ function createSplatReader({ view, vertexCount: count, layout, stride }) {
   return { readRange, result };
 }
 
+function readFiniteField(view, row, field, index, name) {
+  const value = field.read(view, row + field.offset);
+  if (!Number.isFinite(value)) {
+    throw new Error(`Gaussian splat ${index} has a non-finite ${name}. Re-export the file or drop that splat.`);
+  }
+  return value;
+}
+
 function writeUnitQuaternion(rotations, index, view, row, fields) {
   const base = index * 4;
   for (let component = 0; component < 4; component++) {
-    rotations[base + component] = fields[component].read(view, row + fields[component].offset);
+    rotations[base + component] = readFiniteField(view, row, fields[component], index, `rot_${component}`);
   }
   const length = Math.hypot(rotations[base], rotations[base + 1], rotations[base + 2], rotations[base + 3]);
   if (length > 1e-12) {
