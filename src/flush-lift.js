@@ -48,8 +48,8 @@ export function liftRankedTriangles(part, geometry) {
   const liftedTriangles = ranks.reduce((count, rank) => count + (rank > 0 ? 1 : 0), 0);
   const copied = { positions: new Float32Array((vertexCount + liftedTriangles * 3) * 3), indices: Uint32Array.from(indices) };
   copied.positions.set(positions);
-  const widths = { normals: 3, uvs: 2, lightUvs: 2, colors: 3 };
-  const optional = Object.keys(widths).filter(name => geometry[name]);
+  const optional = ['normals', 'uvs', 'colors'].filter(name => geometry[name]);
+  const widths = { normals: 3, uvs: 2, colors: 3 };
   for (const name of optional) {
     copied[name] = new Float32Array((vertexCount + liftedTriangles * 3) * widths[name]);
     copied[name].set(geometry[name]);

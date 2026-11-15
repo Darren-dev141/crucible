@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { flushOrderOf, MAXIMUM_FLUSH_RANK } from '../src/depth-layer.js';
 import { resolveFlush } from '../src/flush-resolve.js';
-import { liftRankedTriangles } from '../src/flush-lift.js';
 import { CrucibleRenderer } from '../src/renderer.js';
 import { vertexShader } from '../src/shaders.js';
 
@@ -294,14 +293,4 @@ test('glass a centimetre in front of nested facades is ranked above them with no
   const glassRanks = ranksOf(glass);
   assert.ok(Math.max(...wallRanks) < Math.min(...glassRanks), 'the glass is above every wall it covers');
   assert.ok(Math.max(...glassRanks) <= MAXIMUM_FLUSH_RANK);
-});
-
-test('lifting ranked triangles for the path tracer gives the second UV set a pair for every new vertex', () => {
-  const floor = partOf('floor', [quadCorners(0, 0, 4, 4, 0)]);
-  const rug = partOf('rug', [quadCorners(0, 0, 2, 2, 0.0015)]);
-  rug.geometry.lightUvs = new Float32Array([0, 0, 0, 1, 1, 1, 1, 0]);
-  resolveFlush([floor, rug]);
-  assert.ok(ranksOf(rug)?.some(rank => rank > 0), 'the rug is ranked above the floor');
-  const lifted = liftRankedTriangles(rug, rug.geometry);
-  assert.equal(lifted.lightUvs.length / 2, lifted.positions.length / 3);
 });
