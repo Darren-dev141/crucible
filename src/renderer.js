@@ -688,8 +688,19 @@ function allFinite(values) {
   return true;
 }
 
+// Triangles per pixel above which `denseSamples` replaces `samples`: past one triangle per pixel every pixel is shaded about once per sample anyway, so the extra samples cost fragment work and buy little edge quality (#1163).
+export const DENSE_TRIANGLES_PER_PIXEL = 1;
+
+export function samplesForDensity(parts, canvas, pixelRatio, samples, denseSamples) {
+  if (!Number.isInteger(denseSamples) || denseSamples < 1) throw new Error('denseSamples must be a positive integer or null.');
+  let triangles = 0;
+  for (const part of parts) triangles += part.geometry.indices.length / 3;
+  const pixels = Math.max(1, canvas.clientWidth) * Math.max(1, canvas.clientHeight) * pixelRatio * pixelRatio;
+  return triangles / pixels > DENSE_TRIANGLES_PER_PIXEL ? Math.min(samples, denseSamples) : samples;
+}
+
 export class CrucibleRenderer {
-  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, hdr = false, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB } = {}) {
+  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, denseSamples = null, hdr = false, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB } = {}) {
     this.background = background ? resolveBackground(background) : null;
     this.canvas = canvas;
     this.sceneParts = parts;
@@ -746,7 +757,8 @@ export class CrucibleRenderer {
     this.selectViewTransform(viewTransform, look);
     this.hdr = Boolean(hdr && !benchmark && this.context.getExtension('EXT_color_buffer_float'));
     if (volume.density > 0 && !this.hdr) throw new Error('Volume fog requires EXT_color_buffer_float for HDR rendering');
-    this.multisampleSamples = benchmark ? 0 : sampleCount(this.context, this.hdr ? this.context.RGBA16F : this.context.RGBA8, Math.min(shading === 'light' ? Math.min(samples, LIGHT_SHADING_MAXIMUM_SAMPLES) : samples, this.context.getParameter(this.context.MAX_SAMPLES)));
+    const requestedSamples = denseSamples === null ? samples : samplesForDensity(parts, canvas, pixelRatio, samples, denseSamples);
+    this.multisampleSamples = benchmark ? 0 : sampleCount(this.context, this.hdr ? this.context.RGBA16F : this.context.RGBA8, Math.min(shading === 'light' ? Math.min(requestedSamples, LIGHT_SHADING_MAXIMUM_SAMPLES) : requestedSamples, this.context.getParameter(this.context.MAX_SAMPLES)));
     this.capabilities = { hdr: this.hdr, hdrRequested: Boolean(hdr), hdrFallbackReason: hdr && !this.hdr ? benchmark ? 'HDR is disabled in benchmark mode' : 'EXT_color_buffer_float is unavailable' : null, samples: this.multisampleSamples };
     this.geometryBytes = 0;
     this.geometryBuffers = new Map();
