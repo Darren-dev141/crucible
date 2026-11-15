@@ -155,3 +155,39 @@ test('spray options that would build no or broken droplets are refused by name',
     assert.throws(() => buildSprayGeometry(cache, 1, { radius }), /radius/, `radius ${radius}`);
   }
 });
+
+function cacheWithSpray(points) {
+  const read = syntheticCache();
+  const encode = value => (Number.isFinite(value) ? float16Bits(value) : value === Infinity ? 0x7c00 : 0x7e00);
+  const spray = Uint16Array.from(points.flat(), encode);
+  return async (name) => {
+    if (name === 'spray.bin') return spray.buffer;
+    if (name === 'spray_ids.bin') return Uint32Array.from(points.map((_, index) => index)).buffer;
+    if (name === 'spray_kinds.bin') return new Uint8Array(points.length).buffer;
+    if (name === 'meta.json') {
+      const meta = JSON.parse(new TextDecoder().decode(await read(name)));
+      meta.spray.index = [[0, 0], [0, points.length]];
+      return new TextEncoder().encode(JSON.stringify(meta)).buffer;
+    }
+    return read(name);
+  };
+}
+
+test('spray points with NaN or infinite float16 values are skipped instead of building NaN droplets', async () => {
+  const cache = await loadSpumeCache(cacheWithSpray([[1, 2, 3, 0, 1, 0], [Number.NaN, 0, 0, 0, 0, 0], [0, 0, 0, Infinity, 0, 0], [0, 1, 0, 0, 0, 0]]));
+  const geometry = buildSprayGeometry(cache, 1);
+  assert.equal(geometry.positions.length / 18, 2, 'only the two finite points remain');
+  assert.ok(geometry.positions.every(Number.isFinite));
+  const allBad = await loadSpumeCache(cacheWithSpray([[Number.NaN, 0, 0, 0, 0, 0]]));
+  assert.equal(buildSprayGeometry(allBad, 1), null);
+});
+
+test('partsForFrame clamps an out-of-range or non-integer frame index instead of throwing', async () => {
+  const cache = await loadSpumeCache(syntheticCache());
+  const player = createSpumePlayer(cache);
+  for (const frameIndex of [-3, 2, 99, Infinity, Number.NaN, 1.7]) {
+    assert.doesNotThrow(() => player.partsForFrame(frameIndex), `frame ${frameIndex}`);
+  }
+  assert.equal(player.partsForFrame(99), player.partsForFrame(1));
+  assert.equal(player.partsForFrame(-3), player.partsForFrame(0));
+});
