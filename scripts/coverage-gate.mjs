@@ -3,9 +3,11 @@
 // Raising the baseline is a manual edit of that file. The function figure counts each function once per source line,
 // so the baseline was re-measured (93.4 to 92.28 on the same commit) when unnamed functions stopped being counted per shard.
 // The branch figure counts each branch once per source line and position on that line, for the same reason (see branchKey).
-// Usage: node scripts/coverage-gate.mjs <lcov file or folder>... [--baseline config/coverage-baseline.json] [--merged-out merged.lcov]
+// With --expect-shards <count> it first checks that the lcov files are exactly shard-1.info to shard-<count>.info, each with source files in it, and
+// refuses to merge otherwise: a partial rerun of failed jobs leaves some shards out or stale, and the merged total would be wrong (#1320).
+// Usage: node scripts/coverage-gate.mjs <lcov file or folder>... [--baseline config/coverage-baseline.json] [--merged-out merged.lcov] [--expect-shards <count>]
 import { appendFileSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Branch totals move by up to about 0.8 points between runs of the same commit (merged V8 block ranges across shards),
@@ -26,6 +28,38 @@ function collectLcovPaths(inputs) {
     }
   }
   return paths;
+}
+
+const SHARD_FILE_NAME = /^shard-(\d+)\.info$/;
+const RERUN_ADVICE = 'Merged coverage of a partial set is wrong, so nothing was merged. Rerun all jobs of the Test workflow ("Re-run all jobs"), not only the failed ones.';
+
+// Returns the list of problems with the shard files (an empty list when the set is complete). Each text is the content of the file at the same index in paths.
+export function checkShardSet(paths, texts, expectedCount) {
+  const problems = [];
+  const pathsByShard = new Map();
+  paths.forEach((path, index) => {
+    const match = SHARD_FILE_NAME.exec(basename(path));
+    if (!match) {
+      problems.push(`${path} is not named shard-<number>.info, so it does not belong to a shard run of ${expectedCount} shards`);
+      return;
+    }
+    const shard = Number(match[1]);
+    if (shard < 1 || shard > expectedCount) {
+      problems.push(`${basename(path)} is shard ${shard}, outside 1 to ${expectedCount}: it is left over from a run with a different shard count`);
+      return;
+    }
+    if (!pathsByShard.has(shard)) pathsByShard.set(shard, []);
+    pathsByShard.get(shard).push(index);
+  });
+  const missing = [];
+  for (let shard = 1; shard <= expectedCount; shard++) {
+    const indexes = pathsByShard.get(shard) ?? [];
+    if (indexes.length === 0) missing.push(shard);
+    else if (indexes.length > 1) problems.push(`shard ${shard} appears ${indexes.length} times (${indexes.map(index => paths[index]).join(', ')})`);
+    else if (!/^SF:/m.test(texts[indexes[0]])) problems.push(`shard-${shard}.info has no source files in it: the shard did not finish writing its coverage`);
+  }
+  if (missing.length > 0) problems.push(`missing shard${missing.length > 1 ? 's' : ''} ${missing.join(', ')}: found ${expectedCount - missing.length} of ${expectedCount}`);
+  return problems;
 }
 
 function fileRecord(files, path) {
@@ -149,19 +183,36 @@ function toLcov(files) {
   return rows.join('\n') + '\n';
 }
 
+function parseExpectedShards(value) {
+  const count = Number(value);
+  if (!Number.isInteger(count) || count < 1) throw new Error(`--expect-shards needs a whole number of shards, 1 or more, got "${value}". Pass the shard count of the unit matrix.`);
+  return count;
+}
+
 function main() {
   const args = process.argv.slice(2);
   const inputs = [];
   let baselinePath = 'config/coverage-baseline.json';
   let mergedOut = null;
+  let expectedShards = null;
   for (let index = 0; index < args.length; index++) {
     if (args[index] === '--baseline') baselinePath = args[++index];
     else if (args[index] === '--merged-out') mergedOut = args[++index];
+    else if (args[index] === '--expect-shards') expectedShards = parseExpectedShards(args[++index]);
     else inputs.push(args[index]);
   }
   const paths = collectLcovPaths(inputs);
   if (paths.length === 0) throw new Error('No lcov files found.');
-  const files = mergeLcov(paths.map(path => readFileSync(path, 'utf8')));
+  const texts = paths.map(path => readFileSync(path, 'utf8'));
+  if (expectedShards !== null) {
+    const problems = checkShardSet(paths, texts, expectedShards);
+    if (problems.length > 0) {
+      const listed = problems.map(problem => `- ${problem}`).join('\n');
+      console.error(`The coverage shards are incomplete or mixed:\n${listed}\n${RERUN_ADVICE}`);
+      process.exit(1);
+    }
+  }
+  const files = mergeLcov(texts);
   if (mergedOut) writeFileSync(mergedOut, toLcov(files));
   const { totals, percentages } = totalsOf(files);
   const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));

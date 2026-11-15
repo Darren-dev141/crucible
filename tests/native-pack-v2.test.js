@@ -827,7 +827,12 @@ cookTest('envCompensation removes the dim texels from the sampling table and kee
   const sunColumn = 5;
   assert.ok(plainProbabilities[sunRow * width + 0] > 0, 'dim texels are sampled without compensation');
   assert.equal(compensatedProbabilities[sunRow * width + 0], 0, 'dim texels get zero probability');
-  assert.equal(compensatedProbabilities[sunRow * width + sunColumn], 1, 'the sun is the only texel left in its row');
+  // Cook since codepawl/cook#17 spreads each texel's weight over its bilinear neighbours, so the sun's row keeps the sun and
+  // the columns beside it; older Cook keeps the sun alone. Either way the sun holds the most and the three columns hold all.
+  const sunAndNeighbours = [sunColumn - 1, sunColumn, sunColumn + 1].map(column => compensatedProbabilities[sunRow * width + column]);
+  const sunNeighbourhoodSum = sunAndNeighbours.reduce((sum, probability) => sum + probability, 0);
+  assert.ok(Math.abs(sunNeighbourhoodSum - 1) < 1e-5, 'the sun and the columns beside it hold all of its row');
+  assert.ok(sunAndNeighbours[1] >= Math.max(sunAndNeighbours[0], sunAndNeighbours[2]), 'the sun holds the most of its row');
 
   const cdfStart = width * height;
   let marginalProbabilitySum = 0;

@@ -108,7 +108,7 @@ Light units differ, so a copied intensity is not the same brightness. Tune by ey
 
 ## Names the addon refuses
 
-`packages/three-compat` is an optional addon that accepts the common three.js names and builds Crucible parts, materials, cameras and lights from them. It has no import of `three` and no dependency on the core: you pass it the Crucible exports.
+`packages/three-compat` is an optional addon (not on npm yet: import it from a source checkout) that accepts the common three.js names and builds Crucible parts, materials, cameras and lights from them. It has no import of `three` and no dependency on the core: you pass it the Crucible exports.
 
 ```js
 import * as core from 'crucible';

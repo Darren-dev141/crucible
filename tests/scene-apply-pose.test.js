@@ -1,0 +1,290 @@
+import './support/load-agent-scene-modules.mjs';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createAgentScene } from '../src/agent-scene.js';
+import { worldBounds } from '../src/probe-trace.js';
+import { markLiveGeometry } from '../src/live-geometry.js';
+import { applyFloorSkyVisibility } from '../src/floor-sky-visibility.js';
+import { startGame, lastOperationPerKey, operationsToSend } from '../src/game.js';
+
+const PART_COUNT = 60;
+
+function gridRecipe() {
+  const nodes = [];
+  for (let index = 0; index < PART_COUNT; index++) {
+    nodes.push({ id: `part${index}`, geometry: index % 2 ? 'block' : 'ball', material: index % 3 ? 'wall' : 'floor', translation: [(index % 8) * 1.2, 0.5, Math.floor(index / 8) * 1.2] });
+  }
+  nodes.push({ id: 'player', geometry: 'block', material: 'wall' });
+  return {
+    format: 'crucible.scene', schemaVersion: 1,
+    geometries: [{ id: 'block', type: 'box' }, { id: 'ball', type: 'sphere' }],
+    materials: [{ id: 'wall', color: [0.8, 0.8, 0.7] }, { id: 'floor', color: [0.3, 0.3, 0.3] }],
+    nodes,
+  };
+}
+
+function partMatrices(scene) {
+  return scene.parts.map(part => [part.name, Array.from(part.matrix)]);
+}
+
+function sceneState(scene) {
+  return { recipe: scene.exportRecipe(), parts: partMatrices(scene), sky: scene.parts.map(part => Array.from(part.geometry.skyVisibility ?? [])) };
+}
+
+test('a pose edit of a grid of parts gives the scene a fresh build of the edited recipe would give', () => {
+  const scene = createAgentScene(gridRecipe(), { maxNodes: 200 });
+  const edits = [
+    { type: 'set-node', id: 'player', translation: [1.5, 0.5, -0.5], rotation: [0, 0.3826834, 0, 0.9238795] },
+    { type: 'set-node', id: 'player', translation: [-1, 0.5, 2], scale: [1.5, 1, 1] },
+  ];
+  for (const edit of edits) {
+    scene.apply([edit], { expectedRevision: scene.revision });
+    const fresh = createAgentScene(scene.exportRecipe(), { maxNodes: 200 });
+    assert.deepEqual(sceneState(scene), sceneState(fresh));
+  }
+});
+
+test('a field edit that grows the recipe past maxRecipeBytes is still refused', () => {
+  const base = createAgentScene(gridRecipe(), { maxNodes: 200 }).exportRecipe();
+  // Room for a few labels beyond the unedited recipe, so the first edit fits and a later one is refused.
+  const limit = smallestCreatableLimit(base) + 500;
+  const scene = createAgentScene(base, { maxNodes: 200, maxRecipeBytes: limit });
+  // Label one node after another with a long label. Each label passes the field rules and fits the operation copy, so the
+  // first refusal can only come from the recipe size check, and it must leave the scene as it was.
+  const labelOperation = id => ({ type: 'set-node', id, label: 'x'.repeat(200) });
+  let applied = 0;
+  for (const node of base.nodes) {
+    const revisionBefore = scene.revision;
+    try {
+      scene.apply([labelOperation(node.id)], { expectedRevision: revisionBefore });
+      applied++;
+    } catch (error) {
+      assert.match(error.message, /maxRecipeBytes/);
+      assert.doesNotMatch(error.message, /label/);
+      assert.equal(scene.revision, revisionBefore, 'the refused edit leaves the scene alone');
+      assert.ok(applied > 0, 'a first label fits and only a later one is refused');
+      // Everything the fast path accepted is also accepted at creation, restore and by edits that shrink or keep the size.
+      const limits = { maxNodes: 200, maxRecipeBytes: limit };
+      assert.doesNotThrow(() => createAgentScene(scene.exportRecipe(), limits), 'the edited recipe re-creates under the same limits');
+      const checkpoint = scene.checkpoint();
+      assert.doesNotThrow(() => scene.restore(checkpoint, { expectedRevision: scene.revision }), 'checkpoint then restore of the unchanged scene works');
+      assert.doesNotThrow(() => scene.apply([{ type: 'remove-node', id: base.nodes[0].id }], { expectedRevision: scene.revision }), 'remove-node shrinks the recipe and is accepted');
+      return;
+    }
+  }
+  assert.fail('labelling every node never pushed the recipe past maxRecipeBytes');
+});
+
+function smallestCreatableLimit(recipe) {
+  let refused = 0;
+  let accepted = JSON.stringify(recipe).length * 2;
+  while (accepted - refused > 1) {
+    const middle = Math.floor((accepted + refused) / 2);
+    if (canCreate(recipe, middle)) accepted = middle;
+    else refused = middle;
+  }
+  return accepted;
+}
+
+function canCreate(recipe, maxRecipeBytes) {
+  try {
+    createAgentScene(recipe, { maxNodes: 200, maxRecipeBytes });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function closedRoomRecipe() {
+  const slab = (id, translation, scale) => ({ id, geometry: 'slab', material: 'stone', translation, scale });
+  return {
+    format: 'crucible.scene', schemaVersion: 1,
+    // The default sky trace of a closed room spends about 20 seconds of wall clock, and gives up when the machine is slow, so the
+    // scene skips it and the test runs the trace itself with a small budget on the parts the scene holds.
+    environment: { floorSkyTrace: false },
+    geometries: [{ id: 'slab', type: 'box' }], materials: [{ id: 'stone', color: [0.7, 0.7, 0.7] }],
+    nodes: [
+      slab('floor', [0, 0, 0], [6, 0.1, 6]),
+      slab('roof', [0, 3, 0], [6, 0.1, 6]),
+      slab('wallNorth', [0, 1.5, 3], [6, 3, 0.1]),
+      slab('wallSouth', [0, 1.5, -3], [6, 3, 0.1]),
+      slab('wallEast', [3, 1.5, 0], [0.1, 3, 6]),
+      slab('wallWest', [-3, 1.5, 0], [0.1, 3, 6]),
+      { id: 'crate', geometry: 'slab', material: 'stone', translation: [0, 0.5, 0] },
+    ],
+  };
+}
+
+const SMALL_TRACE = { includeClosedRooms: true, maximumTexels: 300, raysPerTexel: 8, maxSeconds: 1000 };
+
+function tracedSky(scene) {
+  const traced = applyFloorSkyVisibility(scene.parts, SMALL_TRACE);
+  assert.equal(traced.report.reason, null, 'the small trace ran to the end');
+  return traced.parts.map(part => Array.from(part.geometry.skyVisibility ?? []));
+}
+
+test('floor sky visibility after a pose edit in a closed room matches a fresh build', () => {
+  const scene = createAgentScene(closedRoomRecipe());
+  for (let step = 0; step < 2; step++) {
+    scene.apply([{ type: 'set-node', id: 'crate', translation: [step * 0.7, 0.5, 0.2] }], { expectedRevision: scene.revision });
+    const fresh = createAgentScene(scene.exportRecipe());
+    assert.deepEqual(scene.exportRecipe(), fresh.exportRecipe());
+    assert.deepEqual(partMatrices(scene), partMatrices(fresh));
+    const actual = tracedSky(scene);
+    const expected = tracedSky(fresh);
+    assert.ok(actual[0].length > 0, 'the floor carries sky visibility, so the cached part bounds are read');
+    assert.deepEqual(actual, expected);
+  }
+});
+
+test('worldBounds follows a part whose matrix changes in place', () => {
+  const geometry = { positions: Float32Array.from([-1, -1, -1, 1, 1, 1]) };
+  const part = { geometry, matrix: Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
+  assert.deepEqual(worldBounds(part), { minimum: [-1, -1, -1], maximum: [1, 1, 1] });
+  part.matrix[12] = 5;
+  assert.deepEqual(worldBounds(part), { minimum: [4, -1, -1], maximum: [6, 1, 1] });
+  const answer = worldBounds(part);
+  answer.minimum[0] = 99;
+  assert.deepEqual(worldBounds(part).minimum, [4, -1, -1], 'a caller changing its answer does not change the next one');
+});
+
+test('worldBounds follows a part whose geometry positions array is replaced', () => {
+  const part = { geometry: { positions: Float32Array.from([-1, -1, -1, 1, 1, 1]) }, matrix: Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
+  assert.deepEqual(worldBounds(part), { minimum: [-1, -1, -1], maximum: [1, 1, 1] });
+  part.geometry.positions = Float32Array.from([-2, -2, -2, 2, 2, 2]);
+  assert.deepEqual(worldBounds(part), { minimum: [-2, -2, -2], maximum: [2, 2, 2] }, 'a new positions array gives new bounds');
+});
+
+test('worldBounds follows live geometry whose positions are rewritten in place', () => {
+  const geometry = markLiveGeometry({ positions: Float32Array.from([-1, -1, -1, 1, 1, 1]) });
+  const part = { geometry, matrix: Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
+  assert.deepEqual(worldBounds(part), { minimum: [-1, -1, -1], maximum: [1, 1, 1] });
+  geometry.positions.set([-3, -3, -3, 3, 3, 3]);
+  assert.deepEqual(worldBounds(part), { minimum: [-3, -3, -3], maximum: [3, 3, 3] }, 'an in-place rewrite gives new bounds');
+});
+
+const STEP_MILLISECONDS =1000 / 60;
+const HOLD_FORWARD = { version: 1, samples: 600, events: [[1, 'keyboard/KeyW', 1]] };
+const EMPTY_RECORDING = { version: 1, samples: 0, events: [] };
+
+function gameRecipe() {
+  const scene = createAgentScene({
+    format: 'crucible.scene', schemaVersion: 1,
+    geometries: [{ id: 'block', type: 'box' }], materials: [{ id: 'paint', color: [0.5, 0.5, 0.5] }],
+    nodes: [{ id: 'creature', geometry: 'block', material: 'paint' }],
+  });
+  scene.apply([{ type: 'set-game', game: { player: { node: 'creature' } } }], { expectedRevision: scene.revision });
+  return scene.exportRecipe();
+}
+
+async function revisionsAfterFrames(replay, frames) {
+  const previous = { request: globalThis.requestAnimationFrame, cancel: globalThis.cancelAnimationFrame };
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.cancelAnimationFrame = () => {};
+  try {
+    const renderer = { render() {}, resize() {}, updateParts() {}, replaceParts() {}, dispose() {} };
+    const game = await startGame({}, gameRecipe(), { replay, showStatus: false, createRenderer: () => renderer });
+    const revisions = [];
+    for (let frame = 0; frame < frames; frame++) {
+      game.runtime.step(STEP_MILLISECONDS);
+      revisions.push(game.scene.revision);
+    }
+    game.dispose();
+    return revisions;
+  } finally {
+    globalThis.requestAnimationFrame = previous.request;
+    globalThis.cancelAnimationFrame = previous.cancel;
+  }
+}
+
+test('a game frame that sends the same pose as the last one does not call scene.apply again', async () => {
+  const revisions = await revisionsAfterFrames(EMPTY_RECORDING, 12);
+  assert.ok(revisions[11] <= 1, `standing still edits the scene at most once, saw revision ${revisions[11]}`);
+});
+
+test('a game frame that moves the player still applies the pose', async () => {
+  const revisions = await revisionsAfterFrames(HOLD_FORWARD, 30);
+  assert.ok(revisions[29] > revisions[10], 'walking keeps bumping the scene revision');
+});
+
+test('operationsToSend resends every operation of a node when one of them changed', () => {
+  const both = { type: 'set-node', id: 'crate', translation: [1, 0, 0], rotation: [0, 0, 0, 1] };
+  const rotationOnly = { type: 'set-node', id: 'crate', rotation: [0, 0, 0, 1] };
+  const elsewhere = { type: 'set-node', id: 'ball', translation: [1, 0, 0] };
+  const sent = new Map();
+  for (const operation of [both, rotationOnly, elsewhere]) sent.set(`${operation.type}:${operation.id}:${Object.keys(operation).join(',')}`, JSON.stringify(operation));
+  assert.deepEqual(operationsToSend([both, rotationOnly, elsewhere], sent), [], 'nothing changed, nothing is sent');
+  const moved = { ...both, translation: [2, 0, 0] };
+  assert.deepEqual(operationsToSend([moved, rotationOnly, elsewhere], sent), [moved, rotationOnly], 'the unchanged rotation write follows the changed one, the other node stays out');
+});
+
+test('lastOperationPerKey keeps the last of two operations that write the same fields of one node', () => {
+  const first = { type: 'set-node', id: 'crate', translation: [1, 0, 0] };
+  const second = { type: 'set-node', id: 'crate', translation: [2, 0, 0] };
+  const other = { type: 'set-node', id: 'crate', visible: false };
+  const elsewhere = { type: 'set-node', id: 'ball', translation: [1, 0, 0] };
+  assert.deepEqual(lastOperationPerKey([first, other, elsewhere, second]), [second, other, elsewhere]);
+});
+
+test('an edit made outside the game loop does not stick: the next frame sends the pose again', async () => {
+  const previous = { request: globalThis.requestAnimationFrame, cancel: globalThis.cancelAnimationFrame };
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.cancelAnimationFrame = () => {};
+  try {
+    const renderer = { render() {}, resize() {}, updateParts() {}, replaceParts() {}, dispose() {} };
+    const game = await startGame({}, gameRecipe(), { replay: EMPTY_RECORDING, showStatus: false, createRenderer: () => renderer });
+    const creatureTranslation = () => game.scene.exportRecipe().nodes.find(node => node.id === 'creature').translation;
+    for (let frame = 0; frame < 5; frame++) game.runtime.step(STEP_MILLISECONDS);
+    const gameTranslation = creatureTranslation();
+    game.scene.apply([{ type: 'set-node', id: 'creature', translation: [40, 0, 40] }], { expectedRevision: game.scene.revision });
+    assert.deepEqual(creatureTranslation(), [40, 0, 40], 'the outside edit is applied first');
+    game.runtime.step(STEP_MILLISECONDS);
+    assert.deepEqual(creatureTranslation(), gameTranslation, 'the game pose wins again on the next frame');
+    game.dispose();
+  } finally {
+    globalThis.requestAnimationFrame = previous.request;
+    globalThis.cancelAnimationFrame = previous.cancel;
+  }
+});
+
+test('a field edit leaves every earlier revision and checkpoint exactly as it was', () => {
+  const scene = createAgentScene(gridRecipe(), { maxNodes: 200 });
+  const original = scene.exportRecipe();
+  const checkpoint = scene.checkpoint();
+  const edits = [
+    { type: 'set-node', id: 'part3', translation: [9, 9, 9], label: 'moved' },
+    { type: 'set-material', id: 'wall', color: [0.1, 0.2, 0.3] },
+    { type: 'set-camera', fov: 33 },
+  ];
+  const revisions = [scene.revision];
+  for (const edit of edits) {
+    scene.apply([edit], { expectedRevision: scene.revision });
+    revisions.push(scene.revision);
+  }
+  assert.notDeepEqual(scene.exportRecipe(), original);
+  scene.restoreRevision(revisions[2], { expectedRevision: scene.revision });
+  const afterTwoEdits = scene.exportRecipe();
+  assert.equal(afterTwoEdits.camera.fov, original.camera.fov, 'the camera edit is undone');
+  assert.deepEqual(afterTwoEdits.materials.find(material => material.id === 'wall').color, [0.1, 0.2, 0.3]);
+  assert.deepEqual(afterTwoEdits.nodes.find(node => node.id === 'part3').translation, [9, 9, 9]);
+  scene.restore(checkpoint, { expectedRevision: scene.revision });
+  assert.deepEqual(scene.exportRecipe(), original, 'the checkpoint still holds the unedited recipe');
+});
+
+test('a field edit of a scene with relations matches a fresh build', () => {
+  const recipe = gridRecipe();
+  recipe.nodes[1].relations = [{ kind: 'attach', to: 'part0', side: '+x' }];
+  const scene = createAgentScene(recipe, { maxNodes: 200 });
+  scene.apply([{ type: 'set-node', id: 'part0', translation: [3, 0.5, 3] }], { expectedRevision: scene.revision });
+  const fresh = createAgentScene(scene.exportRecipe(), { maxNodes: 200 });
+  assert.deepEqual(sceneState(scene), sceneState(fresh));
+});
+
+test('a refused field edit leaves the scene alone', () => {
+  const scene = createAgentScene(gridRecipe(), { maxNodes: 200 });
+  const before = scene.exportRecipe();
+  assert.throws(() => scene.apply([{ type: 'set-node', id: 'missing', translation: [0, 0, 0] }], { expectedRevision: scene.revision }), /missing/);
+  assert.throws(() => scene.apply([{ type: 'set-node', id: 'part1', scale: [0, 1, 1] }], { expectedRevision: scene.revision }), /scale/);
+  assert.deepEqual(scene.exportRecipe(), before);
+  assert.equal(scene.revision, 0);
+});

@@ -4,14 +4,16 @@ import { faceNormals } from './mesh-normals.js';
 import { cornerFaces, edgeCornerTable, faceParts } from './mesh-topology.js';
 
 const SAMPLE_LIMIT = 8;
+// Neighbouring faces whose normals have a dot product below this lie on top of each other, facing opposite ways.
+const FOLDED_NORMAL_DOT = -0.99;
 
 // Every problem names the operation that usually fixes it, so an agent can act without another lookup.
-const PROBLEMS = Object.freeze({
+export const MESH_PROBLEMS = Object.freeze({
   'non-manifold-edge': { severity: 'error', fix: 'Delete the extra faces or split the edge; booleans and solidify need two faces per edge.' },
-  'inconsistent-winding': { severity: 'error', fix: 'Run recalc_normals on the part so neighbouring faces wind the same way.' },
+  'inconsistent-winding': { severity: 'error', fix: 'Run flip_normals with select { faces: sample }: sample lists faces (not edges) that wind against their neighbours, at most 8 of them, so lint again after flipping until it comes back clean.' },
   'inverted-part': { severity: 'error', fix: 'Run flip_normals on the part; its normals point inward.' },
-  'degenerate-face': { severity: 'error', fix: 'Run merge_by_distance or dissolve the zero-area faces.' },
-  'loose-vertex': { severity: 'warning', fix: 'Delete loose vertices; they do not render and confuse bounds.' },
+  'degenerate-face': { severity: 'error', fix: 'Run merge_by_distance, or dissolve_faces on the zero-area faces.' },
+  'loose-vertex': { severity: 'warning', fix: 'Run delete_loose to remove them; loose vertices do not render and confuse bounds.' },
   'boundary-edge': { severity: 'warning', fix: 'Open surface. Run fill_holes to cap each boundary loop, or add solidify if the part must be closed.' },
 });
 
@@ -23,6 +25,7 @@ export const GEOMETRY_PROBLEMS = Object.freeze({
   'thin-wall': { severity: 'warning', fix: 'The wall behind these faces (sample is face indices) is under 0.5% of the mesh size thick. Thicken it with solidify, or move the faces apart.' },
   'floating-part': { severity: 'warning', fix: 'This part (sample is part indices) touches no other part. Translate it onto its neighbour, or ignore this if it is meant to stand alone.' },
   asymmetric: { severity: 'warning', fix: 'The mesh is mirror-symmetric except for the vertices in sample. Rebuild one half and mirror it, or set_position those vertices to their partners.' },
+  'folded-face': { severity: 'warning', fix: 'Two neighbouring faces fold back onto each other (sample is edge indices), usually after an inset, extrude or bevel went past the face limit. Lower thickness or width, or undo that operation.' },
   'non-planar-quad': { severity: 'warning', fix: 'These quads (sample is face indices) fold by more than 45 degrees across their diagonal and pinch shading. Triangulate them, or flatten their corners.' },
   'skewed-quad': { severity: 'warning', fix: 'These quads (sample is face indices) have a corner over 60 degrees from a right angle. Dissolve or slide edges so corners stay near 90 degrees.' },
 });
@@ -159,11 +162,27 @@ function addQualityProblem(problems, kind, element) {
 function addProblem(problems, kind, element) {
   let problem = problems.get(kind);
   if (!problem) {
-    problem = { kind, ...PROBLEMS[kind], count: 0, sample: [] };
+    problem = { kind, ...MESH_PROBLEMS[kind], count: 0, sample: [] };
     problems.set(kind, problem);
   }
   problem.count++;
   if (problem.sample.length < SAMPLE_LIMIT) problem.sample.push(element);
+}
+
+// An edge shared by two consistently wound faces whose normals point opposite ways is a fold: the surface doubles back.
+function flagFoldedEdges(mesh, table, facesOfCorners, problems) {
+  const { normals, areas } = faceNormals(mesh);
+  for (let edge = 0; edge < mesh.edgeCount; edge++) {
+    const start = table.edgeOffsets[edge];
+    if (table.edgeOffsets[edge + 1] - start !== 2) continue;
+    const first = facesOfCorners[table.edgeCorners[start]];
+    const second = facesOfCorners[table.edgeCorners[start + 1]];
+    if (first === second || !areas[first] || !areas[second]) continue;
+    const alignment = normals[first * 3] * normals[second * 3]
+      + normals[first * 3 + 1] * normals[second * 3 + 1]
+      + normals[first * 3 + 2] * normals[second * 3 + 2];
+    if (alignment < FOLDED_NORMAL_DOT) addQualityProblem(problems, 'folded-face', edge);
+  }
 }
 
 /**
@@ -239,9 +258,47 @@ function insideOtherPart(mesh, facePart, part) {
 }
 
 /**
+ * Faces to flip so every part with inconsistent winding becomes consistent. Faces are two-coloured by walking shared
+ * edges, switching colour across an inconsistently wound edge; the smaller colour of each part is the one to flip.
+ */
+function facesWoundAgainstNeighbours(mesh, table, facesOfCorners, facePart, partWindingBroken) {
+  const neighbours = Array.from({ length: mesh.faceCount }, () => []);
+  for (let edge = 0; edge < mesh.edgeCount; edge++) {
+    const start = table.edgeOffsets[edge];
+    if (table.edgeOffsets[edge + 1] - start !== 2) continue;
+    const first = facesOfCorners[table.edgeCorners[start]];
+    const second = facesOfCorners[table.edgeCorners[start + 1]];
+    const sameDirection = mesh.cornerVertices[table.edgeCorners[start]] === mesh.cornerVertices[table.edgeCorners[start + 1]] ? 1 : 0;
+    neighbours[first].push(second, sameDirection);
+    neighbours[second].push(first, sameDirection);
+  }
+  const colour = new Int8Array(mesh.faceCount).fill(-1);
+  const facesToFlip = [];
+  for (let seed = 0; seed < mesh.faceCount; seed++) {
+    if (colour[seed] !== -1 || !partWindingBroken[facePart[seed]]) continue;
+    const members = [seed];
+    colour[seed] = 0;
+    for (let cursor = 0; cursor < members.length; cursor++) {
+      const face = members[cursor];
+      for (let index = 0; index < neighbours[face].length; index += 2) {
+        const neighbour = neighbours[face][index];
+        if (colour[neighbour] !== -1) continue;
+        colour[neighbour] = colour[face] ^ neighbours[face][index + 1];
+        members.push(neighbour);
+      }
+    }
+    const flippedColour = members.filter(face => colour[face] === 1).length * 2 <= members.length ? 1 : 0;
+    for (const face of members) {
+      if (colour[face] === flippedColour) facesToFlip.push(face);
+    }
+  }
+  return facesToFlip.sort((a, b) => a - b);
+}
+
+/**
  * Check a mesh for problems that break later operations or rendering.
  * Returns { ok, counts, parts, tags, bounds, problems }, where each problem has kind, severity, count, a sample of
- * element indices (faces, edges or vertices by kind) and a suggested fix. ok is false when any error is present.
+ * element indices (faces, edges or vertices by kind; for inconsistent-winding the faces to flip) and a suggested fix. ok is false when any error is present.
  */
 export function lintMesh(mesh, { geometry = false } = {}) {
   const problems = new Map();
@@ -250,6 +307,7 @@ export function lintMesh(mesh, { geometry = false } = {}) {
   const { facePart, partCount } = faceParts(mesh, table, facesOfCorners);
   const partOpen = new Uint8Array(partCount);
   const partWindingBroken = new Uint8Array(partCount);
+  const woundEdges = [];
   for (let edge = 0; edge < mesh.edgeCount; edge++) {
     const start = table.edgeOffsets[edge];
     const faceCount = table.edgeOffsets[edge + 1] - start;
@@ -263,7 +321,12 @@ export function lintMesh(mesh, { geometry = false } = {}) {
     } else if (mesh.cornerVertices[table.edgeCorners[start]] === mesh.cornerVertices[table.edgeCorners[start + 1]]) {
       addProblem(problems, 'inconsistent-winding', edge);
       partWindingBroken[part] = 1;
+      woundEdges.push(edge);
     }
+  }
+  if (woundEdges.length) {
+    const facesToFlip = facesWoundAgainstNeighbours(mesh, table, facesOfCorners, facePart, partWindingBroken);
+    problems.get('inconsistent-winding').sample = facesToFlip.slice(0, SAMPLE_LIMIT);
   }
   const bounds = meshBounds(mesh);
   const diagonal = Math.hypot(...bounds.max.map((value, axis) => value - bounds.min[axis]));
@@ -272,6 +335,7 @@ export function lintMesh(mesh, { geometry = false } = {}) {
   for (let face = 0; face < mesh.faceCount; face++) {
     if (areas[face] <= minimumArea) addProblem(problems, 'degenerate-face', face);
   }
+  if (geometry) flagFoldedEdges(mesh, table, facesOfCorners, problems);
   const used = new Uint8Array(mesh.vertexCount);
   for (const vertex of mesh.cornerVertices) used[vertex] = 1;
   for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createCamera } from '../src/path-tracer.js';
 import { cookModule, cookTest } from './support/cook.js';
 
-const { buildNativeInputV2, packCameraParams, resolveSessionFrame, resolveSessionCreation } = (await cookModule()) ?? {};
+const { STRUCT_STRIDES_V2, buildNativeInputV2, packCameraParams, resolveSessionFrame, resolveSessionCreation } = (await cookModule()) ?? {};
 
 const UNIT_QUAD = {
   positions: new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]),
@@ -141,7 +141,7 @@ cookTest('packCameraParams lets a field the camera or the options carry win over
 cookTest('packCameraParams validates the block, the camera, the seed and the aspect', () => {
   const heldBlock = fullBlock(cameraFor({ eye: [0, 2.2, 6] }));
   const camera = cameraFor(pinholeView);
-  assert.throws(() => packCameraParams(new Uint8Array(8), camera), { name: 'TypeError', message: /320 bytes/ });
+  assert.throws(() => packCameraParams(new Uint8Array(8), camera), { name: 'TypeError', message: new RegExp(`${STRUCT_STRIDES_V2.kernelParams} bytes`) });
   assert.throws(() => packCameraParams([], camera), { name: 'TypeError', message: /Uint8Array/ });
   const wrongMagic = new Uint8Array(heldBlock);
   wrongMagic[0] ^= 0xff;

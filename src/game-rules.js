@@ -347,7 +347,8 @@ function pairKey(zoneId, partId) {
 /**
  * A runtime system that plays a rule document. Put it after input and physics in `systems`.
  * Options: `input` (a createInput object, for input triggers), `getPartPosition(partId)` (returns [x, y, z] or undefined,
- * read once per part on each fixed step) and `onEvent(entry)` (called for each event log entry, such as a sound marker).
+ * read once per part on each fixed step) and `onEvent(entry)` (called for every event, such as a sound marker, even after the stored log is full) and
+ * `onRestart()` (called after the rules reset, from the `restart` action or `restart()`, so the host can put what it owns back at the start).
  * The host also calls `setPartPosition` and `reportContact`. Read `state` and `eventLog` from game code.
  */
 export function createGameRules(document, options = {}) {
@@ -387,9 +388,9 @@ export function createGameRules(document, options = {}) {
   function record(entry) {
     if (eventLog.length >= GAME_RULES_LIMITS.maximumEventLogEntries) {
       droppedEvents += 1;
-      return;
+    } else {
+      eventLog.push(entry);
     }
-    eventLog.push(entry);
     options.onEvent?.(entry);
   }
 
@@ -511,6 +512,7 @@ export function createGameRules(document, options = {}) {
       default:
         record(base);
         resetPlay();
+        options.onRestart?.();
     }
   }
 
@@ -548,6 +550,7 @@ export function createGameRules(document, options = {}) {
   function restart() {
     record({ step, rule: null, action: 'restart' });
     resetPlay();
+    options.onRestart?.();
   }
 
   return {
@@ -558,9 +561,12 @@ export function createGameRules(document, options = {}) {
     setPartPosition(partId, position) {
       findPart(partId, 'setPartPosition').position = requireVector(position, `setPartPosition("${partId}") position`);
     },
-    /** Tell the rules two parts touched during the coming step. Physics calls this from its contact callback. */
+    /** Tell the rules two parts touched during the coming step. Physics calls this from its contact callback. Calls are ignored once the game is won or lost, so a finished game does not collect contacts. */
     reportContact(firstPartId, secondPartId) {
-      contacts.push([findPart(firstPartId, 'reportContact'), findPart(secondPartId, 'reportContact')]);
+      const firstPart = findPart(firstPartId, 'reportContact');
+      const secondPart = findPart(secondPartId, 'reportContact');
+      if (status !== 'playing') return;
+      contacts.push([firstPart, secondPart]);
     },
     get state() {
       return {

@@ -1,8 +1,10 @@
 import { invalidField, withFieldPrefix } from './field-error.js';
 import { mat4 } from 'gl-matrix';
+import { sceneBoundsOfParts } from './near-plane-fit.js';
 import { createLightingState, updateLightingState, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS, MAXIMUM_SPECULAR_ANTI_ALIASING } from './lighting.js';
 import { resolveEffects } from './effects.js';
 import { resolveVolumeFog } from './volumetric.js';
+import { resolveFogDetail } from './fog-field.js';
 import { resolveLocalVolumesWith } from './local-volume-resolve.js';
 import { LIQUID_OPTICS, resolveLiquidOptics } from './liquid-optics.js';
 import { createLightingSetupMap, createCatalogEnvironmentMap, lightingSetupFields } from './lighting-setups.js';
@@ -252,7 +254,9 @@ function volumeFogFrom(input = {}) {
       numberInRange(input[field], -Number.MAX_VALUE, Number.MAX_VALUE, `volumeFog.${field}`);
     }
   }
-  return copiedJson(resolveVolumeFog(input));
+  const resolved = resolveVolumeFog(input);
+  resolveFogDetail(resolved);
+  return copiedJson(resolved);
 }
 
 function environmentFrom(input = {}) {
@@ -455,6 +459,44 @@ function shadowBoundsFrom(shadow, direction) {
     }
   }
   return { eye, target: [...shadow.target], up, extent: shadow.extent, near: shadow.near, far: shadow.far };
+}
+
+// A recipe that leaves `shadow` out gets a 7 m wide view around [0, 1, 0], and a bigger scene has no shadow data beyond it, so the sun reaches
+// whatever lies outside (a sealed room 8 m wide came out as bright as one with a window, #1359). Such a scene gets a view fitted to its bounds, a
+// little wider than they are. A scene wider than the largest view (the default world view's half width, 65 m) keeps the view as it was.
+const SHADOW_FIT_PADDING = 1.1;
+const LARGEST_FITTED_SHADOW_EXTENT = 65;
+// A ground plane under a small subject must not stretch the view: a 1 m object on a 50 m plane would get a 40 m view and shadow texels 6 times
+// larger than the default view gives it. A horizontal slab wider than this and at most 15 percent as thick as it is wide (bounds carry about 5 percent padding on each side) is left out of the fit
+// when anything else is left (a room's 8 m floor stays in).
+const GROUND_PLANE_MINIMUM_WIDTH = 10;
+const GROUND_PLANE_THICKNESS_RATIO = 0.15;
+
+function isGroundPlane(part) {
+  const bounds = sceneBoundsOfParts([part]);
+  if (!bounds) return false;
+  const [width, height, depth] = bounds.maximum.map((value, axis) => value - bounds.minimum[axis]);
+  const horizontal = Math.max(width, depth);
+  return horizontal > GROUND_PLANE_MINIMUM_WIDTH && height <= horizontal * GROUND_PLANE_THICKNESS_RATIO;
+}
+
+function fitBoundsOf(parts) {
+  const subjects = parts.filter(part => !isGroundPlane(part));
+  return sceneBoundsOfParts(subjects.length > 0 ? subjects : parts);
+}
+
+/** The shadow a scene should use: the recipe's own when it set one, else a view fitted to the parts when they outgrow the default one. */
+export function fitAgentShadow(shadow, parts) {
+  const defaults = shadowFrom({});
+  const isDefault = Object.keys(defaults).every(key => JSON.stringify(shadow[key]) === JSON.stringify(defaults[key]));
+  if (!isDefault) return shadow;
+  const bounds = sceneBoundsOfParts(parts) && fitBoundsOf(parts);
+  if (!bounds) return shadow;
+  const radius = Math.hypot(...bounds.maximum.map((value, axis) => value - bounds.minimum[axis])) / 2;
+  const extent = radius * SHADOW_FIT_PADDING;
+  if (!(extent > defaults.extent && extent <= LARGEST_FITTED_SHADOW_EXTENT)) return shadow;
+  const target = bounds.maximum.map((value, axis) => (value + bounds.minimum[axis]) / 2);
+  return { target, extent, distance: extent * 2.4, near: 1, far: extent * 5 };
 }
 
 /** Derive a detached directional shadow projector from validated ordinary JSON. */

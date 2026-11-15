@@ -102,7 +102,7 @@ jobs:
           pattern: lcov-shard-*
           path: coverage/shards
           merge-multiple: true
-      - run: node scripts/coverage-gate.mjs coverage/shards --merged-out coverage/lcov.info
+      - run: node scripts/coverage-gate.mjs coverage/shards --expect-shards 12 --merged-out coverage/lcov.info
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -119,6 +119,8 @@ jobs:
       # The site build is the first step of `npm run deploy`, so a module error in src/home.js must fail here and not at deploy time.
       - run: npm run check:site-build
       - run: npm run check:links:package
+      # llms.txt and the published guides link only to files and releases that the built site serves (#1249).
+      - run: npm run check:published-site
       # The size job measures growth against the base branch. Here the archive is compared with its own commit, so a release
       # build step that measure-archive.mjs leaves out fails every pull request, not only the push that publishes (#1093).
       - run: npm run smoke:package
@@ -154,7 +156,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: npm run build:lib
-      - run: node --test $(git grep -l "support/cook.js" -- tests)
+      - run: node --test --import ./scripts/test-hang-guard.mjs --test-timeout=300000 $(git grep -l "support/cook.js" -- tests)
 
   test:
     if: always()

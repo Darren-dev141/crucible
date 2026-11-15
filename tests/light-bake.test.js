@@ -141,6 +141,16 @@ test('a part whose maps read the second UV set is skipped with its material name
   assert.equal(baked[7], parts[7]);
 });
 
+test('a part with a layer map on the second UV set is skipped with the map named', () => {
+  const clearcoatImage = { width: 2, height: 2, data: new Uint8ClampedArray(16).fill(128) };
+  const parts = smallRoom();
+  parts.push(placed('coated floor', [1.5, 1, 1.5], [1, 2, 1], { name: 'Coated', layerMaps: { clearcoatTexture: { image: clearcoatImage, colorSpace: 'linear', uvChannel: 1 } } }));
+  const { parts: baked, report } = bakeLightmaps(parts, lamp, fastOptions);
+  assert.deepEqual(report.skipped.map(entry => entry.name), ['coated floor']);
+  assert.match(report.skipped[0].reason, /Coated.*clearcoatTexture.*TEXCOORD_1/);
+  assert.equal(baked[7], parts[7]);
+});
+
 test('a part marked as generating its own geometry is skipped', () => {
   const parts = smallRoom();
   parts[0] = { ...parts[0], generatesGeometry: true };
@@ -293,4 +303,14 @@ test('the GPU backend takes up to 1024 parts where the CPU bake takes 256', () =
   assert.equal(planLightmaps(crowd, lamp, { ...fastOptions, backend: 'gpu' }).entries.length, crowd.length);
   const tooMany = Array.from({ length: MAX_GPU_BAKE_PARTS + 1 }, (_, index) => placed(`part-${index}`, [index, 0, 0], [0.5, 0.5, 0.5]));
   assert.throws(() => planLightmaps(tooMany, lamp, { ...fastOptions, backend: 'gpu' }), { name: 'RangeError', message: /1 to 1024 parts/ });
+});
+
+test('a light map that the export skips because the part has an emissive map needs no lightUvs', () => {
+  const image = { width: 1, height: 1, data: new Uint8ClampedArray([255, 255, 255, 255]) };
+  const withEmissive = placed('lamp', [0, 0, 0], [1, 1, 1], { lightMap: { image, colorSpace: 'srgb' }, emissiveMap: { image, colorSpace: 'srgb' } });
+  const part = { ...withEmissive, geometry: { ...cube, uvs: new Float32Array(cube.positions.length / 3 * 2) } };
+  const view = new DataView(exportGlb([part]));
+  const json = JSON.parse(new TextDecoder().decode(new Uint8Array(view.buffer, 20, view.getUint32(12, true))));
+  assert.equal(json.meshes[0].primitives[0].attributes.TEXCOORD_1, undefined);
+  assert.equal(json.materials[0].emissiveTexture.texCoord, undefined);
 });

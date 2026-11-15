@@ -47,7 +47,7 @@ const LOOK_RANGES = {
   light: { position: [-1e6, 1e6], direction: [-1e6, 1e6], color: [0, 1], intensity: [0, 1e5] },
   sun: { direction: [-1e6, 1e6], color: [0, 1000], intensity: [0, 100] },
   environment: {
-    skyTop: [0, 1], skyBottom: [0, 1], fogColor: [0, 1], fogDensity: [0, 10], volumeFogDensity: [0, 1000],
+    skyTop: [0, 1], skyBottom: [0, 1], fogColor: [0, 1], fogDensity: [0, 10], volumeFogDensity: [0, 10],
     ambientIntensity: [0, 100], fillIntensity: [0, 100], environmentIntensity: [0, 100], environmentRotation: [-100, 100],
     sunElevation: [-90, 90], sunRotation: [-360, 360], turbidity: [1, 10], groundAlbedo: [0, 1], aerialPerspective: [0, 4], ozone: [0, 10],
   },
@@ -55,6 +55,12 @@ const LOOK_RANGES = {
   geometry: { oceanTime: [-1e6, 1e6] },
 };
 const INTERPOLATIONS = ['LINEAR', 'STEP', 'SMOOTH', 'CUBICSPLINE'];
+// A recipe path such as environment.lightDirection is not a track field; the key light of the environment is the sun kind, under any sky (#1342).
+const TRACK_PATH_HINTS = {
+  'environment.lightDirection': '{ "kind": "sun", "property": "direction" }',
+  'environment.keyColor': '{ "kind": "sun", "property": "color" }',
+  'environment.keyIntensity': '{ "kind": "sun", "property": "intensity" }',
+};
 const MAX_IK_SOLVERS = 16;
 const IK_SWEEP_SAMPLES = 33;
 const TRACK_SWEEP_SAMPLES = 33;
@@ -522,6 +528,10 @@ export function normalizeAgentMotion(input, recipe) {
   const identities = new Set();
   let keyframeCount = 0;
   const tracks = inputTracks.map((track, index) => {
+    if (typeof track?.target === 'string' && !Object.hasOwn(track, 'kind')) {
+      const hint = TRACK_PATH_HINTS[track.target] ? `; for ${track.target} use ${TRACK_PATH_HINTS[track.target]}, which moves the sun under any sky, an HDRI included` : `; kinds: ${Object.keys(PROPERTIES).join(', ')}`;
+      throw invalidField(`motion.tracks[${index}].target`, track.target, `a field left out: a track names a "kind" and a "property", not a path, and its keys are "keyframes"${hint}`, TypeError);
+    }
     knownKeys(track, ['kind', 'id', 'property', 'interpolation', 'keyframes', 'extrapolation', 'modifiers'], 'motion track');
     if (!Object.hasOwn(PROPERTIES, track.kind) || !Object.hasOwn(PROPERTIES[track.kind], track.property)) {
       const known = Object.hasOwn(PROPERTIES, track.kind) ? ` ${track.kind} properties: ${Object.keys(PROPERTIES[track.kind]).join(', ')}.` : ` Kinds: ${Object.keys(PROPERTIES).join(', ')}.`;

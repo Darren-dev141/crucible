@@ -2,10 +2,11 @@
 // It filters the light and leaves the texture alone: colour is divided by the first-hit albedo first, and the albedo
 // is multiplied back at the end. Normals, depth and the per-pixel noise estimate stop it at edges and shadows.
 
+const SAME_SURFACE_NORMAL = 0.99;
+const SAME_SURFACE_DEPTH = 0.02;
 const PASS_STEPS = [1, 2, 4, 8, 16];
 const KERNEL = [1 / 16, 1 / 4, 3 / 8, 1 / 4, 1 / 16];
-const NORMAL_POWER = 64;
-const LUMINANCE_SIGMA = 3;
+export const DEFAULT_DENOISE_SETTINGS = Object.freeze({ normalPower: 64, luminanceSigma: 2, guideRadius: 1 });
 const ALBEDO_FLOOR = 0.02;
 
 function luminanceOf(buffer, index) {
@@ -57,13 +58,48 @@ function depthGradient(depth, width, height, row, column) {
   return [(right - left) / 2, (below - above) / 2];
 }
 
-function filterPass({ width, height, light, variance, normal, depth }, step, outputLight, outputVariance) {
+function onSameSurface(normal, depth, first, second) {
+  const agreement = normal[first * 3] * normal[second * 3] + normal[first * 3 + 1] * normal[second * 3 + 1] + normal[first * 3 + 2] * normal[second * 3 + 2];
+  return agreement > SAME_SURFACE_NORMAL && Math.abs(depth[first] - depth[second]) <= SAME_SURFACE_DEPTH * Math.abs(depth[first]);
+}
+
+/**
+ * The luminance of each pixel's light, averaged over the square of `radius` pixels each way that lies on the same surface
+ * (normal within about 8 degrees, depth within 2 percent), so the average never mixes across an edge. 0 keeps it as it is.
+ */
+function guideLuminance({ light, normal, depth, width, height }, radius) {
+  const guide = new Float32Array(width * height);
   for (let row = 0; row < height; row++) {
     for (let column = 0; column < width; column++) {
       const center = row * width + column;
-      const centerLuminance = luminanceOf(light, center);
+      let sum = 0;
+      let count = 0;
+      for (let rowOffset = -radius; rowOffset <= radius; rowOffset++) {
+        const neighborRow = row + rowOffset;
+        if (neighborRow < 0 || neighborRow >= height) continue;
+        for (let columnOffset = -radius; columnOffset <= radius; columnOffset++) {
+          const neighborColumn = column + columnOffset;
+          if (neighborColumn < 0 || neighborColumn >= width) continue;
+          const neighbor = neighborRow * width + neighborColumn;
+          if (!onSameSurface(normal, depth, center, neighbor)) continue;
+          sum += luminanceOf(light, neighbor);
+          count++;
+        }
+      }
+      guide[center] = count > 0 ? sum / count : luminanceOf(light, center);
+    }
+  }
+  return guide;
+}
+
+function filterPass({ width, height, light, variance, normal, depth }, settings, step, outputLight, outputVariance) {
+  const guide = guideLuminance({ light, normal, depth, width, height }, settings.guideRadius);
+  for (let row = 0; row < height; row++) {
+    for (let column = 0; column < width; column++) {
+      const center = row * width + column;
+      const centerLuminance = guide[center];
       const [gradientX, gradientY] = depthGradient(depth, width, height, row, column);
-      const luminanceScale = LUMINANCE_SIGMA * Math.sqrt(Math.max(variance[center], 0)) + 1e-4;
+      const luminanceScale = settings.luminanceSigma * Math.sqrt(Math.max(variance[center], 0)) + 1e-4;
       let weightSum = 0;
       let squaredWeightSum = 0;
       let varianceSum = 0;
@@ -80,8 +116,8 @@ function filterPass({ width, height, light, variance, normal, depth }, step, out
           const normalAgreement = Math.max(0, normal[center * 3] * normal[neighbor * 3] + normal[center * 3 + 1] * normal[neighbor * 3 + 1] + normal[center * 3 + 2] * normal[neighbor * 3 + 2]);
           const depthTolerance = Math.abs(gradientX * kernelColumn * step) + Math.abs(gradientY * kernelRow * step) + 1e-3 * Math.abs(depth[center]) + 1e-5;
           const depthWeight = Math.exp(-Math.abs(depth[center] - depth[neighbor]) / depthTolerance);
-          const luminanceWeight = Math.exp(-Math.abs(centerLuminance - luminanceOf(light, neighbor)) / luminanceScale);
-          const weight = KERNEL[kernelRow + 2] * KERNEL[kernelColumn + 2] * normalAgreement ** NORMAL_POWER * depthWeight * luminanceWeight;
+          const luminanceWeight = Math.exp(-Math.abs(centerLuminance - guide[neighbor]) / luminanceScale);
+          const weight = KERNEL[kernelRow + 2] * KERNEL[kernelColumn + 2] * normalAgreement ** settings.normalPower * depthWeight * luminanceWeight;
           weightSum += weight;
           squaredWeightSum += weight * weight;
           varianceSum += weight * weight * variance[neighbor];
@@ -110,14 +146,15 @@ function filterPass({ width, height, light, variance, normal, depth }, step, out
  * Filters a radiance image with the features gathered at each pixel's first hit. All buffers are row-major; colour,
  * albedo and normal hold three floats per pixel, depth and variance one. Returns a new colour buffer.
  */
-export function denoiseRadiance({ width, height, color, albedo, normal, depth, variance }) {
+export function denoiseRadiance({ width, height, color, albedo, normal, depth, variance }, overrides = {}) {
+  const settings = { ...DEFAULT_DENOISE_SETTINGS, ...overrides };
   const pixelCount = width * height;
   let light = demodulate(color, albedo, pixelCount);
   let noise = smoothedVariance(variance, albedo, width, height);
   let nextLight = new Float32Array(light.length);
   let nextNoise = new Float32Array(noise.length);
   for (const step of PASS_STEPS) {
-    filterPass({ width, height, light, variance: noise, normal, depth }, step, nextLight, nextNoise);
+    filterPass({ width, height, light, variance: noise, normal, depth }, settings, step, nextLight, nextNoise);
     [light, nextLight] = [nextLight, light];
     [noise, nextNoise] = [nextNoise, noise];
   }

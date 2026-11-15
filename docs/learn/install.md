@@ -51,18 +51,18 @@ It prints the installed version:
 
 ```text
 my-scene@0.0.0
-`-- crucible@npm:@codepawlhq/crucible@0.15.0
+`-- crucible@npm:@codepawlhq/crucible@0.20.0
 ```
 
 Your version can be newer. The [changelog](/changelog.html) lists what each version adds.
 
 ## Use Crucible without npm
 
-A plain HTML page can import Crucible from this site. Use the exact `module` URL from the [release metadata](/release.json). The URL contains the version, so a release does not change your page.
+A plain HTML page can import Crucible from this site. Take the `module` path from the [release metadata](/release.json) and put it after `https://crucible.codepawl.com`. Replace `<version>` below with the `version` in that file. The site keeps only the current release, so read the file again after a release and update the URL.
 
 ```html
 <script type="importmap">
-  { "imports": { "crucible": "https://crucible.codepawl.com/releases/0.15.0/67.module.js" } }
+  { "imports": { "crucible": "https://crucible.codepawl.com/releases/<version>/67.module.js" } }
 </script>
 <script type="module">
   import { CrucibleRenderer, box } from 'crucible';

@@ -51,7 +51,15 @@ A field newer than the last npm release carries a tag such as `{since 0.21.0}`; 
 | `ground` | 0 | Height of the walkable ground in metres |
 | `rules` | none | A [game rules](game-rules.md) document, checked when it is set |
 
-A rules part named like a scene node is hidden and shown with it, which is how a coin disappears. Yaw 0 faces -Z, and W moves forward. Removing the player node while a game uses it fails with the field to fix.
+A rules part named like a scene node is hidden and shown with it, which is how a coin disappears. The part starts as hidden as the node: a node stored with `visible: false` stays hidden until a rule shows it, unless the part sets `visible` itself, which wins. Yaw 0 faces -Z, and W moves forward. Removing the player node while a game uses it fails with the field to fix.
+
+The player and each NPC move in world space. A node under a parent that only has a translation keeps its place: `startGame` writes the node's own translation as the world position minus the parents' translations. A parent with a rotation or a scale is refused when the game starts, with the parent's id; give that parent only a translation, or choose a node whose parents have none.
+
+## Restarting
+
+After `win` or `lose` the rules stop until the game restarts, and the exported page shows `(R to restart)` in the corner label (`(tap to restart)` on an `input: "touch"` game, where a tap on the canvas restarts; a `?replay=` page has no hint). Three ways put the whole game back at its start: the `restart` [rule action](game-rules.md#actions), the R key (on a page that reads the keyboard, once the game is won or lost; a `?replay=` page has no key, a touch game takes a tap instead) and `game.restart()` from code. Each does the same: the rules reset, the player goes back to its start position and heading, the camera rig and the player's animation graph reset, each NPC returns to its start and walks its path again with its graph reset, and the physics world is rebuilt so every body returns to the recipe's pose. `game.restart()` returns a promise that settles when the physics world is ready again (at once without physics); until then `game.physics` is `null` and the bodies do not step. A custom controller kind registered with `registerController` is moved back by its `teleport(position, yaw)`: without one it stays where it stands on restart, and a `teleport` that throws throws out of the restart. If the rebuild of the physics world fails, the error is logged once and the next restart tries again. Anything a host added outside `startGame` is the host's to reset.
+
+A player or NPC under a parent that rotates or scales is refused by `set-game` and by `scene_export_web` (the controller works in world space), so re-parent it or give the parent only a translation.
 
 ## The web build
 
@@ -67,7 +75,9 @@ const game = await startGame(canvas, recipe, { replay, showStatus: true });
 game.dispose();
 ```
 
-`startGame` loads the scene modules the recipe needs, builds the scene and renderer, and runs input, controller, camera rig and rules as [runtime](runtime.md) systems. Each frame it moves the player node with `set-node`, so a large scene pays a scene update per frame. Not yet in the web build: sound and post effects.
+The `scene` system sends each frame's poses through `scene.apply`, and sends only the poses that differ from the last frame it sent. A game standing still calls `scene.apply` zero times per frame.
+
+`startGame` loads the scene modules the recipe needs, builds the scene and renderer, and runs input, controller, camera rig and rules as [runtime](runtime.md) systems. A frame where a pose changed moves the node with `set-node`, so a large scene pays a scene update on those frames only. Not yet in the web build: sound and post effects.
 
 ## Physics
 

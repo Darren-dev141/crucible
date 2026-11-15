@@ -6,7 +6,7 @@ import { basename, isAbsolute, join, resolve } from 'node:path';
 import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, VIDEO_ENCODERS, AUDIO_FILE_PATTERN, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS } from '../src/agent-scene-capabilities.js';
 import { parseQuality } from './agent-render-quality.mjs';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
-import { normalizeFilmTimeline, filmTimelineDuration } from '../src/film-timeline.js';
+import { normalizeFilmTimeline, filmTimelineDuration, videoFrameCount } from '../src/film-timeline.js';
 import { OIDN_DEFAULT_SAMPLES, PATH_TRACER_DENOISERS, PATH_TRACER_JOB_LIMITS } from '../src/path-tracer-capabilities.js';
 import { AGENT_ASSET_LIMITS, describeAssetBytes } from '../src/agent-asset-limits.js';
 
@@ -15,11 +15,13 @@ const STATES = ['queued', 'running', 'finalizing', 'completed', 'cancelling', 'c
 const TERMINAL = new Set(['completed', 'cancelled', 'failed', 'interrupted']);
 /** Hard ceiling on one job's elapsed time. The deadline below it grows with the job's frames and pixels. */
 export const MAXIMUM_JOB_DEADLINE_MS = 30 * 60 * 1000;
+/** How long a job may wait behind other calls and for the scene page handoff before its render clock starts. */
+export const MAXIMUM_QUEUE_WAIT_MS = 5 * 60 * 1000;
 const BASE_DEADLINE_MS = 60 * 1000;
 const FRAME_ALLOWANCE_MS = 2000;
 const REFERENCE_FRAME_PIXELS = 1024 * 576;
 /** A 1920x1080 PNG of a busy scene runs to several MiB, so a frame may be up to 12 MiB. */
-const DEFAULT_LIMITS = Object.freeze({ maxRecords: 32, maxStoreBytes: 512 * 1024 ** 2, maxOutputBytes: 128 * 1024 ** 2, maxFrameBytes: 12 * 1024 ** 2, deadlineMs: MAXIMUM_JOB_DEADLINE_MS, cleanupMs: 5000 });
+const DEFAULT_LIMITS = Object.freeze({ maxRecords: 32, maxStoreBytes: 512 * 1024 ** 2, maxOutputBytes: 128 * 1024 ** 2, maxFrameBytes: 12 * 1024 ** 2, deadlineMs: MAXIMUM_JOB_DEADLINE_MS, queueWaitMs: MAXIMUM_QUEUE_WAIT_MS, cleanupMs: 5000 });
 
 /** Time the page needs to start, draw the scene and encode the PNG around a path trace that runs for its whole maxSeconds. */
 const PATH_TRACE_OVERHEAD_MS = 60 * 1000;
@@ -119,7 +121,7 @@ function settingsFrom(input, clips, recipe) {
   const bakeDefault = bakeSeconds && input.kind !== 'image' && input.motion ? Math.max(0.1, bakeSeconds - (Number(input.motion.start) || 0)) : undefined;
   const defaultDuration = timelineStart === undefined || input.kind === 'image' ? bakeDefault ?? 1 : filmTimelineDuration(recipe.timeline) - timelineStart;
   const duration = boundedNumber(input.duration ?? defaultDuration, 0.1, MAXIMUM_VIDEO_SECONDS, 'duration');
-  const frameCount = input.kind === 'image' ? 1 : input.kind === 'stills' ? 8 : Math.ceil(fps * duration);
+  const frameCount = input.kind === 'image' ? 1 : input.kind === 'stills' ? 8 : videoFrameCount(fps, duration);
   if (frameCount > MAXIMUM_JOB_FRAMES) throw new RangeError(`Job exceeds ${MAXIMUM_JOB_FRAMES} frames. Lower fps or duration.`);
   const result = { kind: input.kind, width, height, fps, duration, frameCount };
   if (input.passes !== undefined) result.passes = passesFrom(input.passes, input.kind);
@@ -336,9 +338,10 @@ async function hashFile(path, maximum) {
 /** Persistent controller. The trusted runner must stop its owned browser and encoder when aborted. */
 // `lockTakeoverHooks` is a seam for tests that need to pause a process at a chosen point of the lock takeover, or to replace how a
 // job file is deleted (`removeJobFile`).
-export async function createAgentRenderJobs({ root, run, limits: inputLimits = {}, lockTakeoverHooks = {} }) {
+export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inputLimits = {}, lockTakeoverHooks = {} }) {
   if (typeof root !== 'string' || !isAbsolute(root)) throw new TypeError('Job root must be an explicit absolute directory.');
   if (typeof run !== 'function') throw new TypeError('run must be an async render callback.');
+  if (acquireGpu !== undefined && typeof acquireGpu !== 'function') throw new TypeError('acquireGpu must be an async function that takes the GPU and returns its release function.');
   objectKeys(inputLimits, Object.keys(DEFAULT_LIMITS), 'limits');
   const limits = { ...DEFAULT_LIMITS, ...inputLimits };
   for (const [key, value] of Object.entries(limits)) boundedNumber(value, 1, DEFAULT_LIMITS[key], key, true);
@@ -435,7 +438,7 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
     }
   }
 
-  const LIVE_OWNER_MESSAGE = 'The job store is already owned by a live process.';
+  const LIVE_OWNER_MESSAGE = 'The job store is already owned by a live process. If another Crucible server is running, start this one with its own --jobs folder.';
 
   // Reads a lock another process may be writing. A file that does not parse is a starter that has not finished (or a lock that was
   // cut short), so it is treated as owned by a live process and never surfaces a raw SyntaxError. The hard link a starter makes
@@ -814,22 +817,41 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
 
   async function finish(job, snapshot) {
     const { record, controller } = job;
-    const timer = setTimeout(() => {
-      job.failure = 'Render job exceeded its elapsed deadline.';
+    let timer;
+    const expire = message => {
+      job.failure = message;
       record.state = 'cancelling';
       record.reason = job.failure;
       controller.abort(new Error(job.failure));
       persist(job).catch(() => {});
-    }, jobDeadlineMs(record.settings, limits.deadlineMs));
+    };
+    // Two clocks: the wait behind other calls is bounded on its own, and the elapsed deadline starts when the runner says rendering began.
+    // The wait for the person's GPU queue is bounded by --gpu-queue-wait instead, so the call-queue clock starts once the card is taken.
+    const { queueWaitMs } = limits;
+    function startQueueWaitClock() {
+      timer = setTimeout(() => expire(`Render job exceeded its queue wait deadline of ${Math.round(queueWaitMs / 1000)} seconds before rendering started. Submit the job again.`), queueWaitMs);
+    }
+    let renderClockStarted = false;
+    const startRenderClock = () => {
+      if (renderClockStarted) return;
+      renderClockStarted = true;
+      clearTimeout(timer);
+      timer = setTimeout(() => expire('Render job exceeded its elapsed deadline. If another process was using the GPU, submit the job again.'), jobDeadlineMs(record.settings, limits.deadlineMs));
+    };
+    let releaseGpu;
     const renamed = [];
     try {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      // The state stays queued while the job waits for the GPU queue.
+      if (acquireGpu) releaseGpu = await acquireGpu(controller.signal);
+      startQueueWaitClock();
       if (controller.signal.aborted) throw controller.signal.reason;
       record.state = 'running';
       await persist(job);
       const runnerDirectory = await directoryFor(record.jobId);
       if (controller.signal.aborted) throw controller.signal.reason;
       const completed = await run({
-        jobId: record.jobId, sessionId: job.sessionId, directory: runnerDirectory, snapshot, settings: structuredClone(record.settings), signal: controller.signal,
+        jobId: record.jobId, sessionId: job.sessionId, directory: runnerDirectory, snapshot, settings: structuredClone(record.settings), signal: controller.signal, startRenderClock,
         progress(update) {
           objectKeys(update, ['frames', 'maximumPendingFrames'], 'progress');
           if (controller.signal.aborted) throw controller.signal.reason;
@@ -890,6 +912,7 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
       Object.assign(record, failedRecord);
     } finally {
       clearTimeout(timer);
+      releaseGpu?.();
       if (active === job) active = undefined;
     }
   }

@@ -27,7 +27,7 @@ The second is SPZ, Niantic's format and the output of World Labs Atlas and Marbl
 const data = await parseGaussianSplatSpz(await (await fetch('/world.spz')).arrayBuffer());
 ```
 
-A file over `maximumBytes` (default 512 MiB, for SPZ also its inflated size), or one whose header names more than `maximumCount` splats (default 2,000,000, never above 4,000,000), throws a `RangeError` before any splat is read. A file that is not a PLY (or an SPZ: bad gzip, bad magic, unsupported version), is ASCII, lacks a property or is truncated throws an `Error` that names the problem. `createGaussianSplats` applies the count limit again.
+A file over `maximumBytes` (default 512 MiB, for SPZ also its inflated size), or one whose header names more than `maximumCount` splats (default 2,000,000, never above 4,000,000), throws a `RangeError` before any splat is read. A file that is not a PLY (or an SPZ: bad gzip, bad magic, unsupported version), is ASCII, lacks a property or is truncated throws an `Error` that names the problem. `createGaussianSplats` applies the count limit again. A PLY may declare fixed-size elements (such as `camera`) before `vertex`, which are skipped; a list element before `vertex` is refused with a message to put the vertex element first. CRLF header lines are accepted. A scale that is NaN or overflows (a log-scale above about 88) throws with the splat index, like a non-finite position. `maximumCount` must be a positive number; the 4,000,000 hard limit always applies.
 
 ## Loading without freezing the page
 
@@ -62,4 +62,4 @@ GPU: 48 bytes per splat in one RGBA32UI texture and 4 bytes for the order buffer
 
 ## What it costs
 
-See [bench/gaussian-splats/README.md](../bench/gaussian-splats/README.md) for frame times and memory at 100,000 and 1,000,000 splats on an RTX 3060 and on SwiftShader, and the comparison with the three.js `GaussianSplat`.
+See [bench/gaussian-splats/README.md](https://github.com/codepawl/crucible/blob/main/bench/gaussian-splats/README.md) for frame times and memory at 100,000 and 1,000,000 splats on an RTX 3060 and on SwiftShader, and the comparison with the three.js `GaussianSplat`.

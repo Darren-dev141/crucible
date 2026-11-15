@@ -84,15 +84,11 @@ export function cameraFocalLength(frame, aspect) {
 /**
  * The kernel's aperture rotation in radians for a Blender-style rotation in degrees (Blender's aperture_rotation reaches Cycles'
  * bladesrotation as radians, unchanged, in intern/cycles/blender/camera.cpp).
- * Derivation from Cycles' regular_polygon_sample (intern/cycles/kernel/sample/mapping.h): each sector is the triangle with
- * apex at the centre and its other two points at angles -pi/n and +pi/n around the sector axis, and the axes sit at
- * rotation + 2 pi k / n, so the corners are at rotation + pi/n + 2 pi k / n (an edge midpoint, not a corner, sits at angle
- * `rotation`). The kernel's cam_sample_regular_polygon puts corners at rotation + 2 pi k / n, so the kernel value is Cycles'
- * rotation plus pi/n, same direction and same unit. A round aperture has no corners and no offset.
+ * Cook's cam_sample_regular_polygon places the corners as Cycles' regular_polygon_sample does (at rotation + pi/n + 2 pi k / n,
+ * codepawl/cook#13), so the kernel takes Cycles' rotation unchanged: degrees to radians, for any number of blades.
  */
-function kernelApertureRotation(rotationDegrees, blades) {
-  const rotation = rotationDegrees * Math.PI / 180;
-  return blades >= 3 ? rotation + Math.PI / blades : rotation;
+function kernelApertureRotation(rotationDegrees) {
+  return rotationDegrees * Math.PI / 180;
 }
 
 /**
@@ -118,7 +114,7 @@ export function resolveThinLens(frame, { aspect, eye, target }) {
     apertureRadius: cameraFocalLength(frame, aspect) / 1000 / (2 * frame.fStop),
     focalDistance: focusDistance,
     apertureBlades: blades,
-    apertureRotation: kernelApertureRotation(rotationDegrees, blades),
+    apertureRotation: kernelApertureRotation(rotationDegrees),
   };
 }
 

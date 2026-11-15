@@ -97,12 +97,13 @@ Each problem has `kind`, `severity`, `count`, up to eight sample indices and a s
 | Kind | Severity | Sample indices |
 | --- | --- | --- |
 | `non-manifold-edge` | error | edges used by three or more faces |
-| `inconsistent-winding` | error | edges whose two faces wind the same way |
+| `inconsistent-winding` | error | edges whose two faces wind the same way; `count` is edges, `sample` lists the faces to flip with `flip_normals`, at most 8, so lint again until clean |
 | `inverted-part` | error | closed parts with negative volume |
 | `degenerate-face` | error | faces with near-zero area |
 | `boundary-edge` | warning | edges with one face (open surfaces) |
 | `loose-vertex` | warning | vertices used by no face |
 | `non-planar-quad` | warning (`geometry: true`) | quads folded by more than 45 degrees across their diagonal |
+| `folded-face` | warning (`geometry: true`) | two neighbouring faces whose normals point opposite ways, so the surface doubles back on itself |
 | `skewed-quad` | warning (`geometry: true`) | quads with a corner more than 60 degrees from a right angle (outside radial pole fans) |
 
 `ok` is false when any error is present. With `geometry: true`, spatial checks (`intersecting-parts`, `self-intersection`, `thin-wall`, `floating-part`, `asymmetric`) and quad distortion warnings are included.
@@ -132,7 +133,7 @@ Edits (names follow Blender's `bmesh.ops` where they match):
 | --- | --- | --- |
 | `extrude_face_region` | `select`, `offset`, optional `direction` or `alongNormals`, `name` | `<name>.cap`, `<name>.side` |
 | `extrude_individual` | same | same, per face |
-| `inset_region` | `select`, `thickness`, optional `depth`, `name` | `<name>.cap`, `<name>.rim` |
+| `inset_region` | `select`, `thickness`, optional `depth`, `name` | `<name>.cap`, `<name>.rim`. A thickness past the face limit (where the inner faces would collapse, flip or shrink below 0.001% of their area, folding the rim) is clamped to the largest one that holds, 3 significant digits; the result reports `thickness` and `clamped`. If no thickness holds, the edit throws and names the limit |
 | `inset_individual` | same | same, per face |
 | `delete` | `select` (required) | |
 | `flip_normals` | `select` | |
@@ -173,7 +174,7 @@ Limits: a chain of at most 4 cutter geometries, and at most 250,000 estimated ve
 A self-reference, a cycle (`a -> b -> a`) or an unknown ID fails when the recipe is checked, with the chain and the IDs
 that exist. Imported-part edits take inline records only. The same recipe always gives the same bytes.
 
-Both inputs must be closed and consistently wound. A boolean on an open mesh fails with the lint counts and a fix.
+Both inputs must be closed, consistently wound and outward facing. A boolean on an open or inside-out mesh fails with the lint counts and a fix (`fill_holes`, `flip_normals`).
 A difference that leaves a hollow inside the mesh is valid; `lintMesh` reports it under `parts.cavities` instead of as
 an inverted part.
 
@@ -342,8 +343,8 @@ in those cases use only arithmetic and position.
 | `edges` | `{ "between": [faceRule, faceRule] }` (the rim between two regions, for example top and side), `{ "angle": 30 }` (edges bending at least this many degrees; the default), `{ "boundaryOf": faceRule }`, or `{ "all": true }` |
 | `width` | Distance from the edge into each neighbouring face |
 | `segments` | 1 to 16; 1 is a flat chamfer, 3 or more reads as round |
-| `profile` | As in Blender: 0.5 is a circular arc (default), 0.25 is flat, 1 is square, and below 0.25 is concave |
-| `clampOverlap` | Default true: shrink `width` so neighbouring bevels cannot cross; the result reports `clamped` and the `width` used |
+| `profile` | As in Blender: 0.5 is a circular arc (default), 0.25 is flat, 1 is square, and below 0.25 is concave. Values above 0.99 are capped at 0.99, because at 1 every ring point lands on the corner and the faces have no area; the result reports `profile` and `profileClamped`, also in the edit result. At many segments (8 or more) `geometry: true` lint may still warn about thin or folded slivers in the near-square ring; default lint stays clean |
+| `clampOverlap` | Default true: shrink `width` so neighbouring bevels cannot cross; the result reports `clamped` and the `width` used; with `false` a concave profile with a wide bevel can turn the part inside out (lint reports `inverted-part`). A concave profile reaches deeper than a flat one, so its limit is smaller (about 0.36 of an edge at profile 0.1 instead of 0.49) |
 
 Only edges with two consistently wound faces bevel. A face corner next to one beveled edge slides along its other
 edge, shared with the face across that edge, so no T-junctions appear. Each beveled edge becomes a strip of
@@ -469,7 +470,7 @@ attributes (`uv`, colour, `sharp`) are dropped, so unwrap after it. The result r
 `remesh` (`voxelSize`, or `resolution` cells along the longest side up to 192) samples the signed distance to the
 surface on a grid and builds a closed quad surface with surface nets. Only cells near the surface are queried through the
 triangle BVH; the rest take their sign from a flood fill. The grid is checked before it is allocated (192 per side, 4,194,304
-cells). The mesh must be closed, and the result carries no tags or attributes.
+cells). The mesh must be closed and outward facing: an inside-out mesh (lint `inverted-part`) fails with a `flip_normals` hint. The result carries no tags or attributes, and a grid that cannot close the surface fails instead of returning a damaged mesh. Where a thin, bumpy surface leaves a saddle face (four crossing edges), the cell vertices are split into one copy for each sheet, paired by the shared inside point or, for a concave saddle, the shared outside point, so every edge joins exactly two quads. When neither pairing separates the sheets, remesh fails with an error that asks for another `voxelSize` instead of returning the four-quad edge. The `sdf` geometry splits saddles the same way and asks for another `resolution`, or for parts that overlap instead of touching at an edge, when it cannot separate them.
 
 `generateMeshLods(mesh, { ratios })` (also `generateGeometryLods` for renderer geometry such as a recipe part, and
 `generateAssetLods` for a static imported asset) returns level 0, the input, and one level for each ratio, from strictly

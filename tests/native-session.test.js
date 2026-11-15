@@ -3,6 +3,7 @@ import { cookInstalled, cookModule, cookTest } from './support/cook.js';
 import { createCamera } from '../src/path-tracer.js';
 
 const cook = await cookModule();
+const { STRUCT_STRIDES_V2 } = cook ?? {};
 const packV2 = await cookModule('pack-input-v2');
 const {
   buildNativeInputV2,
@@ -84,7 +85,7 @@ cookTest('createNativeSession refuses a kernel parameter block of the wrong size
   const input = roomInput([0, 2.2, 6]);
   assert.throws(
     () => createNativeSession({ ...input, kernelParams: new Uint8Array(12) }),
-    { name: 'TypeError', message: /320 bytes/ }
+    { name: 'TypeError', message: new RegExp(`${STRUCT_STRIDES_V2.kernelParams} bytes`) }
   );
   assert.throws(() => createNativeSession({ ...input, kernelParams: undefined }), { name: 'TypeError', message: /kernelParams/ });
 });
@@ -127,7 +128,7 @@ cookTest('a frame needs the size and the samples, from the defaults or from the 
   assert.equal(frame.width, 24);
   assert.equal(frame.height, 16);
   assert.equal(frame.samples, 8);
-  assert.equal(frame.kernelParams.byteLength, 320);
+  assert.equal(frame.kernelParams.byteLength, STRUCT_STRIDES_V2.kernelParams);
 });
 
 cookTest('a frame option replaces the default and an undefined one does not', () => {
@@ -168,7 +169,7 @@ cookTest('a frame takes the camera of another packing through kernelParams', () 
   assert.deepEqual(withoutRegeneration.kernelParams, withPathRegenerationFlag(second.kernelParams, false));
   assert.throws(
     () => resolveSessionFrame(sessionInput, defaults, { kernelParams: new Uint8Array(8) }),
-    { name: 'TypeError', message: /320 bytes/ }
+    { name: 'TypeError', message: new RegExp(`${STRUCT_STRIDES_V2.kernelParams} bytes`) }
   );
 });
 

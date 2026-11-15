@@ -1,8 +1,9 @@
+import { portalPdf, samplePortalDirection } from './path-tracer-portal.js';
 import { cameraFieldOfView, resolveThinLens } from './camera.js';
 import { fresnelSchlick } from './material-layers.js';
 import { pointLightFalloff } from './ray-query.js';
 import { profileGain } from './light-profile.js';
-import { buildTraceScene, refuseLocalVolumes, SUN_ANGULAR_RADIUS } from './path-tracer-scene.js';
+import { buildTraceScene, buildTraceSceneForDevice, refuseLocalVolumes, SUN_ANGULAR_RADIUS } from './path-tracer-scene.js';
 import { denoiseRadiance } from './path-tracer-denoise.js';
 import { acesChannel, displayColor } from './view-transform.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
@@ -166,7 +167,10 @@ export function createCamera(camera, width, height) {
   for (let axis = 0; axis < 3; axis++) right[axis] /= rightLength;
   const above = [right[1] * forward[2] - right[2] * forward[1], right[2] * forward[0] - right[0] * forward[2], right[0] * forward[1] - right[1] * forward[0]];
   const halfHeight = Math.tan(fov * Math.PI / 360);
-  const view = { eye, forward, right, above, halfHeight, halfWidth: halfHeight * width / height };
+  const clipStart = camera.clipStart ?? 0;
+  if (typeof clipStart !== 'number' || !Number.isFinite(clipStart) || clipStart < 0 || clipStart > 1e5) throw new RangeError(`Path tracer camera clipStart must be a distance from 0 to 100000 scene units along the view axis, got ${JSON.stringify(camera.clipStart)}. Leave it out to start rays at the eye.`);
+  if (typeof camera.far === 'number' && clipStart >= camera.far) throw new RangeError(`Path tracer camera clipStart ${clipStart} is at or past the far plane ${camera.far}, so nothing would be drawn. Pass a clipStart below far, or raise far.`);
+  const view = { eye, forward, right, above, halfHeight, halfWidth: halfHeight * width / height, ...(clipStart > 0 ? { clipStart } : {}) };
   // A camera with an fStop adds its thin lens (apertureRadius, focalDistance, apertureBlades, apertureRotation). Only the
   // native "cycles" kernel draws it; every other tracer ignores the extra fields, and a pinhole view is unchanged.
   const thinLens = resolveThinLens(camera, { aspect: width / height, eye, target });
@@ -267,8 +271,29 @@ function applyNormalMap(material, hit, u, v) {
   hit.normal[2] = mappedZ / mappedLength;
 }
 
+// The interpolated UVs of the hit, set by fillHit: TEXCOORD_0 then TEXCOORD_1 (zeros when the part has no second set).
+const HIT_UV = new Float64Array(4);
+
+/** Samples a map at the hit with the UV set the map names. */
+function sampleMap(texture, out) {
+  const offset = texture.uvSet === 1 ? 2 : 0;
+  sampleTexture(texture, HIT_UV[offset], HIT_UV[offset + 1], out);
+}
+
+// A texel index folded into 0..size-1 by a wrap code: 0 repeat, 1 clamp to edge, 2 mirrored repeat.
+export function wrapTexelIndex(index, size, mode) {
+  if (mode === 1) return Math.max(0, Math.min(size - 1, index));
+  if (mode === 2) {
+    const folded = ((index % (2 * size)) + 2 * size) % (2 * size);
+    return folded < size ? folded : 2 * size - 1 - folded;
+  }
+  return ((index % size) + size) % size;
+}
+
 function sampleTexture(texture, u, v, out) {
-  const { width, height, data, colorLookup, repeat } = texture;
+  const { width, height, data, colorLookup } = texture;
+  const wrapU = texture.wrapU ?? (texture.repeat ? 0 : 1);
+  const wrapV = texture.wrapV ?? (texture.repeat ? 0 : 1);
   const x = u * width - 0.5;
   const y = v * height - 0.5;
   const left = Math.floor(x);
@@ -282,8 +307,8 @@ function sampleTexture(texture, u, v, out) {
   for (let corner = 0; corner < 4; corner++) {
     let column = left + (corner & 1);
     let row = top + (corner >> 1);
-    column = repeat ? ((column % width) + width) % width : Math.max(0, Math.min(width - 1, column));
-    row = repeat ? ((row % height) + height) % height : Math.max(0, Math.min(height - 1, row));
+    column = wrapTexelIndex(column, width, wrapU);
+    row = wrapTexelIndex(row, height, wrapV);
     const weight = ((corner & 1) ? shareX : 1 - shareX) * ((corner >> 1) ? shareY : 1 - shareY);
     const base = (row * width + column) * 4;
     for (let channel = 0; channel < 3; channel++) out[channel] += weight * (colorLookup ? colorLookup[data[base + channel]] : data[base + channel] / 255);
@@ -296,7 +321,7 @@ const CORNER_WEIGHTS = new Float64Array(3);
 
 /** Interpolates the surface at a hit: position, facing-corrected normal is left to the caller, colour and alpha. */
 function fillHit(scene, triangleId, originX, originY, originZ, directionX, directionY, directionZ, distance, hit) {
-  const { positions, normals, uvs, colors, indices } = scene;
+  const { positions, normals, uvs, uvs1, colors, indices } = scene;
   const first = indices[triangleId * 3];
   const second = indices[triangleId * 3 + 1];
   const third = indices[triangleId * 3 + 2];
@@ -330,6 +355,8 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
   let blue = 0;
   let u = 0;
   let v = 0;
+  let secondSetU = 0;
+  let secondSetV = 0;
   CORNER_VERTICES[0] = first;
   CORNER_VERTICES[1] = second;
   CORNER_VERTICES[2] = third;
@@ -347,7 +374,15 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
     blue += weight * colors[vertex * 3 + 2];
     u += weight * uvs[vertex * 2];
     v += weight * uvs[vertex * 2 + 1];
+    if (uvs1) {
+      secondSetU += weight * uvs1[vertex * 2];
+      secondSetV += weight * uvs1[vertex * 2 + 1];
+    }
   }
+  HIT_UV[0] = u;
+  HIT_UV[1] = v;
+  HIT_UV[2] = secondSetU;
+  HIT_UV[3] = secondSetV;
   const length = Math.hypot(normalX, normalY, normalZ) || 1;
   hit.normal[0] = normalX / length;
   hit.normal[1] = normalY / length;
@@ -359,7 +394,7 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
   hit.color[1] = material.color[1] * green;
   hit.color[2] = material.color[2] * blue;
   if (material.texture) {
-    sampleTexture(material.texture, u, v, hit.texel);
+    sampleMap(material.texture, hit.texel);
     hit.color[0] *= hit.texel[0];
     hit.color[1] *= hit.texel[1];
     hit.color[2] *= hit.texel[2];
@@ -369,7 +404,7 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
   hit.emission[1] = material.emission[1];
   hit.emission[2] = material.emission[2];
   if (material.emissiveTexture) {
-    sampleTexture(material.emissiveTexture, u, v, hit.mapTexel);
+    sampleMap(material.emissiveTexture, hit.mapTexel);
     hit.emission[0] *= hit.mapTexel[0];
     hit.emission[1] *= hit.mapTexel[1];
     hit.emission[2] *= hit.mapTexel[2];
@@ -379,15 +414,15 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
   hit.clearcoat = material.clearcoat;
   hit.transmission = material.transmission;
   if (material.clearcoatTexture) {
-    sampleTexture(material.clearcoatTexture, u, v, hit.mapTexel);
+    sampleMap(material.clearcoatTexture, hit.mapTexel);
     hit.clearcoat *= hit.mapTexel[0];
   }
   if (material.transmissionTexture) {
-    sampleTexture(material.transmissionTexture, u, v, hit.mapTexel);
+    sampleMap(material.transmissionTexture, hit.mapTexel);
     hit.transmission *= hit.mapTexel[0];
   }
   if (material.surfaceTexture) {
-    sampleTexture(material.surfaceTexture, u, v, hit.mapTexel);
+    sampleMap(material.surfaceTexture, hit.mapTexel);
     hit.roughness *= hit.mapTexel[1];
     hit.metallic *= hit.mapTexel[2];
   }
@@ -398,11 +433,13 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
     TANGENT_EDGES[3] = edgeTwoX;
     TANGENT_EDGES[4] = edgeTwoY;
     TANGENT_EDGES[5] = edgeTwoZ;
-    TANGENT_UV_DIFFERENCES[0] = uvs[second * 2] - uvs[first * 2];
-    TANGENT_UV_DIFFERENCES[1] = uvs[second * 2 + 1] - uvs[first * 2 + 1];
-    TANGENT_UV_DIFFERENCES[2] = uvs[third * 2] - uvs[first * 2];
-    TANGENT_UV_DIFFERENCES[3] = uvs[third * 2 + 1] - uvs[first * 2 + 1];
-    applyNormalMap(material, hit, u, v);
+    const normalSet = material.normalTexture.uvSet === 1 && uvs1 ? uvs1 : uvs;
+    TANGENT_UV_DIFFERENCES[0] = normalSet[second * 2] - normalSet[first * 2];
+    TANGENT_UV_DIFFERENCES[1] = normalSet[second * 2 + 1] - normalSet[first * 2 + 1];
+    TANGENT_UV_DIFFERENCES[2] = normalSet[third * 2] - normalSet[first * 2];
+    TANGENT_UV_DIFFERENCES[3] = normalSet[third * 2 + 1] - normalSet[first * 2 + 1];
+    const normalOffset = normalSet === uvs1 ? 2 : 0;
+    applyNormalMap(material, hit, HIT_UV[normalOffset], HIT_UV[normalOffset + 1]);
   }
   return alpha;
 }
@@ -487,6 +524,8 @@ function createPathTracer(scene, options) {
   // The denoiser's features come from the first surface a camera ray meets, not from fog in front of it.
   let featuresRecorded = false;
   const { lights, environment } = scene;
+  // With portals the sky is drawn through them (#1144); a scene with none samples the whole map as before.
+  const portals = environment ? lights.portals ?? [] : [];
   if (lights.sun) buildFrame(lights.sun.direction, sunFrame);
   const sunCosineMax = Math.cos(lights.sun?.angularRadius ?? SUN_ANGULAR_RADIUS);
 
@@ -655,7 +694,9 @@ function createPathTracer(scene, options) {
   };
 
   function sampleEnvironmentLight(depth, normal) {
-    environmentSampledPdf = sampleEnvironment(environment, random.next(), random.next(), random.next(), random.next(), lightDirection);
+    environmentSampledPdf = portals.length > 0
+      ? samplePortalDirection(portals, hit.point[0], hit.point[1], hit.point[2], random.next(), random.next(), random.next(), lightDirection)
+      : sampleEnvironment(environment, random.next(), random.next(), random.next(), random.next(), lightDirection);
     if (!(environmentSampledPdf > 0)) return;
     environmentRadiance(environment, lightDirection[0], lightDirection[1], lightDirection[2], lightRadiance);
     addDirect(depth, normal, scene.farDistance, environmentWeight);
@@ -755,12 +796,12 @@ function createPathTracer(scene, options) {
     else addOneLight(depth, normal);
   }
 
-  function addEscape(depth, previousPdf, afterMirror) {
+  function addEscape(depth, previousPdf, afterMirror, originX, originY, originZ) {
     if (!environment) return;
     environmentRadiance(environment, direction[0], direction[1], direction[2], sky);
     let weight = 1;
     if (!afterMirror) {
-      const environmentSide = environmentPdf(environment, direction[0], direction[1], direction[2]) * selectionProbability;
+      const environmentSide = (portals.length > 0 ? portalPdf(portals, originX, originY, originZ, direction[0], direction[1], direction[2]) : environmentPdf(environment, direction[0], direction[1], direction[2])) * selectionProbability;
       weight = previousPdf * previousPdf / (previousPdf * previousPdf + environmentSide * environmentSide);
     }
     addRadiance(depth, throughput[0] * sky[0] * weight, throughput[1] * sky[1] * weight, throughput[2] * sky[2] * weight);
@@ -902,7 +943,7 @@ function createPathTracer(scene, options) {
         continue;
       }
       if (!found) {
-        addEscape(depth, previousPdf, afterMirror);
+        addEscape(depth, previousPdf, afterMirror, positionX, positionY, positionZ);
         break;
       }
       const material = hit.material;
@@ -989,15 +1030,16 @@ export function toneMapToRgba8(linear, width, height, { viewTransform = 'aces', 
 }
 
 /** Names what this scene asks for that the path tracer does not draw, so a result never claims more than it traced. */
-export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { kernelMaterials = false } = {}) {
+export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { kernelMaterials = false, clipStart = 0 } = {}) {
   const notes = new Set();
+  if (clipStart > 0 && (backend === 'gpu' || kernelMaterials)) notes.add('camera.clipStart is ignored: only the CPU and WebGPU tracers start camera rays at it, so geometry between the eye and the clip start is drawn.');
   const fog = environment?.volumeFog;
   if (fog?.density > 0 && (fog.noiseAmount ?? 0.5) > 0) notes.add('volumeFog is traced as a uniform medium: noiseAmount, noiseScale and drift are ignored.');
   if (fog?.density > 0 && fog.ambient) notes.add('volumeFog.ambient is not added: the fog is lit by the traced lights and sky.');
   const hasSoftFalloff = [...(environment?.pointLights ?? []), ...(environment?.spotLights ?? [])].some(light => light.softFalloff === true);
   if (hasSoftFalloff && !kernelMaterials) notes.add('softFalloff is ignored: only the native cycles kernel draws a light as an oriented disk, the other tracers draw a sphere.');
   const hasPortal = (environment?.areaLights ?? []).some(light => light.portal === true);
-  if (hasPortal && !kernelMaterials) notes.add('Light portals (areaLights with portal: true) are ignored: only the native cycles kernel samples the environment through them, the other tracers draw no light from a portal.');
+  if (hasPortal && !kernelMaterials && backend === 'gpu') notes.add('Light portals (areaLights with portal: true) are ignored: only the native cycles kernel, the CPU tracer and the WebGPU tracer sample the environment through them, the other tracers draw no light from a portal.');
   if (!environment?.map) notes.add('There is no environment map, so the sky is black and only the lights shine.');
   if (environment?.cameraIntensity !== undefined && !kernelMaterials) notes.add('cameraIntensity is ignored: only the native cycles kernel draws the sky a camera ray sees at its own strength, the other tracers use the map intensity.');
   for (const part of parts) {
@@ -1009,6 +1051,7 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
     if (!kernelMaterials && (material.layerMaps?.clearcoatTexture || material.transmissionMap)) notes.add('Graph clearcoat and transmission masks are read by the CPU tracer; the GPU tracers use the factors.');
     if (kernelMaterials && hasSplitLayerMap(material)) notes.add('A clearcoat or sheen colour map is ignored when the layer has a roughness above 0 kept in another map.');
     if (material.emissionFresnel > 0 && backend !== 'cpu') notes.add('emission fresnel is ignored by the GPU path tracers; the cpu backend applies it.');
+    if (material.emissionMask) notes.add('emissionMask is ignored by the path tracers; the rasterizer applies it.');
     for (const [name, isUsed, kernelShades] of IGNORED_LAYERS) if (!(kernelMaterials && kernelShades) && isUsed(material, kernelMaterials)) notes.add(`${name} is ignored.`);
   }
   return [...notes];
@@ -1065,7 +1108,12 @@ export function renderBand(scene, camera, options, rowStart, rowEnd, shouldStop 
         const directionY = camera.forward[1] + camera.right[1] * screenX + camera.above[1] * screenY;
         const directionZ = camera.forward[2] + camera.right[2] * screenX + camera.above[2] * screenY;
         const length = Math.hypot(directionX, directionY, directionZ);
-        tracer.trace(camera.eye[0], camera.eye[1], camera.eye[2], directionX / length, directionY / length, directionZ / length, pixel, sample);
+        // clipStart is a distance along the view axis, as Cycles' clip start: a ray from the eye starts where it has gone that far along the axis.
+        const rayDirectionX = directionX / length;
+        const rayDirectionY = directionY / length;
+        const rayDirectionZ = directionZ / length;
+        const clipDistance = camera.clipStart ? camera.clipStart / (rayDirectionX * camera.forward[0] + rayDirectionY * camera.forward[1] + rayDirectionZ * camera.forward[2]) : 0;
+        tracer.trace(camera.eye[0] + rayDirectionX * clipDistance, camera.eye[1] + rayDirectionY * clipDistance, camera.eye[2] + rayDirectionZ * clipDistance, rayDirectionX, rayDirectionY, rayDirectionZ, pixel, sample);
         const { radiance, features } = tracer;
         const sampleLuminance = luminance(radiance[0], radiance[1], radiance[2]);
         sumLuminance += sampleLuminance;
@@ -1171,15 +1219,6 @@ function renderBandsInWorkers(scene, camera, options, buffers, shouldStop) {
   });
 }
 
-async function readDeviceTriangleLimit(gpuModule) {
-  try {
-    return await gpuModule.gpuTriangleLimit();
-  } catch {
-    // No device on this page: build with the default bound so a scene error reaches the caller before the device error of the trace.
-    return undefined;
-  }
-}
-
 /**
  * Renders one still. `scene` is `{ parts, environment, camera }` as the rasterizer takes them. Resolves with the linear
  * pixels, the tone-mapped RGBA bytes, and a report. Rejects, and returns nothing, when `maxSeconds` runs out.
@@ -1196,8 +1235,7 @@ export async function renderPathTracedImage({ parts, environment = {}, camera },
   const gpuModule = options.backend === 'gpu' || options.backend === 'webgpu'
     ? await (options.backend === 'webgpu' ? import('./path-tracer-webgpu.js') : import('./path-tracer-gpu.js'))
     : null;
-  const deviceLimit = gpuModule ? await readDeviceTriangleLimit(gpuModule) : undefined;
-  const scene = buildTraceScene(parts, environment, deviceLimit === undefined ? {} : { gpuTriangleLimit: deviceLimit });
+  const scene = gpuModule ? await buildTraceSceneForDevice(parts, environment, gpuModule) : buildTraceScene(parts, environment);
   if (options.backend !== 'cpu') refuseLocalVolumes(scene, `backend "${options.backend}"`);
   const pixelCount = width * height;
   const buffers = {
@@ -1233,7 +1271,7 @@ export async function renderPathTracedImage({ parts, environment = {}, camera },
       backend: options.backend, ...(gpuName ? { gpu: gpuName, gpuCompileSeconds, gpuKernelCompiles } : {}),
       averageSamples: totalSamples(samplesTaken) / pixelCount, noiseThreshold: options.noiseThreshold,
       triangles: scene.indices.length / 3, tracedSeconds, seconds: (performance.now() - started) / 1000,
-      ignored: describeIgnoredFeatures(parts, environment, options.backend),
+      ignored: describeIgnoredFeatures(parts, environment, options.backend, { clipStart: view.clipStart }),
     },
   };
 }

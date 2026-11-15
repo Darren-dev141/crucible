@@ -3,7 +3,7 @@ import { materialTags } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
 import { postFragment, createPostFragment, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
-import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing } from './gl-program.js';
+import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
 import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError } from './budget.js';
 import { applyProjection } from './camera.js';
@@ -129,6 +129,7 @@ function shaderFeaturesOfParts(parts) {
     for (const name of POSITIVE_SHADER_FEATURES) {
       if (material[name] > 0) features.add(name);
     }
+    if (material.emissionMask) features.add('emissionMask');
     if (material.lightMask !== undefined) features.add('lightLinking');
     if ((material.alphaMode ?? 'opaque') !== 'opaque') features.add('alphaMode');
     if (material.subsurface?.weight > 0) features.add('subsurface');
@@ -687,8 +688,19 @@ function allFinite(values) {
   return true;
 }
 
+// Triangles per pixel above which `denseSamples` replaces `samples`: past one triangle per pixel every pixel is shaded about once per sample anyway, so the extra samples cost fragment work and buy little edge quality (#1163).
+export const DENSE_TRIANGLES_PER_PIXEL = 1;
+
+export function samplesForDensity(parts, canvas, pixelRatio, samples, denseSamples) {
+  if (!Number.isInteger(denseSamples) || denseSamples < 1) throw new Error('denseSamples must be a positive integer or null.');
+  let triangles = 0;
+  for (const part of parts) triangles += part.geometry.indices.length / 3;
+  const pixels = Math.max(1, canvas.clientWidth) * Math.max(1, canvas.clientHeight) * pixelRatio * pixelRatio;
+  return triangles / pixels > DENSE_TRIANGLES_PER_PIXEL ? Math.min(samples, denseSamples) : samples;
+}
+
 export class CrucibleRenderer {
-  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, hdr = false, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', deferProgramLink = false, deferEnvironmentPrefilter = false, background = null } = {}) {
+  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, denseSamples = null, hdr = false, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB } = {}) {
     this.background = background ? resolveBackground(background) : null;
     this.canvas = canvas;
     this.sceneParts = parts;
@@ -745,7 +757,10 @@ export class CrucibleRenderer {
     this.selectViewTransform(viewTransform, look);
     this.hdr = Boolean(hdr && !benchmark && this.context.getExtension('EXT_color_buffer_float'));
     if (volume.density > 0 && !this.hdr) throw new Error('Volume fog requires EXT_color_buffer_float for HDR rendering');
-    this.multisampleSamples = benchmark ? 0 : sampleCount(this.context, this.hdr ? this.context.RGBA16F : this.context.RGBA8, Math.min(shading === 'light' ? Math.min(samples, LIGHT_SHADING_MAXIMUM_SAMPLES) : samples, this.context.getParameter(this.context.MAX_SAMPLES)));
+    this.baseSamples = samples;
+    this.denseSamples = denseSamples;
+    this.densityParts = parts;
+    this.multisampleSamples = this.chooseMultisampleSamples(this.densityParts);
     this.capabilities = { hdr: this.hdr, hdrRequested: Boolean(hdr), hdrFallbackReason: hdr && !this.hdr ? benchmark ? 'HDR is disabled in benchmark mode' : 'EXT_color_buffer_float is unavailable' : null, samples: this.multisampleSamples };
     this.geometryBytes = 0;
     this.geometryBuffers = new Map();
@@ -840,7 +855,8 @@ export class CrucibleRenderer {
       if (geometry.colors && geometry.colors.length !== geometry.positions.length) throw new Error('Geometry colors must contain RGB for every vertex.');
     }
     const expectedGeometryBytes = groups.reduce((total, group) => total + geometryBufferBytes(group[0].geometry) + group.length * INSTANCE_STRIDE * 4, 0);
-    this.memoryBudgetMiB = planRenderSize({ width: Math.max(1, canvas.clientWidth), height: Math.max(1, canvas.clientHeight), pixelRatio, samples: this.samples, memoryBudgetMiB, geometryBytes: expectedGeometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !benchmark, depth: this.depth, maximumSize: textureLimit }).memoryBudgetMiB;
+    this.memoryBudgetMiB = planRenderSize({ width: Math.max(1, canvas.clientWidth), height: Math.max(1, canvas.clientHeight), pixelRatio, samples: this.samples, memoryBudgetMiB, geometryBytes: expectedGeometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !benchmark, depth: this.depth, maximumSize: textureLimit, maximumMemoryBudgetMiB }).memoryBudgetMiB;
+    this.maximumMemoryBudgetMiB = maximumMemoryBudgetMiB;
     this.view = mat4.create();
     this.projection = mat4.create();
     this.viewProjection = mat4.create();
@@ -878,6 +894,7 @@ export class CrucibleRenderer {
   // The second half of construction, which reads the link results. Reading a result waits for the driver, so a page that
   // builds a heavy renderer passes deferProgramLink and awaits programsReady() instead of freezing for the whole compile.
   finishConstruction() {
+    if (this.disposed || !this.pendingConstruction) return;
     const { pending, parts, environment } = this.pendingConstruction;
     this.pendingConstruction = null;
     const benchmark = this.benchmark;
@@ -923,14 +940,15 @@ export class CrucibleRenderer {
     if (!this.benchmark && !this.multisampleFramebuffer) this.allocateFrameTargets(this.canvas.width, this.canvas.height);
   }
 
-  /** Resolves once every program started by the constructor has linked, polling without blocking the main thread, then finishes construction. Needs deferProgramLink. */
+  /** Resolves once every program started by the constructor has linked, polling without blocking the main thread, then finishes construction. Needs deferProgramLink. After dispose() it resolves at once without finishing construction. */
   async programsReady() {
-    if (!this.pendingConstruction) return;
+    if (this.disposed || !this.pendingConstruction) return;
     const context = this.context;
     const parallelCompile = context.getExtension('KHR_parallel_shader_compile');
     const { pending } = this.pendingConstruction;
     const programs = [...Object.values(pending), ...(this.pendingEnvironmentPrograms?.values() ?? [])].map(started => started.program);
-    while (parallelCompile && programs.some(program => !context.getProgramParameter(program, parallelCompile.COMPLETION_STATUS_KHR))) {
+    // A renderer disposed during the wait has deleted these programs, which would never report complete.
+    while (!this.disposed && parallelCompile && programs.some(program => !context.getProgramParameter(program, parallelCompile.COMPLETION_STATUS_KHR))) {
       await new Promise(resolve => setTimeout(resolve, 8));
     }
     this.finishConstruction();
@@ -942,21 +960,25 @@ export class CrucibleRenderer {
    * stops there; the driver's thread keeps building while this waits in short timers, then the draw runs again. The last
    * draw is complete and leaves every program, target and texture that frame uses ready, so the next frame costs no more than
    * any other. Call it while the canvas is hidden or another world is on screen. Past `timeoutMilliseconds` it draws the
-   * frame at once and resolves true when it never had to, false otherwise.
+   * frame at once and resolves true when it never had to, false otherwise. On a disposed renderer it resolves false without drawing.
    */
   async prepareFrame(frame, { timeoutMilliseconds = 6000 } = {}) {
     await this.programsReady();
+    if (this.disposed) return false;
     const context = this.context;
     const deadline = performance.now() + timeoutMilliseconds;
     setPreparing(context, true);
     try {
       for (;;) {
+        // dispose() may have run during any wait below: its programs are deleted and a draw would leak and raise GL errors.
+        if (this.disposed) return false;
         try {
           this.render(frame);
           return true;
         } catch (error) {
           if (!(error instanceof ProgramNotReady)) throw error;
-          while (!isLinkComplete(context, error.program) && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 8));
+          while (!this.disposed && !isLinkComplete(context, error.program) && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 8));
+          if (this.disposed) return false;
           if (performance.now() >= deadline) break;
         }
       }
@@ -1034,6 +1056,14 @@ export class CrucibleRenderer {
       const uniform = context.getActiveUniform(this.program, index);
       if (uniform.type === context.SAMPLER_2D) context.uniform1iv(context.getUniformLocation(this.program, uniform.name), new Int32Array(uniform.size).fill(1));
     }
+  }
+
+  /** The MSAA sample count for these parts at the canvas's current size: `samples`, or `denseSamples` when the scene is dense (#1163). */
+  chooseMultisampleSamples(parts) {
+    if (this.benchmark) return 0;
+    const requestedSamples = this.denseSamples == null ? this.baseSamples : samplesForDensity(parts, this.canvas, this.pixelRatio, this.baseSamples, this.denseSamples);
+    const shaded = this.shading === 'light' ? Math.min(requestedSamples, LIGHT_SHADING_MAXIMUM_SAMPLES) : requestedSamples;
+    return sampleCount(this.context, this.hdr ? this.context.RGBA16F : this.context.RGBA8, Math.min(shaded, this.context.getParameter(this.context.MAX_SAMPLES)));
   }
 
   get samples() {
@@ -1373,6 +1403,9 @@ export class CrucibleRenderer {
     const renderParts = this.groundPart ? [...parts, this.groundPart] : parts;
     this.fitParts = renderParts;
     this.fitBounds = undefined;
+    this.densityParts = parts;
+    // A scene that gained or lost triangles can cross the density threshold with no size change; resize() judges it again and rebuilds the targets.
+    const resampled = this.denseSamples != null && this.chooseMultisampleSamples(this.densityParts) !== this.multisampleSamples;
     const grouped = groupWorld(retainedUnchanged ? this.incrementalGrouping : null, parts, this.groundPart, this.batching, retainedUnchanged);
     this.incrementalGrouping = grouped.state;
     const groups = grouped.batches;
@@ -1417,7 +1450,7 @@ export class CrucibleRenderer {
     const frameBytes = estimateFrameBytes(this.canvas.width, this.canvas.height, this.samples, 2048, { hdr: this.hdr, bloom: !this.benchmark, depth: this.depth });
     const peakBytes = frameBytes + this.textureBytes + this.geometryBytes + newGeometryBytes + newInstanceBytes;
     if (peakBytes > this.memoryBudgetMiB * 1024 * 1024) {
-      throw memoryBudgetError(this.geometryBytes + newGeometryBytes + newInstanceBytes, this.textureBytes, frameBytes, this.memoryBudgetMiB);
+      throw memoryBudgetError(this.geometryBytes + newGeometryBytes + newInstanceBytes, this.textureBytes, frameBytes, this.memoryBudgetMiB, { maximumMemoryBudgetMiB: this.maximumMemoryBudgetMiB });
     }
     const previousLocations = this.partLocations;
     const previousBuffers = [...this.buffers];
@@ -1486,6 +1519,7 @@ export class CrucibleRenderer {
     this.shadowsDirty = true;
     // With retainedUnchanged the caller promises that parts of kept batches did not move, so only the new batches are re-synced.
     this.updateParts(retainedUnchanged ? renderParts.filter(part => !retained.has(this.partLocations.get(part)?.batch)) : renderParts);
+    if (resampled) this.resize();
     return parts.length;
   }
 
@@ -1910,10 +1944,19 @@ export class CrucibleRenderer {
   }
 
   resize() {
-    const plan = planRenderSize({ width: Math.max(1, this.canvas.clientWidth), height: Math.max(1, this.canvas.clientHeight), pixelRatio: this.pixelRatio, samples: this.samples, memoryBudgetMiB: this.memoryBudgetMiB, geometryBytes: this.geometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !this.benchmark, depth: this.depth, maximumSize: Math.min(this.context.getParameter(this.context.MAX_RENDERBUFFER_SIZE), this.context.getParameter(this.context.MAX_TEXTURE_SIZE)) });
+    // A lost context answers every parameter query with null, so there is no size limit to plan against. This class has no restore path: the caller disposes the renderer and builds a new one when the context comes back.
+    if (this.context.isContextLost()) return;
+    // A canvas that grew or shrank changes the triangles per pixel, so denseSamples is judged again; a new count needs new render targets.
+    const previousSamples = this.multisampleSamples;
+    if (this.denseSamples != null) {
+      this.multisampleSamples = this.chooseMultisampleSamples(this.densityParts);
+      this.capabilities.samples = this.multisampleSamples;
+    }
+    const plan = planRenderSize({ width: Math.max(1, this.canvas.clientWidth), height: Math.max(1, this.canvas.clientHeight), pixelRatio: this.pixelRatio, samples: this.samples, memoryBudgetMiB: this.memoryBudgetMiB, geometryBytes: this.geometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !this.benchmark, depth: this.depth, maximumSize: Math.min(this.context.getParameter(this.context.MAX_RENDERBUFFER_SIZE), this.context.getParameter(this.context.MAX_TEXTURE_SIZE)), maximumMemoryBudgetMiB: this.maximumMemoryBudgetMiB });
     const { width, height } = plan;
     this.memoryPlan = plan;
-    if (this.canvas.width !== width || this.canvas.height !== height) {
+    const sizeChanged = this.canvas.width !== width || this.canvas.height !== height;
+    if (sizeChanged || this.multisampleSamples !== previousSamples) {
       this.canvas.width = width;
       this.canvas.height = height;
       if (!this.benchmark) this.allocateFrameTargets(width, height);
@@ -2393,7 +2436,7 @@ export class CrucibleRenderer {
       context.uniform1f(uniforms.alphaMasked, masked ? 1 : 0);
       context.uniform1f(uniforms.alphaCutoff, batch.alphaCutoff);
       context.uniform1f(uniforms.materialOpacity, batch.opacity);
-      context.uniform1f(uniforms.hasBaseMap, batch.mapState[0] ? 1 : 0);
+      context.uniform1f(uniforms.hasBaseMap, batch.mapState[0] ? 1 + (batch.mapState[0].uvChannel ?? 0) : 0);
       layerTextureSupport.bindDepth?.(this, batch);
       if (masked || batch.tintedShadow) {
         context.activeTexture(context.TEXTURE0 + 1);
@@ -2812,7 +2855,24 @@ export class CrucibleRenderer {
     context.activeTexture(context.TEXTURE0);
   }
 
+  // Programs and shaders that deferProgramLink started and finishConstruction has not yet taken over.
+  releasePendingConstruction() {
+    const context = this.context;
+    const started = [...Object.values(this.pendingConstruction?.pending ?? {}), ...(this.pendingEnvironmentPrograms?.values() ?? [])];
+    for (const { program, shaders } of started) {
+      // Reading the link status waits for a link still in flight; deleting a program mid-link leaves a GL error that the next renderer on this context sees (#74).
+      context.getProgramParameter(program, context.LINK_STATUS);
+      shaders.forEach((shader) => context.deleteShader(shader));
+      context.deleteProgram(program);
+    }
+    this.pendingConstruction = null;
+    this.pendingEnvironmentPrograms = null;
+  }
+
   dispose() {
+    this.disposed = true;
+    this.releasePendingConstruction();
+    releaseStartedPrograms(this.context);
     this.fogFieldTexture?.dispose();
     this.releaseFrameTargets();
     this.shadowCascades?.dispose(this.context, this.renderTargets);

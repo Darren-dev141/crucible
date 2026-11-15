@@ -218,11 +218,11 @@ planted phases per foot. The hips do not move, so a ground far from the characte
 On a scene recipe (not an imported asset) four more kinds animate the look, with the keyframes, interpolations and `easing` of
 any other track. `light` takes an `id` of `point:N`, `spot:N` or `area:N` (the index in `environment.pointLights` and so on) and
 the properties `position`, `color`, `intensity`, plus `direction` on spot and area lights. `sun` (no ID) takes `direction`,
-`color` and `intensity`, which set `lightDirection`, `keyColor` and `keyIntensity`. `environment` takes `skyTop`, `skyBottom`,
+`color` and `intensity`, which set `lightDirection`, `keyColor` and `keyIntensity` under any sky (the physical sky, an HDRI or none), so a sun that sweeps over an HDRI is a `sun` `direction` track; `environment.lightDirection` is not a track field. `environment` takes `skyTop`, `skyBottom`,
 `fogColor`, `fogDensity`, `volumeFogDensity`, `ambientIntensity`, `fillIntensity`, `environmentIntensity` and
 `environmentRotation` (radians; these dim and turn the sky map shown when `environment.world` is true). `effects` takes `exposure`
 and `focusDistance`, which needs `effects.depthOfField.blur` above 0 (a camera with an `fStop` focuses on its target, so move the
-camera `target` track for a rack focus). Values keep the range of the environment field, and an unknown light, property or kind
+camera `target` track for a rack focus). Values keep the range of the environment field (`volumeFogDensity` runs `0` to `10`, like `environment.volumeFog.density`), and an unknown light, property or kind
 fails with the valid ones. Untracked values keep their authored value, and a scene with no such track renders as before.
 
 After `scene.sampleMotion(time)`, `scene.environment` and `scene.effects` return the sampled values (the exported recipe keeps

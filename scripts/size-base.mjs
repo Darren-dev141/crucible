@@ -13,7 +13,7 @@ const SIZE_NOTE_PATTERN = /^changes\/[^/]+\.size\.md$/;
 const SCRIPTS_FOLDER = fileURLToPath(new URL('.', import.meta.url));
 // A measuring method names the script that prints JSON for --json and the files that decide its numbers. A script that imports
 // the source relative to itself runs from the base checkout (runInBase), so it measures the base source.
-export const SIZE_METHOD = { script: join(SCRIPTS_FOLDER, 'measure-size.mjs'), runInBase: false, files: ['measure-size.mjs', 'size-base.mjs', 'size-budget.mjs', 'size-growth.mjs'] };
+export const SIZE_METHOD = { script: join(SCRIPTS_FOLDER, 'measure-size.mjs'), runInBase: false, files: ['measure-size.mjs', 'size-base.mjs', 'size-budget.mjs', 'size-growth.mjs', 'size-chunk-names.mjs'] };
 // CI caches this folder, keyed by the base commit, so a run on an unchanged base skips the second measurement.
 export const BASE_CACHE_FOLDER = 'node_modules/.cache/size-base';
 const MAX_OUTPUT_BYTES = 256 * 1024 * 1024;

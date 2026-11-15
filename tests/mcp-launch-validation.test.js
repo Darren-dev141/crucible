@@ -96,7 +96,7 @@ test('the path tracer text points at the real scene_capabilities topic', async (
 });
 
 test('crucible-mcp --help lists every option runMcpCli accepts', async () => {
-  const bin = await readFile(new URL('../bin/crucible-mcp.mjs', import.meta.url), 'utf8');
+  const bin = await readFile(new URL('../bin/crucible-mcp-flags.mjs', import.meta.url), 'utf8');
   for (const option of ACCEPTED_CLI_OPTIONS) {
     assert.ok(bin.includes(option), `${option} missing from --help`);
   }

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { checkAddon, parseRange, rangeAllows } from '../bin/crucible-addon-check.mjs';
+import { checkAddon, parseArguments, parseRange, rangeAllows } from '../bin/crucible-addon-check.mjs';
 import { VERSION } from '../src/version.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -102,4 +102,21 @@ test('ranges parse caret and comparator forms', () => {
   assert.equal(rangeAllows('^0.19.0', '0.19.4'), true);
   assert.equal(rangeAllows('^0.19.0', '0.20.0'), false);
   assert.equal(rangeAllows('>=0.19.0 <1.0.0', '0.20.0'), true);
+});
+
+test('a prerelease or build-suffixed Crucible version is compared by its x.y.z only', () => {
+  const range = '>=0.19.0 <1.0.0';
+  for (const version of ['0.21.0', '0.21.0-rc.1', '0.21.0+build5', '0.21.0-rc.1+build5']) {
+    assert.equal(rangeAllows(range, version), true, version);
+  }
+  assert.equal(rangeAllows(range, '1.0.0-rc.1'), false);
+  assert.equal(rangeAllows('^0.19.0', '0.20.0-rc.1'), false);
+});
+
+test('the addon check accepts a release candidate version and the --version flag takes it', () => {
+  for (const version of ['0.21.0-rc.1', '0.21.0+build5']) {
+    const { errors } = checkAddon(starterFolder, { version });
+    assert.deepEqual(errors.filter(message => message.includes('does not allow')), [], version);
+    assert.deepEqual(parseArguments([starterFolder, '--version', version]), { folder: starterFolder, version });
+  }
 });

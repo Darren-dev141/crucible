@@ -9,7 +9,7 @@ import { SUBSURFACE_FUNCTIONS, SUBSURFACE_LOBE, SUBSURFACE_SPLIT, SUBSURFACE_UNI
 
 export const DATA_TEXTURE_SHIFT = 11;
 export const DATA_TEXTURE_WIDTH = 1 << DATA_TEXTURE_SHIFT;
-export const TRIANGLE_TEXELS = 9;
+export const TRIANGLE_TEXELS = 10;
 export const MATERIAL_TEXELS = 10;
 export const LIGHT_TEXELS = 6;
 
@@ -380,12 +380,22 @@ vec3 srgbToLinear(vec3 encoded) {
   return mix(pow((encoded + 0.055) / 1.055, vec3(2.4)), encoded / 12.92, lessThanEqual(encoded, vec3(0.04045)));
 }
 
+int wrapTexel(int index, int size, int mode) {
+  if (mode == 1) return clamp(index, 0, size - 1);
+  if (mode == 2) {
+    int folded = ((index % (2 * size)) + 2 * size) % (2 * size);
+    return folded < size ? folded : 2 * size - 1 - folded;
+  }
+  return ((index % size) + size) % size;
+}
+
 vec4 sampleAtlas(vec4 rectangle, float flags, vec2 uv) {
   if (rectangle.z <= 0.0) return vec4(1.0);
   int width = int(rectangle.z);
   int height = int(rectangle.w);
-  bool repeat = mod(flags, 2.0) >= 1.0;
-  bool encoded = flags >= 2.0;
+  bool encoded = mod(floor(flags / 2.0), 2.0) >= 1.0;
+  int wrapU = int(mod(floor(flags / 4.0), 4.0));
+  int wrapV = int(mod(floor(flags / 16.0), 4.0));
   float x = uv.x * rectangle.z - 0.5;
   float y = uv.y * rectangle.w - 0.5;
   float left = floor(x);
@@ -396,13 +406,8 @@ vec4 sampleAtlas(vec4 rectangle, float flags, vec2 uv) {
   for (int corner = 0; corner < 4; corner++) {
     int column = int(left) + (corner & 1);
     int row = int(top) + (corner >> 1);
-    if (repeat) {
-      column = ((column % width) + width) % width;
-      row = ((row % height) + height) % height;
-    } else {
-      column = clamp(column, 0, width - 1);
-      row = clamp(row, 0, height - 1);
-    }
+    column = wrapTexel(column, width, wrapU);
+    row = wrapTexel(row, height, wrapV);
     float weight = (((corner & 1) == 1) ? shareX : 1.0 - shareX) * (((corner >> 1) == 1) ? shareY : 1.0 - shareY);
     vec4 texel = texelFetch(uAtlas, ivec2(int(rectangle.x) + column, int(rectangle.y) + row), 0);
     vec3 color = encoded ? srgbToLinear(texel.rgb) : texel.rgb;
@@ -436,6 +441,11 @@ void applyNormalMap(vec4 rectangle, float flags, vec2 scale, vec3 edgeOne, vec3 
   hitNormal = mapped / mappedLength;
 }
 
+/** True when bit \`bit\` of the material's TEXCOORD_1 mask (material texel 5, third channel) is set. */
+bool mapReadsSecondUvSet(float mask, int bit) {
+  return (int(mask) / bit) % 2 == 1;
+}
+
 /** Fills the hit globals from the triangle in \`nearestSlot\`; returns the alpha of the colour map. */
 float fillHit(vec3 origin, vec3 direction, float distance) {
   int base = nearestSlot * TRIANGLE_TEXELS;
@@ -448,6 +458,8 @@ float fillHit(vec3 origin, vec3 direction, float distance) {
   vec4 colorOneData = fetchData(uTriangles, base + 6);
   vec4 colorTwoData = fetchData(uTriangles, base + 7);
   vec4 colorThreeData = fetchData(uTriangles, base + 8);
+  vec4 secondSetCorners = fetchData(uTriangles, base + 9);
+  vec2 secondSetThird = vec2(fetchData(uTriangles, base + 1).w, fetchData(uTriangles, base + 2).w);
   float secondWeight = nearestU;
   float thirdWeight = nearestV;
   float firstWeight = 1.0 - secondWeight - thirdWeight;
@@ -458,6 +470,7 @@ float fillHit(vec3 origin, vec3 direction, float distance) {
   hitNormal = normal / (normalLength == 0.0 ? 1.0 : normalLength);
   vec3 vertexColor = firstWeight * colorOneData.xyz + secondWeight * colorTwoData.xyz + thirdWeight * colorThreeData.xyz;
   vec2 uv = firstWeight * vec2(normalOneData.w, colorOneData.w) + secondWeight * vec2(normalTwoData.w, colorTwoData.w) + thirdWeight * vec2(normalThreeData.w, colorThreeData.w);
+  vec2 secondUv = firstWeight * secondSetCorners.xy + secondWeight * secondSetCorners.zw + thirdWeight * secondSetThird;
   hitMaterialIndex = int(cornerData.w);
   int material = hitMaterialIndex * MATERIAL_TEXELS;
   vec4 colorMetallic = fetchData(uMaterials, material);
@@ -479,30 +492,33 @@ float fillHit(vec3 origin, vec3 direction, float distance) {
   float alpha = 1.0;
   vec4 mapRectangle = fetchData(uMaterials, material + 6);
   if (mapRectangle.z > 0.0) {
-    vec4 texel = sampleAtlas(mapRectangle, flagsOne.y, uv);
+    vec4 texel = sampleAtlas(mapRectangle, flagsOne.y, mapReadsSecondUvSet(flagsTwo.z, 1) ? secondUv : uv);
     hitColor *= texel.rgb;
     alpha = texel.a;
   }
   vec4 emissiveRectangle = fetchData(uMaterials, material + 9);
-  if (emissiveRectangle.z > 0.0) hitEmission *= sampleAtlas(emissiveRectangle, flagsTwo.x, uv).rgb;
+  if (emissiveRectangle.z > 0.0) hitEmission *= sampleAtlas(emissiveRectangle, flagsTwo.x, mapReadsSecondUvSet(flagsTwo.z, 8) ? secondUv : uv).rgb;
   vec4 surfaceRectangle = fetchData(uMaterials, material + 8);
   if (surfaceRectangle.z > 0.0) {
-    vec4 texel = sampleAtlas(surfaceRectangle, flagsOne.w, uv);
+    vec4 texel = sampleAtlas(surfaceRectangle, flagsOne.w, mapReadsSecondUvSet(flagsTwo.z, 4) ? secondUv : uv);
     hitRoughness *= texel.g;
     hitMetallic *= texel.b;
   }
   vec4 normalRectangle = fetchData(uMaterials, material + 7);
   if (normalRectangle.z > 0.0) {
-    vec2 uvOne = vec2(normalTwoData.w - normalOneData.w, colorTwoData.w - colorOneData.w);
-    vec2 uvTwo = vec2(normalThreeData.w - normalOneData.w, colorThreeData.w - colorOneData.w);
-    applyNormalMap(normalRectangle, flagsOne.z, shape.xy, edgeOne, edgeTwo, uvOne, uvTwo, uv);
+    bool normalOnSecondSet = mapReadsSecondUvSet(flagsTwo.z, 2);
+    vec2 uvOne = normalOnSecondSet ? secondSetCorners.zw - secondSetCorners.xy : vec2(normalTwoData.w - normalOneData.w, colorTwoData.w - colorOneData.w);
+    vec2 uvTwo = normalOnSecondSet ? secondSetThird - secondSetCorners.xy : vec2(normalThreeData.w - normalOneData.w, colorThreeData.w - colorOneData.w);
+    applyNormalMap(normalRectangle, flagsOne.z, shape.xy, edgeOne, edgeTwo, uvOne, uvTwo, normalOnSecondSet ? secondUv : uv);
   }
   return alpha;
 }
 
 /** True when the nearest hit belongs to a shadow-only part (the flag sits in texel 5 of the material); camera rays step through it. */
 bool nearestHitIsShadowOnly() {
-  return fetchData(uMaterials, int(fetchData(uTriangles, nearestSlot * TRIANGLE_TEXELS).w) * MATERIAL_TEXELS + 5).y > 0.0;
+  vec4 cornerData = fetchData(uTriangles, nearestSlot * TRIANGLE_TEXELS);
+  vec4 flags = fetchData(uMaterials, int(cornerData.w) * MATERIAL_TEXELS + 5);
+  return flags.y > 0.0;
 }
 
 /** The nearest solid hit, stepping through the transparent texels of cutout materials and, for a camera ray, shadow-only parts. */
@@ -540,6 +556,11 @@ float alphaAtNearestHit() {
   int material = int(fetchData(uTriangles, base).w) * MATERIAL_TEXELS;
   vec4 mapRectangle = fetchData(uMaterials, material + 6);
   if (mapRectangle.z <= 0.0) return 1.0;
+  if (mapReadsSecondUvSet(fetchData(uMaterials, material + 5).z, 1)) {
+    vec4 secondSetCorners = fetchData(uTriangles, base + 9);
+    vec2 secondSetThird = vec2(fetchData(uTriangles, base + 1).w, fetchData(uTriangles, base + 2).w);
+    uv = firstWeight * secondSetCorners.xy + secondWeight * secondSetCorners.zw + thirdWeight * secondSetThird;
+  }
   return sampleAtlas(mapRectangle, fetchData(uMaterials, material + 4).y, uv).a;
 }
 

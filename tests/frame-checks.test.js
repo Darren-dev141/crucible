@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAgentScene } from '../src/agent-scene.js';
 import { exposureProblems, framingProblems, lumaShares, mergeFrameDiagnostics, pathTracerFindingsLimit, placementProblems, textureProblems } from '../src/frame-checks.js';
-import { closedRoom, closedRoomWithoutBake } from './support/agent-bake-rooms.mjs';
+import { closedRoom, closedRoomWithoutBake, freezeBakeClockForFile } from './support/agent-bake-rooms.mjs';
+
+freezeBakeClockForFile();
+
+// These tests read bake staleness, not light quality, so the bake is as coarse as it can be.
+const SMALL_BAKE = { samples: 1, bounces: 1, texelsPerUnit: 1 };
 
 function sceneWithCamera(camera) {
   return {
@@ -71,13 +76,13 @@ test('exposure warns on a black or clipped frame and not on a normal one', () =>
 });
 
 function lightMoves() {
-  return closedRoom({ motion: { duration: 2, loop: false, tracks: [
+  return closedRoom({ bake: SMALL_BAKE, motion: { duration: 2, loop: false, tracks: [
     { kind: 'light', id: 'point:0', property: 'position', keyframes: [{ time: 0, value: [0, 2.7, 0] }, { time: 2, value: [1, 2.7, 0] }] },
   ] } });
 }
 
 test('an unchanged baked scene gives no stale warning at the rest pose', () => {
-  assert.deepEqual(createAgentScene(closedRoom()).bakeStaleness(), []);
+  assert.deepEqual(createAgentScene(closedRoom({ bake: SMALL_BAKE })).bakeStaleness(), []);
   const scene = createAgentScene(lightMoves());
   scene.sampleMotion(0);
   assert.deepEqual(scene.bakeStaleness(), []);
@@ -95,7 +100,7 @@ test('moving a light after a bake gives bake-stale with the fix', () => {
 });
 
 test('moving a part after a bake gives bake-stale', () => {
-  const scene = createAgentScene(closedRoom({ motion: { duration: 2, loop: false, tracks: [
+  const scene = createAgentScene(closedRoom({ bake: SMALL_BAKE, motion: { duration: 2, loop: false, tracks: [
     { kind: 'node', id: 'block', property: 'translation', keyframes: [{ time: 0, value: [-0.7, 0.6, -0.4] }, { time: 2, value: [0.5, 0.6, -0.4] }] },
   ] } }));
   scene.sampleMotion(2);

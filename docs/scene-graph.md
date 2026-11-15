@@ -47,6 +47,7 @@ Geometry and material objects retain their original identities. Live textures an
 | `animationTargets` | Stable aliases for every node. Their matrices contain local transforms. |
 | `getNode(name)` | Returns the named node or throws when it is missing. |
 | `update()` | Propagates current local transforms, publishes world matrices and returns `parts`. |
+| `replaceLocalMatrices(matrices)` | Takes a `Map` of node name to a 16-number local matrix, sets those nodes and publishes the new world matrices without rebuilding the graph. A non-finite matrix or world, or an unknown name, throws and leaves the graph as it was. Returns a function that puts the previous matrices back. |
 | `reparent(name, parent, { keepWorld = false })` | Changes topology and publishes the resulting world matrices. `null` creates a root. |
 
 Nodes expose `localMatrix`, `worldMatrix`, `pivot`, `geometry`, `material` and a read-only `parent` name.

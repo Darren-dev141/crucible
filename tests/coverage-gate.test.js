@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compareWithBaseline, mergeLcov, totalsOf } from '../scripts/coverage-gate.mjs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { checkShardSet, compareWithBaseline, mergeLcov, totalsOf } from '../scripts/coverage-gate.mjs';
 
 const baseline = { lines: 90, branches: 80, functions: 90 };
 
@@ -45,4 +49,58 @@ test('the branch total does not depend on how the same shards are grouped', () =
   const allApart = totalsOf(mergeLcov([branchShardA, branchShardB, branchShardC])).totals.branches;
   const together = totalsOf(mergeLcov([[branchShardA, branchShardB].join('\n'), branchShardC])).totals.branches;
   assert.deepEqual(allApart, together);
+});
+
+const shardText = ['SF:src/example.js', 'DA:1,1', 'end_of_record'].join('\n');
+
+function shardSet(shardNumbers) {
+  return {
+    paths: shardNumbers.map(number => `coverage/shards/shard-${number}.info`),
+    texts: shardNumbers.map(() => shardText),
+  };
+}
+
+test('a complete shard set has no problems', () => {
+  const { paths, texts } = shardSet([1, 2, 3]);
+  assert.deepEqual(checkShardSet(paths, texts, 3), []);
+});
+
+test('a missing shard is named, with how many were found', () => {
+  const { paths, texts } = shardSet([1, 3]);
+  assert.deepEqual(checkShardSet(paths, texts, 3), ['missing shard 2: found 2 of 3']);
+});
+
+test('shards left over from a run with another shard count, and duplicates, are refused', () => {
+  const left = shardSet([1, 2, 5]);
+  assert.match(checkShardSet(left.paths, left.texts, 3).join('\n'), /shard 5, outside 1 to 3.*missing shard 3/s);
+  const doubled = shardSet([1, 2, 2]);
+  assert.match(checkShardSet(doubled.paths, doubled.texts, 2).join('\n'), /shard 2 appears 2 times/);
+});
+
+test('a shard file without source files is refused as unfinished', () => {
+  const { paths } = shardSet([1, 2]);
+  assert.match(checkShardSet(paths, [shardText, ''], 2).join('\n'), /shard-2\.info has no source files/);
+});
+
+test('the gate command refuses a partial shard set before merging and says to rerun all jobs', () => {
+  const folder = mkdtempSync(join(tmpdir(), 'crucible-shards-'));
+  try {
+    writeFileSync(join(folder, 'shard-1.info'), shardText);
+    writeFileSync(join(folder, 'shard-3.info'), shardText);
+    const baselinePath = join(folder, 'baseline.json');
+    writeFileSync(baselinePath, JSON.stringify({ lines: 0, branches: 0, functions: 0 }));
+    const gate = join(import.meta.dirname, '..', 'scripts', 'coverage-gate.mjs');
+    const refused = spawnSync(process.execPath, [gate, folder, '--baseline', baselinePath, '--expect-shards', '3'], { encoding: 'utf8' });
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /missing shard 2: found 2 of 3/);
+    assert.match(refused.stderr, /Re-run all jobs/);
+    assert.doesNotMatch(refused.stdout, /Coverage from/);
+
+    writeFileSync(join(folder, 'shard-2.info'), shardText);
+    const accepted = spawnSync(process.execPath, [gate, folder, '--baseline', baselinePath, '--expect-shards', '3'], { encoding: 'utf8' });
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.match(accepted.stdout, /Coverage from 3 lcov file/);
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
 });

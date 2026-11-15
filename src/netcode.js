@@ -374,20 +374,60 @@ function validateNetcodeOptions(options) {
 
 // ----- The authority side -----
 
+const SESSION_ID_LENGTH_LIMIT = 64;
+// Snapshots in a row of a run that sorts before the tracked one, with none of the tracked run between them.
+const OLDER_RUN_ADOPTION_THRESHOLD = 30;
+
+function isValidSession(session) {
+  return typeof session === 'string' && session.length <= SESSION_ID_LENGTH_LIMIT;
+}
+
+// An id for one run of a client or authority. A restart on the same peer id gets a new one, so the other side can tell
+// a new run from a late message of the old one. The start time comes first and has a fixed width, so a plain string
+// comparison orders the runs: a message of an older run is stale even when no message of the newer run came before it.
+let lastSessionTimestamp = 0;
+
+function createSessionId() {
+  // Two runs started in the same millisecond still get ordered times.
+  lastSessionTimestamp = Math.max(Date.now(), lastSessionTimestamp + 1);
+  // Fixed width, so the byte count of a run does not depend on the draw.
+  const randomWords = new Uint32Array(1);
+  globalThis.crypto.getRandomValues(randomWords);
+  const randomPart = randomWords[0].toString(36).padStart(7, '0');
+  return `${lastSessionTimestamp.toString(36).padStart(9, '0')}-${randomPart}`;
+}
+
+function highestInputSequence(inputs) {
+  let highest = 0;
+  for (const entry of inputs) {
+    if (Number.isSafeInteger(entry?.sequence) && entry.sequence > highest) highest = entry.sequence;
+  }
+  return highest;
+}
+
 function createAuthority(settings, stats) {
   const { transport, steps } = settings;
   const entities = new Map(); // id -> { owner, tag, state }
   const peers = new Map(); // peer id -> { queue, lastQueuedSequence, lastProcessedSequence, acknowledgedTick }
   const history = new Map(); // tick -> Map(id -> quantised entity)
+  const sessionId = createSessionId();
   let tick = 0;
 
   function peerRecord(peerId) {
     let record = peers.get(peerId);
     if (record) return record;
     if (peers.size >= NETCODE_LIMITS.maximumPeers) return null;
-    record = { queue: [], lastQueuedSequence: 0, lastProcessedSequence: 0, acknowledgedTick: null };
+    record = { queue: [], lastQueuedSequence: 0, lastProcessedSequence: 0, acknowledgedTick: null, session: null };
     peers.set(peerId, record);
     return record;
+  }
+
+  // A client that restarted on the same peer id starts over at sequence 1 with no snapshots.
+  function resetPeerRecord(record) {
+    record.queue.length = 0;
+    record.lastQueuedSequence = 0;
+    record.lastProcessedSequence = 0;
+    record.acknowledgedTick = null;
   }
 
   function receiveMessage(peerId, message) {
@@ -397,7 +437,30 @@ function createAuthority(settings, stats) {
       stats.rejectedMessages += 1;
       return;
     }
-    if (Number.isInteger(message.acknowledgedTick) && message.acknowledgedTick >= (record.acknowledgedTick ?? -1)) {
+    if (message.session !== undefined) {
+      if (!isValidSession(message.session)) {
+        stats.rejectedMessages += 1;
+        return;
+      }
+      if (record.session !== null && record.session !== message.session) resetPeerRecord(record);
+      record.session = message.session;
+    }
+    // The newest message carries the client's current state; an older one reordered behind it must not undo that.
+    const newestSequence = highestInputSequence(inputs);
+    const isNewestMessage = newestSequence > record.lastQueuedSequence;
+    if (message.acknowledgedTick === null && isNewestMessage) {
+      // The client holds no snapshot (it reset on a restart), so the base we remember is gone.
+      record.acknowledgedTick = null;
+    }
+    // An ack from an earlier run of the authority cannot name a base this run has: by the run id the client says it is
+    // tracking, or, for a client that does not send one, by a tick beyond this run's tick.
+    const trackedRun = message.authoritySession;
+    if (trackedRun !== undefined && trackedRun !== null && !isValidSession(trackedRun)) {
+      stats.rejectedMessages += 1;
+      return;
+    }
+    const ackBelongsToThisRun = trackedRun === undefined ? message.acknowledgedTick <= tick : trackedRun === sessionId;
+    if (Number.isInteger(message.acknowledgedTick) && ackBelongsToThisRun && message.acknowledgedTick >= (record.acknowledgedTick ?? -1)) {
       record.acknowledgedTick = message.acknowledgedTick;
     }
     for (const entry of inputs) {
@@ -468,6 +531,7 @@ function createAuthority(settings, stats) {
     const removed = baseEntities ? [...baseEntities.keys()].filter(id => !snapshot.has(id)) : [];
     return {
       type: 'snapshot',
+      session: sessionId,
       tick,
       base,
       lastProcessedInput: record.lastProcessedSequence,
@@ -541,6 +605,9 @@ function createClient(settings, stats) {
   const samples = new Map(); // id -> [{ time, state }]
   const pendingInputs = []; // { sequence, input }, not yet confirmed by a snapshot
   let stepSeconds = null;
+  const sessionId = createSessionId();
+  let authoritySession = null;
+  let consecutiveSnapshotsOfOlderRun = 0;
   let latestTick = -1;
   let inputSequence = 0;
   let predicted = null;
@@ -561,6 +628,19 @@ function createClient(settings, stats) {
     }
   }
 
+  // The authority restarted on the same peer id: its ticks start over, so everything held from the old run is dropped
+  // and the next snapshot is asked for in full.
+  function resetForNewAuthority() {
+    latestTick = -1;
+    receivedStates.clear();
+    samples.clear();
+    pendingInputs.length = 0;
+    predicted = null;
+    renderTime = null;
+    consecutiveSnapshotsOfOlderRun = 0;
+    stats.authorityRestarts += 1;
+  }
+
   function readSnapshot(message) {
     if (!isPlainObject(message) || message.type !== 'snapshot' || !Number.isSafeInteger(message.tick) || message.tick < 0) return null;
     if (message.base !== null && !Number.isSafeInteger(message.base)) return null;
@@ -576,6 +656,27 @@ function createClient(settings, stats) {
     if (!message) {
       stats.rejectedMessages += 1;
       return;
+    }
+    if (message.session !== undefined) {
+      if (!isValidSession(message.session)) {
+        stats.rejectedMessages += 1;
+        return;
+      }
+      // A snapshot of an earlier run that was still in flight must not reset the new run's state, even when it arrives
+      // before any snapshot of the run it came from, so it is told apart by the run order and not by a list.
+      if (authoritySession !== null && message.session < authoritySession) {
+        stats.staleSnapshots += 1;
+        consecutiveSnapshotsOfOlderRun += 1;
+        // An authority restarted with a clock behind the first run's gets an id that sorts before it. When only the
+        // lower id keeps arriving, the run being tracked is gone, so the other run is adopted.
+        if (consecutiveSnapshotsOfOlderRun < OLDER_RUN_ADOPTION_THRESHOLD) return;
+        resetForNewAuthority();
+      } else if (authoritySession !== null && message.session > authoritySession) {
+        resetForNewAuthority();
+      } else {
+        consecutiveSnapshotsOfOlderRun = 0;
+      }
+      authoritySession = message.session;
     }
     if (message.tick <= latestTick) {
       stats.staleSnapshots += 1;
@@ -634,6 +735,8 @@ function createClient(settings, stats) {
     }
     transport.send(settings.serverId, {
       type: 'input',
+      session: sessionId,
+      authoritySession,
       acknowledgedTick: latestTick >= 0 ? latestTick : null,
       inputs: pendingInputs.slice(-settings.inputRedundancy).map(({ sequence, input: pending }) => ({ sequence, input: pending })),
     });
@@ -686,6 +789,7 @@ export function createNetcode(options) {
     snapshotsReceived: 0,
     staleSnapshots: 0,
     missingBaseSnapshots: 0,
+    authorityRestarts: 0,
     reconciliations: 0,
     lastCorrection: 0,
     maximumCorrection: 0,

@@ -1,5 +1,6 @@
 import { validateGameRules } from './game-rules.js';
 import { normalizeGameAnimation } from './game-animation.js';
+import { parentTranslation } from './game-needs.js';
 
 // The `game` section of a scene recipe: which node the player controls, how, with what camera and input, and the rules
 // that decide when the game is won. It is plain data. The runtime in src/game.js reads it; nothing in it is code.
@@ -65,6 +66,7 @@ function normalizePlayer(player, nodeIds, nodes, controllerNames) {
     const known = [...nodeIds].slice(0, 12).join(', ') || 'none yet; add the node first';
     fail('player.node', `names ${JSON.stringify(player.node)}, which is not a node of the scene. Use one of: ${known}.`);
   }
+  parentTranslation(nodes, player.node, 'game.player.node');
   const normalized = {
     node: player.node,
     controller: chooseName(player.controller, controllerNames, 'character', 'player.controller'),
@@ -105,6 +107,7 @@ function normalizeNpc(npc, index, { nodeIds, nodes, taken }) {
       fail(`${label}.node`, `is "${npc.node}", which overlaps the character "${other}" (same node, or one inside the other). Give each character its own separate node.`);
     }
   }
+  parentTranslation(nodes, npc.node, 'game.npcs[].node');
   taken.push(npc.node);
   if (npc.animation === undefined) fail(`${label}.animation`, 'is required: an NPC walks through an animation graph with rootMotion and a number parameter "speed". See scene_capabilities topic game.');
   const animation = normalizeGameAnimation(npc.animation, nodes, npc.node, { path: `${label}.animation`, driven: false });

@@ -15,7 +15,7 @@ const { resolveThinLensParameters } = packInputV2 ?? {};
 
 const skipWithoutAddon = !cookInstalled || findNativeAddon() === null ? 'the native addon is not built' : false;
 
-// Word indexes in the 320-byte KernelParamsV2 block (abi.wgsl): aperture_radius, focal_distance, aperture_blades, aperture_rotation.
+// Word indexes in the KernelParamsV2 block (abi.wgsl): aperture_radius, focal_distance, aperture_blades, aperture_rotation.
 const APERTURE_RADIUS_WORD = 39;
 const FOCAL_DISTANCE_WORD = 43;
 const APERTURE_BLADES_WORD = 46;
@@ -84,7 +84,7 @@ test('focus distance, blades and rotation come through; rotation turns from degr
   );
   assert.equal(lens.focalDistance, 2.5);
   assert.equal(lens.apertureBlades, 6);
-  assert.ok(Math.abs(lens.apertureRotation - Math.PI / 3) < 1e-12, 'a hexagon at 30 degrees is the kernel at 30 degrees plus half a corner step (30)');
+  assert.ok(Math.abs(lens.apertureRotation - Math.PI / 6) < 1e-12, 'a hexagon at 30 degrees reaches the kernel as 30 degrees, as in Cycles');
   assert.equal(resolveThinLens({ ...LENS_OF_50_MM, apertureRotation: 0 }, { aspect: 1, eye: [0, 0, 4], target: [0, 0, 0] }).apertureRotation, 0, 'a round aperture has no offset');
 });
 
@@ -124,7 +124,7 @@ cookTest('depth of field changes only its own words of the params block', () => 
   const hexagon = kernelWords(packWithCamera({ ...LENS_ON_PINHOLE, apertureBlades: 6, apertureRotation: 90 }));
   assert.deepEqual(differingWords(pinhole, hexagon), LENS_WORDS);
   assert.equal(hexagon[APERTURE_BLADES_WORD], 6);
-  assert.equal(floatOfWord(hexagon[APERTURE_ROTATION_WORD]), Math.fround(Math.PI / 2 + Math.PI / 6));
+  assert.equal(floatOfWord(hexagon[APERTURE_ROTATION_WORD]), Math.fround(Math.PI / 2));
 });
 
 cookTest('a v1 input carries the lens in the free fourth floats and upgrades to the same v2 words', () => {
@@ -162,7 +162,10 @@ cookTest('the packer rejects lens values the kernel cannot use, naming the field
   assert.throws(() => resolveThinLensParameters({ apertureRadius: 0.01, focalDistance: 0 }, {}, caller), /`focalDistance` must be a distance along the view axis above 0/);
   assert.throws(() => resolveThinLensParameters({}, { apertureBlades: 2 }, caller), /`apertureBlades` must be 0 for a round aperture or a whole number from 3 to 64/);
   assert.throws(() => resolveThinLensParameters({}, { apertureRotation: Infinity }, caller), /`apertureRotation` must be a finite number of radians/);
-  assert.deepEqual(resolveThinLensParameters({}, {}, caller), { apertureRadius: 0, focalDistance: 10, apertureBlades: 0, apertureRotation: 0 });
+  // Cook since codepawl/cook#19 also returns apertureRatio (1 by default) for anamorphic bokeh.
+  const { apertureRatio = 1, ...defaultLens } = resolveThinLensParameters({}, {}, caller);
+  assert.deepEqual(defaultLens, { apertureRadius: 0, focalDistance: 10, apertureBlades: 0, apertureRotation: 0 });
+  assert.equal(apertureRatio, 1);
 });
 
 // Pixels along the middle row whose value lies between 5 and 95 percent of the row's brightest: the width of the edge.

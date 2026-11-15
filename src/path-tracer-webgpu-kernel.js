@@ -18,7 +18,7 @@ export const PATH_STATE_VECTORS = 9;
 const buildCommonSource = ({ hasVolume = false } = {}) => /* wgsl */ `
 const PI: f32 = 3.14159265358979;
 const TWO_PI: f32 = 6.28318530717959;
-const TRIANGLE_TEXELS: i32 = 9;
+const TRIANGLE_TEXELS: i32 = 10;
 const MATERIAL_TEXELS: i32 = 10;
 const LIGHT_TEXELS: i32 = 6;
 const STACK_SIZE: i32 = 128;
@@ -202,12 +202,22 @@ fn atlasTexel(x: i32, y: i32) -> vec4<f32> {
   return unpack4x8unorm(atlas[u32(y) * params.seedAndAtlas.y + u32(x)]);
 }
 
+fn wrapTexel(index: i32, size: i32, mode: i32) -> i32 {
+  if (mode == 1) { return clamp(index, 0, size - 1); }
+  if (mode == 2) {
+    let folded = ((index % (2 * size)) + 2 * size) % (2 * size);
+    return select(2 * size - 1 - folded, folded, folded < size);
+  }
+  return ((index % size) + size) % size;
+}
+
 fn sampleAtlas(rectangle: vec4<f32>, flags: f32, uv: vec2<f32>) -> vec4<f32> {
   if (rectangle.z <= 0.0) { return vec4<f32>(1.0); }
   let width = i32(rectangle.z);
   let height = i32(rectangle.w);
-  let repeat = (flags % 2.0) >= 1.0;
-  let encoded = flags >= 2.0;
+  let encoded = (floor(flags / 2.0) % 2.0) >= 1.0;
+  let wrapU = i32(floor(flags / 4.0) % 4.0);
+  let wrapV = i32(floor(flags / 16.0) % 4.0);
   let x = uv.x * rectangle.z - 0.5;
   let y = uv.y * rectangle.w - 0.5;
   let left = floor(x);
@@ -218,13 +228,8 @@ fn sampleAtlas(rectangle: vec4<f32>, flags: f32, uv: vec2<f32>) -> vec4<f32> {
   for (var corner = 0; corner < 4; corner++) {
     var column = i32(left) + (corner & 1);
     var row = i32(top) + (corner >> 1u);
-    if (repeat) {
-      column = ((column % width) + width) % width;
-      row = ((row % height) + height) % height;
-    } else {
-      column = clamp(column, 0, width - 1);
-      row = clamp(row, 0, height - 1);
-    }
+    column = wrapTexel(column, width, wrapU);
+    row = wrapTexel(row, height, wrapV);
     let weight = select(1.0 - shareX, shareX, (corner & 1) == 1) * select(1.0 - shareY, shareY, (corner >> 1u) == 1);
     let texel = atlasTexel(i32(rectangle.x) + column, i32(rectangle.y) + row);
     let color = select(texel.rgb, srgbToLinear(texel.rgb), encoded);
@@ -258,6 +263,11 @@ fn applyNormalMap(rectangle: vec4<f32>, flags: f32, scale: vec2<f32>, edgeOne: v
   hitNormal = mapped / mappedLength;
 }
 
+// True when bit \`bit\` of the material's TEXCOORD_1 mask (material texel 5, third channel) is set.
+fn mapReadsSecondUvSet(mask: f32, bit: i32) -> bool {
+  return (i32(mask) / bit) % 2 == 1;
+}
+
 // Fills the hit globals from the triangle in nearestSlot; returns the alpha of the colour map.
 fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
   let base = nearestSlot * TRIANGLE_TEXELS;
@@ -270,6 +280,8 @@ fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
   let colorOneData = triangles[base + 6];
   let colorTwoData = triangles[base + 7];
   let colorThreeData = triangles[base + 8];
+  let secondSetCorners = triangles[base + 9];
+  let secondSetThird = vec2<f32>(triangles[base + 1].w, triangles[base + 2].w);
   let secondWeight = nearestU;
   let thirdWeight = nearestV;
   let firstWeight = 1.0 - secondWeight - thirdWeight;
@@ -280,6 +292,7 @@ fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
   hitNormal = normal / select(normalLength, 1.0, normalLength == 0.0);
   let vertexColor = firstWeight * colorOneData.xyz + secondWeight * colorTwoData.xyz + thirdWeight * colorThreeData.xyz;
   let uv = firstWeight * vec2<f32>(normalOneData.w, colorOneData.w) + secondWeight * vec2<f32>(normalTwoData.w, colorTwoData.w) + thirdWeight * vec2<f32>(normalThreeData.w, colorThreeData.w);
+  let secondUv = firstWeight * secondSetCorners.xy + secondWeight * secondSetCorners.zw + thirdWeight * secondSetThird;
   hitMaterialIndex = i32(cornerData.w);
   let material = hitMaterialIndex * MATERIAL_TEXELS;
   let colorMetallic = materials[material];
@@ -301,23 +314,24 @@ fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
   var alpha = 1.0;
   let mapRectangle = materials[material + 6];
   if (mapRectangle.z > 0.0) {
-    let texel = sampleAtlas(mapRectangle, flagsOne.y, uv);
+    let texel = sampleAtlas(mapRectangle, flagsOne.y, select(uv, secondUv, mapReadsSecondUvSet(flagsTwo.z, 1)));
     hitColor *= texel.rgb;
     alpha = texel.a;
   }
   let emissiveRectangle = materials[material + 9];
-  if (emissiveRectangle.z > 0.0) { hitEmission *= sampleAtlas(emissiveRectangle, flagsTwo.x, uv).rgb; }
+  if (emissiveRectangle.z > 0.0) { hitEmission *= sampleAtlas(emissiveRectangle, flagsTwo.x, select(uv, secondUv, mapReadsSecondUvSet(flagsTwo.z, 8))).rgb; }
   let surfaceRectangle = materials[material + 8];
   if (surfaceRectangle.z > 0.0) {
-    let texel = sampleAtlas(surfaceRectangle, flagsOne.w, uv);
+    let texel = sampleAtlas(surfaceRectangle, flagsOne.w, select(uv, secondUv, mapReadsSecondUvSet(flagsTwo.z, 4)));
     hitRoughness *= texel.g;
     hitMetallic *= texel.b;
   }
   let normalRectangle = materials[material + 7];
   if (normalRectangle.z > 0.0) {
-    let uvOne = vec2<f32>(normalTwoData.w - normalOneData.w, colorTwoData.w - colorOneData.w);
-    let uvTwo = vec2<f32>(normalThreeData.w - normalOneData.w, colorThreeData.w - colorOneData.w);
-    applyNormalMap(normalRectangle, flagsOne.z, shape.xy, edgeOne, edgeTwo, uvOne, uvTwo, uv);
+    let normalOnSecondSet = mapReadsSecondUvSet(flagsTwo.z, 2);
+    let uvOne = select(vec2<f32>(normalTwoData.w - normalOneData.w, colorTwoData.w - colorOneData.w), secondSetCorners.zw - secondSetCorners.xy, normalOnSecondSet);
+    let uvTwo = select(vec2<f32>(normalThreeData.w - normalOneData.w, colorThreeData.w - colorOneData.w), secondSetThird - secondSetCorners.xy, normalOnSecondSet);
+    applyNormalMap(normalRectangle, flagsOne.z, shape.xy, edgeOne, edgeTwo, uvOne, uvTwo, select(uv, secondUv, normalOnSecondSet));
   }
   return alpha;
 }
@@ -360,10 +374,15 @@ fn alphaAtNearestHit() -> f32 {
   let first = triangles[base + 3];
   let second = triangles[base + 4];
   let third = triangles[base + 5];
-  let uv = firstWeight * vec2<f32>(first.w, triangles[base + 6].w) + secondWeight * vec2<f32>(second.w, triangles[base + 7].w) + thirdWeight * vec2<f32>(third.w, triangles[base + 8].w);
+  var uv = firstWeight * vec2<f32>(first.w, triangles[base + 6].w) + secondWeight * vec2<f32>(second.w, triangles[base + 7].w) + thirdWeight * vec2<f32>(third.w, triangles[base + 8].w);
   let material = i32(triangles[base].w) * MATERIAL_TEXELS;
   let mapRectangle = materials[material + 6];
   if (mapRectangle.z <= 0.0) { return 1.0; }
+  if (mapReadsSecondUvSet(materials[material + 5].z, 1)) {
+    let secondSetCorners = triangles[base + 9];
+    let secondSetThird = vec2<f32>(triangles[base + 1].w, triangles[base + 2].w);
+    uv = firstWeight * secondSetCorners.xy + secondWeight * secondSetCorners.zw + thirdWeight * secondSetThird;
+  }
   return sampleAtlas(mapRectangle, materials[material + 4].y, uv).a;
 }
 
@@ -484,6 +503,67 @@ fn sampleEnvironment(rowUnit: f32, columnUnit: f32, columnJitter: f32, rowJitter
   let sine = params.environmentRotationAndRays.y;
   sampledDirection = vec3<f32>(cosine * mapX + sine * mapZ, cos(polar), -sine * mapX + cosine * mapZ);
   return environmentPdf(sampledDirection);
+}
+
+// ---- Light portals (#1144) ----
+// The window rectangles of the scene sit at the end of environmentTables: sixteen floats each (position, width, normal, height, across, along),
+// then the count in the last float. A scene with a portal draws the sky's next-event light through them, as the CPU tracer and Cook do.
+const PORTAL_FLOATS: u32 = 16u;
+
+fn portalCount() -> u32 {
+  return u32(environmentTables[arrayLength(&environmentTables) - 1u]);
+}
+
+fn portalRecord(index: u32) -> u32 {
+  return arrayLength(&environmentTables) - 1u - PORTAL_FLOATS * (portalCount() - index);
+}
+
+fn portalVector(base: u32) -> vec3<f32> {
+  return vec3<f32>(environmentTables[base], environmentTables[base + 1u], environmentTables[base + 2u]);
+}
+
+// The solid-angle density of a direction from the point through the portals: the sum over the portals it crosses of d^2 / (area cos), over their count.
+fn portalPdf(point: vec3<f32>, towards: vec3<f32>) -> f32 {
+  let count = portalCount();
+  var pdf = 0.0;
+  for (var index = 0u; index < count; index++) {
+    let base = portalRecord(index);
+    let normal = portalVector(base + 4u);
+    let facing = dot(towards, normal);
+    if (facing > -1e-9) { continue; }
+    let position = portalVector(base);
+    let toPlane = dot(position - point, normal);
+    if (toPlane >= 0.0) { continue; }
+    let distance = toPlane / facing;
+    let offset = point + towards * distance - position;
+    let width = environmentTables[base + 3u];
+    let height = environmentTables[base + 7u];
+    if (abs(dot(offset, portalVector(base + 8u))) > width * 0.5 || abs(dot(offset, portalVector(base + 12u))) > height * 0.5) { continue; }
+    pdf += distance * distance / (width * height * -facing);
+  }
+  return pdf / f32(count);
+}
+
+// Draws a direction from the point through one portal chosen uniformly into sampledDirection; returns its pdf, or 0 when the point is outside the room.
+fn samplePortalDirection(point: vec3<f32>, portalUnit: f32, acrossUnit: f32, alongUnit: f32) -> f32 {
+  let count = portalCount();
+  let base = portalRecord(min(count - 1u, u32(portalUnit * f32(count))));
+  let width = environmentTables[base + 3u];
+  let height = environmentTables[base + 7u];
+  let windowPoint = portalVector(base) + portalVector(base + 8u) * ((acrossUnit - 0.5) * width) + portalVector(base + 12u) * ((alongUnit - 0.5) * height);
+  let delta = windowPoint - point;
+  let reach = sqrt(dot(delta, delta));
+  if (!(reach > 1e-9)) { return 0.0; }
+  let towards = delta / reach;
+  let pdf = portalPdf(point, towards);
+  if (!(pdf > 0.0)) { return 0.0; }
+  sampledDirection = towards;
+  return pdf;
+}
+
+// Where a camera ray starts: at the eye, or with a clip start (forward.w, a distance along the view axis) where the ray has gone that far along it.
+fn cameraOrigin(rayDirection: vec3<f32>) -> vec3<f32> {
+  return params.eye.xyz + rayDirection * (params.forward.w / dot(rayDirection, params.forward.xyz));
 }
 
 // ---- Microfacet pieces ----
@@ -993,11 +1073,18 @@ fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
       }
       distance -= params.environmentRotationAndRays.z;
     } else {
-      let rowUnit = nextRandom();
-      let columnUnit = nextRandom();
-      let columnJitter = nextRandom();
-      let rowJitter = nextRandom();
-      environmentSampledPdf = sampleEnvironment(rowUnit, columnUnit, columnJitter, rowJitter);
+      if (portalCount() > 0u) {
+        let portalUnit = nextRandom();
+        let acrossUnit = nextRandom();
+        let alongUnit = nextRandom();
+        environmentSampledPdf = samplePortalDirection(hitPoint, portalUnit, acrossUnit, alongUnit);
+      } else {
+        let rowUnit = nextRandom();
+        let columnUnit = nextRandom();
+        let columnJitter = nextRandom();
+        let rowJitter = nextRandom();
+        environmentSampledPdf = sampleEnvironment(rowUnit, columnUnit, columnJitter, rowJitter);
+      }
       lightDirection = sampledDirection;
       if (!(environmentSampledPdf > 0.0)) { return; }
       lightRadiance = environmentRadiance(lightDirection);
@@ -1008,12 +1095,12 @@ fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
   addDirect(depth, normal, distance, weightMode);
 }
 
-fn addEscape(depth: i32, previousPdf: f32, afterMirror: bool) {
+fn addEscape(depth: i32, previousPdf: f32, afterMirror: bool, rayOrigin: vec3<f32>) {
   if (params.emittersFlagsSample.z == 0) { return; }
   let sky = environmentRadiance(direction);
   var weight = 1.0;
   if (!afterMirror) {
-    let environmentSide = environmentPdf(direction) * selectionProbability;
+    let environmentSide = select(environmentPdf(direction), portalPdf(rayOrigin, direction), portalCount() > 0u) * selectionProbability;
     weight = previousPdf * previousPdf / (previousPdf * previousPdf + environmentSide * environmentSide);
   }
   addRadiance(depth, throughput * sky * weight);
@@ -1045,7 +1132,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let screenX = ((f32(id.x) + jitterX) / f32(width) * 2.0 - 1.0) * params.cameraAndClamp.x;
   let screenY = (1.0 - (f32(id.y) + jitterY) / f32(height) * 2.0) * params.cameraAndClamp.y;
   let rayDirection = normalize(params.forward.xyz + params.right.xyz * screenX + params.above.xyz * screenY);
-  tracePath(params.eye.xyz, rayDirection, pixel, sampleIndex, true);
+  tracePath(cameraOrigin(rayDirection), rayDirection, pixel, sampleIndex, true);
   if (!(all(radiance >= vec3<f32>(0.0)) && all(radiance < vec3<f32>(1e30)))) { radiance = vec3<f32>(0.0); }
   if (!(featureDepth >= 0.0 && featureDepth < 1e30)) { featureDepth = 0.0; }
   if (!(all(featureNormal >= vec3<f32>(-1.5)) && all(featureNormal < vec3<f32>(1.5)))) { featureNormal = vec3<f32>(0.0, 0.0, 1.0); }
@@ -1094,21 +1181,27 @@ export const buildMegakernelSource = ({ hasVolume = false, hasSubsurface = false
 ${realtime ? realtime.declarations + realtime.addLights : `// The first hit lights from every emitter; later hits draw one, and divide by the chance of drawing it.
 fn addLights(depth: i32, normal: vec3<f32>) {
   let emitterCount = params.emittersFlagsSample.x;
-  if (lightsFromEveryEmitter(depth, emitterCount)) {
+  // One loop with one flushShadowRay call, so the shadow ray traversal is inlined into the megakernel once: with a call per branch
+  // FXC (Dawn's D3D12 compiler without dxcompiler.dll) fails on the kernel with E_FAIL (#1350).
+  let everyEmitter = lightsFromEveryEmitter(depth, emitterCount);
+  var firstEmitter = 0;
+  var endEmitter = 0;
+  if (everyEmitter) {
     selectionProbability = 1.0;
-    for (var emitter = 0; emitter < emitterCount; emitter++) {
-      sampleEmitter(depth, normal, emitter);
-      flushShadowRay();
+    endEmitter = emitterCount;
+  } else {
+    let chosen = chooseEmitter(normal);
+    if (chosen >= 0) {
+      firstEmitter = chosen;
+      endEmitter = chosen + 1;
     }
-    return;
   }
-  let chosen = chooseEmitter(normal);
-  if (chosen >= 0) {
-    sampleEmitter(depth, normal, chosen);
+  for (var emitter = firstEmitter; emitter < endEmitter; emitter++) {
+    sampleEmitter(depth, normal, emitter);
     flushShadowRay();
   }
   // The sky is drawn with its uniform share whatever light was chosen: that share weighs the next escape ray.
-  selectionProbability = 1.0 / f32(emitterCount);
+  if (!everyEmitter) { selectionProbability = 1.0 / f32(emitterCount); }
 }`}
 ${hasSubsurface ? SUBSURFACE_FUNCTIONS : ''}
 // cameraRays is true when the path starts at the camera, so its first leg steps through shadow-only parts.
@@ -1133,7 +1226,7 @@ fn tracePath(origin: vec3<f32>, startDirection: vec3<f32>, pixel: u32, sampleInd
     ${hasVolume ? 'let inFog = scatterInFog(position, select(params.environmentRotationAndRays.w, hitDistance, found));' : 'let inFog = false;'}
     if (!inFog && !found) {
       if (depth == 0) { firstLegEscaped = 1.0; }
-      addEscape(depth, previousPdf, afterMirror);
+      addEscape(depth, previousPdf, afterMirror, position);
       break;
     }
     var isGlass = false;
@@ -1318,7 +1411,7 @@ fn generatePaths(@builtin(global_invocation_id) id: vec3<u32>) {
   let rayDirection = normalize(params.forward.xyz + params.right.xyz * screenX + params.above.xyz * screenY);
   resetRandom(pixel, sampleIndex, seed);
   let base = id.x * PATH_STATE_VECTORS;
-  storeVector(base, vec4<f32>(params.eye.xyz, 0.0));
+  storeVector(base, vec4<f32>(cameraOrigin(rayDirection), 0.0));
   storeVector(base + 1u, vec4<f32>(rayDirection, 1.0));
   storeVector(base + 2u, vec4<f32>(1.0, 1.0, 1.0, 1e30));
   storeVector(base + 3u, vec4<f32>(0.0));
@@ -1379,7 +1472,7 @@ fn extendPaths(@builtin(global_invocation_id) id: vec3<u32>) {
   throughput = loadVector(base + 2u).xyz;
   radiance = radianceData.xyz;
   selectionProbability = directionSelection.w;
-  addEscape(currentDepth(), originPrevious.w, (flags & FLAG_AFTER_MIRROR) != 0u);
+  addEscape(currentDepth(), originPrevious.w, (flags & FLAG_AFTER_MIRROR) != 0u, originPrevious.xyz);
   storeVector(base + 3u, vec4<f32>(radiance, radianceData.w));
   pathMeta.y = flags & ~(FLAG_ALIVE | FLAG_HIT);
   pathState[base + 8u] = pathMeta;
