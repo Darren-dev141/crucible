@@ -189,7 +189,10 @@ function writeMaterial(writer, textureWriter, material) {
   writeLayerTextures(writer, textureWriter, material, layerExtensions);
   if (Object.keys(layerExtensions).length > 0) gltfMaterial.extensions = layerExtensions;
   const strength = material.emission ?? 0;
-  if (strength !== 0 && strength !== 1) {
+  if (strength > 0 && strength < 1) {
+    // KHR_materials_emissive_strength allows only values of 1 or more, so a weaker emission is folded into the factor.
+    gltfMaterial.emissiveFactor = gltfMaterial.emissiveFactor.map(channel => channel * strength);
+  } else if (strength > 1) {
     gltfMaterial.extensions = { ...gltfMaterial.extensions, [EMISSIVE_STRENGTH]: { emissiveStrength: strength } };
     writer.addExtension(EMISSIVE_STRENGTH, { required: true });
   }

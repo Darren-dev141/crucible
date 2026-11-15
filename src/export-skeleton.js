@@ -23,7 +23,14 @@ function transformFields(translation, rotation, scale) {
 export function decomposeMatrix(matrix) {
   const translation = mat4.getTranslation(vec3.create(), matrix);
   const scale = mat4.getScaling(vec3.create(), matrix);
-  const rotation = mat4.getRotation(quat.create(), matrix);
+  // A mirrored matrix (negative determinant) keeps its reflection as a negative x scale, so the rotation stays proper.
+  const mirrored = mat4.determinant(matrix) < 0;
+  const properMatrix = Float32Array.from(matrix);
+  if (mirrored) {
+    scale[0] = -scale[0];
+    for (let index = 0; index < 3; index++) properMatrix[index] = -properMatrix[index];
+  }
+  const rotation = mat4.getRotation(quat.create(), properMatrix);
   return transformFields(translation, rotation, scale);
 }
 
