@@ -71,3 +71,9 @@ test('manual GPU checks are pointed out by the files they cover', () => {
   assert.deepEqual(commands, ['npm run reference', 'npm run smoke:character']);
   assert.deepEqual(manualChecksFor(['docs/guide.md']), []);
 });
+
+test('the add-on python tests run only when a file under packages/blender-addon/ changed', () => {
+  assert.match(checkNamed(planChecks(['src/camera.js']), 'add-on python tests').skipped, /no file under packages\/blender-addon/);
+  const checks = planChecks(['packages/blender-addon/cook_blender/blender_conversions.py', 'changes/1.md']);
+  assert.equal(checkNamed(checks, 'add-on python tests').skipped, null);
+});
