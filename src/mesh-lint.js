@@ -8,12 +8,12 @@ const SAMPLE_LIMIT = 8;
 const FOLDED_NORMAL_DOT = -0.99;
 
 // Every problem names the operation that usually fixes it, so an agent can act without another lookup.
-const PROBLEMS = Object.freeze({
+export const MESH_PROBLEMS = Object.freeze({
   'non-manifold-edge': { severity: 'error', fix: 'Delete the extra faces or split the edge; booleans and solidify need two faces per edge.' },
-  'inconsistent-winding': { severity: 'error', fix: 'Run recalc_normals on the part so neighbouring faces wind the same way.' },
+  'inconsistent-winding': { severity: 'error', fix: 'Run flip_normals on the faces listed in sample so they wind like their neighbours.' },
   'inverted-part': { severity: 'error', fix: 'Run flip_normals on the part; its normals point inward.' },
-  'degenerate-face': { severity: 'error', fix: 'Run merge_by_distance or dissolve the zero-area faces.' },
-  'loose-vertex': { severity: 'warning', fix: 'Delete loose vertices; they do not render and confuse bounds.' },
+  'degenerate-face': { severity: 'error', fix: 'Run merge_by_distance, or dissolve_faces on the zero-area faces.' },
+  'loose-vertex': { severity: 'warning', fix: 'Run delete_loose to remove them; loose vertices do not render and confuse bounds.' },
   'boundary-edge': { severity: 'warning', fix: 'Open surface. Run fill_holes to cap each boundary loop, or add solidify if the part must be closed.' },
 });
 
@@ -162,7 +162,7 @@ function addQualityProblem(problems, kind, element) {
 function addProblem(problems, kind, element) {
   let problem = problems.get(kind);
   if (!problem) {
-    problem = { kind, ...PROBLEMS[kind], count: 0, sample: [] };
+    problem = { kind, ...MESH_PROBLEMS[kind], count: 0, sample: [] };
     problems.set(kind, problem);
   }
   problem.count++;
