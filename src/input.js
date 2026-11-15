@@ -152,15 +152,26 @@ export function createInput(options = {}) {
     return api;
   }
 
+  // Returns the thrown error in a box so one failing source cannot stop the others from being disposed.
+  function disposeSource(entry) {
+    try {
+      entry.source.dispose?.();
+    } catch (error) {
+      return { error };
+    }
+    return null;
+  }
+
   function unregisterSource(name) {
     const entry = sources.get(name);
     if (entry === undefined) throw new RangeError(`No input source named "${String(name)}". Registered: ${[...sources.keys()].join(', ') || 'none'}.`);
-    entry.source.dispose?.();
+    const disposeFailure = disposeSource(entry);
     sources.delete(name);
     entry.emit.releaseAll();
     for (const controlName of [...controls.keys()]) {
       if (controlName.startsWith(`${name}/`) || entry.foreignControls.has(controlName)) controls.delete(controlName);
     }
+    if (disposeFailure) throw disposeFailure.error;
     return api;
   }
 
@@ -249,7 +260,7 @@ export function createInput(options = {}) {
 
   function dispose() {
     if (disposed) return;
-    for (const entry of [...sources.values()].reverse()) entry.source.dispose?.();
+    const failures = [...sources.values()].reverse().map(disposeSource).filter(Boolean);
     sources.clear();
     controls.clear();
     actionBindings.clear();
@@ -258,6 +269,7 @@ export function createInput(options = {}) {
     controlListeners.clear();
     sampleListeners.clear();
     disposed = true;
+    if (failures.length > 0) throw failures[0].error;
   }
 
   const api = {
