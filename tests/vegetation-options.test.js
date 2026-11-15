@@ -51,3 +51,13 @@ test('grass clump and flower patch counts and heights are bounded', () => {
   assert.throws(() => createFlowerPatch({ height: 0 }), /Flower height must be from/);
   assert.ok(createGrassClump({ blades: 3 }).bounds.maximum.every(Number.isFinite));
 });
+
+test('scatter scale maximum must be finite and at least the minimum', () => {
+  for (const scale of [[1, Infinity], [1, NaN], [2, 1]]) {
+    assert.throws(scatter({ scale }), /Scatter scale maximum must be from/, `scale ${scale}`);
+  }
+});
+
+test('scatter mix refuses an infinite weight and names the species', () => {
+  assert.throws(scatter({ mix: { grass: Infinity, bush: 1 } }), /Scatter mix weight for grass must be finite/);
+});
