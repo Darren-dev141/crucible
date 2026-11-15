@@ -46,7 +46,6 @@ test('rejects files that are not 3DGS PLY with a clear message', () => {
   assert.throws(() => parseGaussianSplatPly(buildPly([IDENTITY_SPLAT(0, 0, 0).slice(0, 13)], { properties: PROPERTIES.slice(0, 13) })), /lacks the properties rot_3/);
   const truncated = buildPly([IDENTITY_SPLAT(0, 0, 0), IDENTITY_SPLAT(1, 1, 1)]).slice(0, -8);
   assert.throws(() => parseGaussianSplatPly(truncated), /truncated/);
-  assert.throws(() => parseGaussianSplatPly(buildPly([IDENTITY_SPLAT(NaN, 0, 0)])), /non-finite position/);
 });
 
 test('enforces the byte and splat count limits before reading splats', () => {
@@ -188,15 +187,6 @@ test('a PLY with a bad count on an element before vertex is refused with the ele
   }
 });
 
-test('a non-finite scale throws with the splat index (#1282)', () => {
-  const notANumber = IDENTITY_SPLAT(0, 0, 0);
-  notANumber[7] = Number.NaN;
-  assert.throws(() => parseGaussianSplatPly(buildPly([IDENTITY_SPLAT(0, 0, 0), notANumber])), /splat 1 has a non-finite scale/);
-  const huge = IDENTITY_SPLAT(0, 0, 0);
-  huge[8] = 1000;
-  assert.throws(() => parseGaussianSplatPly(buildPly([huge])), /splat 0 has a non-finite scale/);
-});
-
 test('a PLY header with CRLF line endings parses (#1282)', () => {
   const file = buildCustomPly(headerWith('\r\n'), IDENTITY_SPLAT(1, 2, 3));
   assert.deepEqual(Array.from(parseGaussianSplatPly(file).positions), [1, 2, 3]);
@@ -216,16 +206,33 @@ test('createGaussianSplats always refuses more than 4,000,000 splats (#1282)', (
   assert.throws(() => createGaussianSplats(oversized, { maximumCount: 10_000_000 }), /over the limit of 4000000/);
 });
 
-test('a non-finite rotation, opacity or colour throws with the splat index', () => {
-  const withValue = (position, value) => {
-    const splat = IDENTITY_SPLAT(0, 0, 0);
+test('splats with a non-finite field are dropped and reported, the good ones keep their order', () => {
+  const badSplat = (position, value) => {
+    const splat = IDENTITY_SPLAT(9, 9, 9);
     splat[position] = value;
-    return buildPly([IDENTITY_SPLAT(1, 1, 1), splat]);
+    return splat;
   };
-  assert.throws(() => parseGaussianSplatPly(withValue(10, Infinity)), /splat 1 has a non-finite rot_0/);
-  assert.throws(() => parseGaussianSplatPly(withValue(13, NaN)), /splat 1 has a non-finite rot_3/);
-  assert.throws(() => parseGaussianSplatPly(withValue(6, NaN)), /splat 1 has a non-finite opacity/);
-  assert.throws(() => parseGaussianSplatPly(withValue(4, NaN)), /splat 1 has a non-finite f_dc_1/);
+  const rows = [IDENTITY_SPLAT(1, 0, 0), badSplat(10, Infinity), IDENTITY_SPLAT(2, 0, 0), badSplat(6, NaN), badSplat(4, NaN), badSplat(7, 1000), badSplat(0, NaN), IDENTITY_SPLAT(3, 0, 0)];
+  const data = parseGaussianSplatPly(buildPly(rows));
+  assert.equal(data.count, 3);
+  assert.deepEqual(Array.from(data.positions), [1, 0, 0, 2, 0, 0, 3, 0, 0]);
+  assert.equal(data.colors.length, 12);
+  assert.deepEqual(data.bounds, { minimum: [1, 0, 0], maximum: [3, 0, 0] });
+  assert.equal(data.skipped.count, 5);
+  assert.deepEqual(data.skipped.fields, ['x', 'f_dc_1', 'opacity', 'scale_0', 'rot_0']);
+});
+
+test('a clean PLY reports skipped as zero splats and no fields', () => {
+  const data = parseGaussianSplatPly(buildPly([IDENTITY_SPLAT(1, 2, 3)]));
+  assert.deepEqual(data.skipped, { count: 0, fields: [] });
+});
+
+test('a PLY where every splat is invalid throws and names the fields', () => {
+  const notANumber = IDENTITY_SPLAT(0, 0, 0);
+  notANumber[13] = NaN;
+  const infinite = IDENTITY_SPLAT(0, 0, 0);
+  infinite[6] = Infinity;
+  assert.throws(() => parseGaussianSplatPly(buildPly([notANumber, infinite])), /no usable splat.*opacity, rot_3/);
 });
 
 test('createGaussianSplats refuses a covariance that overflows 32-bit floats', () => {
