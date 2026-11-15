@@ -417,6 +417,19 @@ runTest('submitJob accepts the same oversized scene as a raster job, with backen
   assert.equal(borderline.submitted.length, 1);
 });
 
+runTest('submitJob refuses a scene of plain nodes whose exact count is over the cap even inside the safety margin (#1325)', async () => {
+  // 455,168 listed triangles are exact; the vertex-based estimate (3 vertices each, halved) says 682,752, under the 800,000 margin.
+  const exactNodes = Array.from({ length: 4 }, (_, index) => ({ id: `node-${index}`, triangles: 113792 }));
+  const inspection = { counts: { parts: 4, vertices: 455168 * 3, materials: 1 }, nodes: exactNodes, look: {} };
+  const rejected = await submitWithInspection(inspection, { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer' } });
+  assert.match(rejected.attempt?.message ?? '', /this scene has 455168 triangles and the cpu path tracer takes at most 400000/);
+  assert.equal(rejected.submitted.length, 0);
+  assert.equal(rejected.phase, 'ready');
+  const underCap = { ...inspection, nodes: exactNodes.map(node => ({ ...node, triangles: 90000 })) };
+  const accepted = await submitWithInspection(underCap, { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer' } });
+  assert.equal(accepted.attempt, undefined);
+});
+
 runTest('a slow suspend at job start does not fail the runtime (#1256)', async () => {
   let runJob;
   const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };

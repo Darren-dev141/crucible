@@ -75,6 +75,8 @@ export function sceneSizeFrom(inspection, recipe) {
     parts: inspection?.counts?.parts ?? 0,
     assetParts: placements.reduce((total, placement) => total + (placement.parts ?? 0), 0),
     triangles: listedScaled + generatedTriangles,
+    // The triangles the node list itself reports, never scaled or guessed: a floor of the real count.
+    listedTriangles,
     materials: inspection?.counts?.materials ?? 0,
     textures: textureCount(recipe),
     lights: (look.pointLights ?? 0) + (look.spotLights ?? 0) + (look.areaLights ?? 0) + 1,
@@ -250,14 +252,19 @@ export const TRIANGLE_ESTIMATE_SAFETY_FACTOR = 2;
 /**
  * The message of a path traced job the CPU tracer would refuse after it started, or undefined. The CPU tracer (the default
  * backend) flattens the scene and takes at most MAX_TRACE_TRIANGLES triangles in total; the count here is the estimate of
- * `sceneSizeFrom`, so the message says "about" and only scenes clearly over the cap are refused. The gpu and native backends have
+ * `sceneSizeFrom`. Only its generated and truncated part is approximate, so the safety margin applies to that part alone: a scene
+ * whose listed nodes (exact counts) are over the cap is refused at once, and otherwise only an estimate clearly over the margin
+ * is, with "about" in the message. The gpu and native backends have
  * other bounds, checked when the trace starts. `canChooseBackend` is false when the caller cannot set renderer.backend (a runtime on
  * SwiftShader, or a budget or quality job that picks the renderer), so the advice then names only ways that work.
  */
 export function pathTraceTriangleProblem(size, renderer, { canChooseBackend = true, picksRenderer = false } = {}) {
   if (!renderer || (renderer.backend !== undefined && renderer.backend !== 'cpu')) return undefined;
-  if (size.triangles <= MAX_TRACE_TRIANGLES * TRIANGLE_ESTIMATE_SAFETY_FACTOR) return undefined;
-  const base = `settings.renderer: this scene has about ${size.triangles} triangles and the cpu path tracer takes at most ${MAX_TRACE_TRIANGLES} in total.`;
+  const listedTriangles = size.listedTriangles ?? 0;
+  const exactlyOverCap = listedTriangles > MAX_TRACE_TRIANGLES;
+  if (!exactlyOverCap && size.triangles <= MAX_TRACE_TRIANGLES * TRIANGLE_ESTIMATE_SAFETY_FACTOR) return undefined;
+  const count = exactlyOverCap ? `${listedTriangles} triangles` : `about ${size.triangles} triangles`;
+  const base = `settings.renderer: this scene has ${count} and the cpu path tracer takes at most ${MAX_TRACE_TRIANGLES} in total.`;
   if (picksRenderer) return `${base} Simplify or drop meshes, or leave budget and quality out and pick the renderer yourself.`;
   if (!canChooseBackend) return `${base} Simplify or drop meshes; this runtime has no GPU backend.`;
   return `${base} Simplify or drop meshes, or set renderer.backend to "gpu" or "native", which hold more.`;

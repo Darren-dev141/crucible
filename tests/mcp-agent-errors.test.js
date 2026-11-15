@@ -109,6 +109,12 @@ test('a borderline estimate between the cap and the safety margin is left to the
   assert.equal(pathTraceTriangleProblem({ triangles: 800000 }, { type: 'pathTracer' }), undefined);
 });
 
+test('an exact listed count over the cap is refused inside the safety margin, without "about"', () => {
+  const problem = pathTraceTriangleProblem({ triangles: 682752, listedTriangles: 455168 }, { type: 'pathTracer' });
+  assert.match(problem, /this scene has 455168 triangles and the cpu/);
+  assert.equal(pathTraceTriangleProblem({ triangles: 682752, listedTriangles: 300000 }, { type: 'pathTracer' }), undefined);
+});
+
 test('the submit check leaves small scenes, other backends and rasterized jobs alone', () => {
   assert.equal(pathTraceTriangleProblem({ triangles: 400000 }, { type: 'pathTracer' }), undefined);
   assert.equal(pathTraceTriangleProblem({ triangles: 820000 }, { type: 'pathTracer', backend: 'gpu' }), undefined);
