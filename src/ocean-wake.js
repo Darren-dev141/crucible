@@ -86,7 +86,8 @@ export function wakeTrail({ sample, time, lifetime, width, strength, count = MAX
     const stern = sample(time - age);
     const fade = (1 - age / lifetime) ** 2;
     const pointStrength = strength * Math.min(1, stern.speed / REFERENCE_SPEED) * fade;
-    if (pointStrength < MINIMUM_STRENGTH) continue;
+    // Written so that NaN (a zero lifetime, a missing speed) is skipped too.
+    if (!(pointStrength >= MINIMUM_STRENGTH)) continue;
     points.push([stern.x, stern.z, pointStrength, width * (STERN_WIDTH_FRACTION + SPREAD_PER_LIFETIME * age / lifetime)]);
   }
   return points;
