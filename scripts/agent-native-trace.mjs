@@ -278,6 +278,15 @@ function blendOverTime({ temporal, color, features, kernelParams, route, report 
 }
 
 /**
+ * Waits one macrotask. The native addon returns each frame plane as an external ArrayBuffer whose finalizer frees the Rust
+ * allocation, and V8 runs those finalizers from the event loop. A frame loop that only awaits promises never lets them
+ * run, so each frame's planes pile up (about 13 MB a frame at 480 x 270) until the loop yields (codepawl/cook#34, #1211).
+ */
+export function yieldToEventLoop() {
+  return new Promise(resolve => setImmediate(resolve));
+}
+
+/**
  * Traces one frame the page exported and returns the PNG (base64) with the job report. `denoise` is "none", "wavelet",
  * "atrous" (the tracer's GPU filter, which is also where a missing or failing OIDN lands) or "oidn"; `denoiser` is the
  * loaded OIDN package for "oidn". The result also holds `rawLinear`, the traced colour before any filter (three floats per
@@ -286,7 +295,14 @@ function blendOverTime({ temporal, color, features, kernelParams, route, report 
  * blends the filtered colour of a session frame into the frames before it and adds `report.temporal`; `linear` is the
  * blended colour and `rawLinear` stays the traced colour of this frame alone. Throws when the tracer cannot run, so the caller can fall back.
  */
-export async function traceFrameNative({ tracer, exported, width, height, samples, bounces, seed, denoise, denoiser, maxSeconds, noiseThreshold = 0, kernel = chooseNativeKernel(), sequence, temporal }) {
+export async function traceFrameNative(frameOptions) {
+  const traced = await traceOneFrameNative(frameOptions);
+  // The frame's planes are unreferenced now, so the yield lets their finalizers run before the next frame is traced.
+  await yieldToEventLoop();
+  return traced;
+}
+
+async function traceOneFrameNative({ tracer, exported, width, height, samples, bounces, seed, denoise, denoiser, maxSeconds, noiseThreshold = 0, kernel = chooseNativeKernel(), sequence, temporal }) {
   const started = performance.now();
   const filtersInTrace = denoise === 'atrous' && kernel === 'cycles';
   const tables = decodeTables(exported);
