@@ -97,7 +97,7 @@ Each problem has `kind`, `severity`, `count`, up to eight sample indices and a s
 | Kind | Severity | Sample indices |
 | --- | --- | --- |
 | `non-manifold-edge` | error | edges used by three or more faces |
-| `inconsistent-winding` | error | edges whose two faces wind the same way |
+| `inconsistent-winding` | error | edges whose two faces wind the same way; `count` is edges, `sample` lists the faces to flip with `flip_normals`, at most 8, so lint again until clean |
 | `inverted-part` | error | closed parts with negative volume |
 | `degenerate-face` | error | faces with near-zero area |
 | `boundary-edge` | warning | edges with one face (open surfaces) |
@@ -174,7 +174,7 @@ Limits: a chain of at most 4 cutter geometries, and at most 250,000 estimated ve
 A self-reference, a cycle (`a -> b -> a`) or an unknown ID fails when the recipe is checked, with the chain and the IDs
 that exist. Imported-part edits take inline records only. The same recipe always gives the same bytes.
 
-Both inputs must be closed and consistently wound. A boolean on an open mesh fails with the lint counts and a fix.
+Both inputs must be closed, consistently wound and outward facing. A boolean on an open or inside-out mesh fails with the lint counts and a fix (`fill_holes`, `flip_normals`).
 A difference that leaves a hollow inside the mesh is valid; `lintMesh` reports it under `parts.cavities` instead of as
 an inverted part.
 
@@ -470,7 +470,7 @@ attributes (`uv`, colour, `sharp`) are dropped, so unwrap after it. The result r
 `remesh` (`voxelSize`, or `resolution` cells along the longest side up to 192) samples the signed distance to the
 surface on a grid and builds a closed quad surface with surface nets. Only cells near the surface are queried through the
 triangle BVH; the rest take their sign from a flood fill. The grid is checked before it is allocated (192 per side, 4,194,304
-cells). The mesh must be closed, and the result carries no tags or attributes.
+cells). The mesh must be closed and outward facing: an inside-out mesh (lint `inverted-part`) fails with a `flip_normals` hint. The result carries no tags or attributes, and a grid that cannot close the surface fails instead of returning a damaged mesh.
 
 `generateMeshLods(mesh, { ratios })` (also `generateGeometryLods` for renderer geometry such as a recipe part, and
 `generateAssetLods` for a static imported asset) returns level 0, the input, and one level for each ratio, from strictly

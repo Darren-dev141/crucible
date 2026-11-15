@@ -150,6 +150,11 @@ function vertexPoints(level, faceCentroids, sharpness) {
   for (let vertex = 0; vertex < vertexCount; vertex++) {
     const sharpCount = sums.sharpTotal[vertex];
     const valence = sums.edgeTotal[vertex];
+    if (valence === 0) {
+      // A loose vertex has no faces to average; it stays where it is.
+      points.set(positions.subarray(vertex * 3, vertex * 3 + 3), vertex * 3);
+      continue;
+    }
     const isCorner = sharpCount >= 3 || (sharpCount === 2 && sums.faceTotal[vertex] === 1 && valence === 2);
     const isCrease = sharpCount === 2 && !isCorner;
     const blend = sharpCount >= 2 ? sums.sharpnessSum[vertex] / sharpCount : 0;
