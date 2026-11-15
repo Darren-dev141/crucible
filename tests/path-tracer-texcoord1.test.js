@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { buildTraceScene } from '../src/path-tracer-scene.js';
+import { cookModule, cookTest } from './support/cook.js';
 import { materialUvSet, packTriangles } from '../src/path-tracer-gpu-pack.js';
 
 // A 2 by 1 image: red on the left half, green on the right half.
@@ -100,6 +101,7 @@ test('a part without lightUvs is refused even when another part in the scene has
 test('a layer map or emissive map on TEXCOORD_1 without lightUvs is refused', () => {
   const emissive = mixedPart(0);
   delete emissive.geometry.lightUvs;
+  emissive.material.emission = 1;
   emissive.material.emissiveMap = { image: RED_GREEN, colorSpace: 'srgb', uvChannel: 1 };
   assert.throws(() => buildTraceScene([emissive]), /lightUvs/);
   const layered = mixedPart(0);
@@ -154,4 +156,64 @@ test('an emissive map on TEXCOORD_1 emits the colour of the second set', async (
   const [red, green] = await centrePixel(part);
   assert.ok(green > 0.1, `green ${green}`);
   assert.ok(red < green * 0.05, `red ${red} against green ${green}`);
+});
+
+test('a map the tracer never reads does not demand lightUvs', () => {
+  const idleEmissive = mixedPart(0);
+  delete idleEmissive.geometry.lightUvs;
+  idleEmissive.material.emissiveMap = { image: RED_GREEN, colorSpace: 'srgb', uvChannel: 1 };
+  assert.doesNotThrow(() => buildTraceScene([idleEmissive]));
+  const sheen = mixedPart(0);
+  delete sheen.geometry.lightUvs;
+  sheen.material.layerMaps = { sheenColorTexture: { image: RED_GREEN, colorSpace: 'srgb', uvChannel: 1 } };
+  assert.doesNotThrow(() => buildTraceScene([sheen]));
+});
+
+test('the flattened scene hands the second UV set to the native packer as uv1s', () => {
+  const scene = buildTraceScene([mixedPart(1)]);
+  assert.equal(scene.uv1s, scene.uvs1);
+  assert.equal(scene.uv1s[0], 0.75);
+  const bare = mixedPart(0);
+  delete bare.geometry.lightUvs;
+  assert.equal(buildTraceScene([bare]).uv1s, undefined, 'no second set, no uv1s');
+});
+
+function sharedGeometryParts(withLightUvs) {
+  const geometry = floorQuad();
+  if (!withLightUvs) delete geometry.lightUvs;
+  return ['left', 'right'].map(name => ({ ...mixedPart(1), name, geometry }));
+}
+
+test('an instanced scene hands lightUvs to the native packer as uv1s and keeps copies sharing one geometry', () => {
+  const scene = buildTraceScene(sharedGeometryParts(true), undefined, { instancing: true });
+  assert.ok(scene.instances, 'the scene is instanced');
+  const [first, second] = scene.instances;
+  assert.equal(first.geometry, second.geometry);
+  assert.equal(first.geometry.uv1s[0], 0.75);
+});
+
+test('an instanced scene with two parts sharing geometry without lightUvs refuses a uvChannel 1 map', () => {
+  assert.throws(
+    () => buildTraceScene(sharedGeometryParts(false), undefined, { instancing: true }),
+    /Part left has a map with uvChannel 1 but its geometry has no lightUvs.*uvChannel 0/,
+  );
+});
+
+const NATIVE_CAMERA = { eye: [0, 3, 0], target: [0, 0, 0], up: [0, 0, -1], fov: 40 };
+const NATIVE_OPTIONS = { width: 4, height: 4, samples: 1 };
+const cook = await cookModule();
+
+// The second UV pair of the quad sits at 0.75 in every corner, so each packed corner adds one float of 0.75.
+function secondSetCornerCount(scene) {
+  const { buffer, byteOffset, byteLength } = cook.buildNativeInputV2(scene, NATIVE_CAMERA, NATIVE_OPTIONS).triangles;
+  const floats = new Float32Array(buffer.slice(byteOffset, byteOffset + byteLength));
+  return floats.filter(value => value === 0.75).length;
+}
+
+cookTest('the native packer reads TEXCOORD_1 of a flattened scene', () => {
+  assert.equal(secondSetCornerCount(buildTraceScene([mixedPart(1)])), 6);
+});
+
+cookTest('the native packer reads TEXCOORD_1 of an instanced scene', () => {
+  assert.equal(secondSetCornerCount(buildTraceScene(sharedGeometryParts(true), undefined, { instancing: true })), 6);
 });
