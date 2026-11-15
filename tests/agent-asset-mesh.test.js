@@ -6,6 +6,7 @@ import { exportGlb } from '../src/export.js';
 import { parseGltf } from '../src/gltf.js';
 import { box } from '../src/geometry.js';
 import { createAgentAssetScene } from '../src/agent-asset.js';
+import { normalizeMeshEditEntries } from '../src/agent-asset-mesh.js';
 import { loadMeshBooleans } from '../src/agent-scene.js';
 import { importedMeshReport } from '../src/agent-mesh-engine.js';
 import { validateSkinGeometry } from '../src/skinning.js';
@@ -300,4 +301,12 @@ test('inspect accepts a source-node ID and lists its parts and those of the node
   assert.ok(joint, 'the rigged robot has a joint with no mesh below it');
   assert.equal(scene.inspect({ ids: [joint.id] }).nodes[0].joint, true);
   assert.throws(() => scene.inspect({ ids: ['nothing-here'] }), /^RangeError: geometry: got "nothing-here"; expected an imported mesh ID such as "mesh-0"/);
+});
+
+test('a meshEdits entry that is not an object is reported as that entry', () => {
+  const records = [{ id: TORSO }];
+  for (const entry of ['abc', 7, ['id'], null]) {
+    assert.throws(() => normalizeMeshEditEntries([entry], records), error => /^meshEdits\[0\]: got /.test(error.message));
+  }
+  assert.throws(() => normalizeMeshEditEntries([{ id: TORSO, edits: [], stack: [] }], records), /meshEdits\[0\]\.stack/);
 });
