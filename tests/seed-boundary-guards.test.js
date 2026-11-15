@@ -38,7 +38,7 @@ test('createNoiseHeight and createTerrain refuse a non-finite seed', async () =>
 test('createSlicer refuses NaN and Infinity budgets, which never or always yield', async () => {
   const { createSlicer } = await import('../src/cooperative.js');
   for (const bad of [NaN, Infinity, '8']) {
-    assert.throws(() => createSlicer(bad), /Slice milliseconds must be a finite number/);
+    assert.throws(() => createSlicer(bad), /Slice milliseconds must be finite/);
   }
   assert.equal(typeof createSlicer(-1), 'function');
   assert.equal(typeof createSlicer(), 'function');
