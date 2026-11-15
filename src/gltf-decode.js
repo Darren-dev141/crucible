@@ -102,6 +102,39 @@ function decodedAttribute(attribute, normalized) {
   };
 }
 
+/**
+ * Set every finite negative weight to zero. A vertex whose weights are all zero or negative and that had a negative one is bound
+ * fully to joint 0 instead. The inputs are left alone: the result holds new attributes, or the same ones when nothing changed.
+ * `indices` is only set when a joint had to change. NaN and Infinity pass through for validateSkinGeometry to refuse.
+ */
+function clampNegativeSkinWeights(weights, indices) {
+  const values = attributeFloats(weights);
+  let clampedWeights = 0;
+  let vertexesBoundToJointZero = 0;
+  let boundIndices = null;
+  for (let offset = 0; offset < values.length; offset += 4) {
+    let clampedHere = 0;
+    let total = 0;
+    for (let influence = 0; influence < 4; influence++) {
+      if (values[offset + influence] < 0) {
+        values[offset + influence] = 0;
+        clampedHere++;
+      }
+      total += values[offset + influence];
+    }
+    clampedWeights += clampedHere;
+    if (clampedHere === 0 || total !== 0) continue;
+    boundIndices ??= attributeFloats(indices);
+    boundIndices[offset] = 0;
+    values[offset] = 1;
+    vertexesBoundToJointZero++;
+  }
+  if (clampedWeights === 0) return { weights, indices: null, clampedWeights, vertexesBoundToJointZero };
+  const repairedWeights = { array: values, itemSize: 4, count: weights.count, normalized: false, componentType: 5126 };
+  const repairedIndices = boundIndices && { array: Uint16Array.from(boundIndices), itemSize: 4, count: indices.count, normalized: false, componentType: 5123 };
+  return { weights: repairedWeights, indices: repairedIndices, clampedWeights, vertexesBoundToJointZero };
+}
+
 /** Scale each vertex's four weights to sum to one, as three.js does for skinned meshes. */
 function normalizedWeights(weights) {
   const values = attributeFloats(weights);
@@ -342,11 +375,19 @@ export async function decodeGltf({ document, glbBinary, resourceBytes, decoders,
     return source;
   }
 
-  /** Raw joints and weights are checked before normalizing, so zero-weight vertices are reported. */
+  /**
+   * Negative weights are clamped first, as files from the wild carry them and three.js and Blender load them. Raw joints and
+   * weights are then checked before normalizing, so zero-weight vertices and non-finite weights are still reported.
+   */
   function prepareSkinnedSource(source, jointCount) {
     if (source.skinPrepared) return;
-    const { skinIndex, skinWeight, position } = source.attributes;
-    validateSkinGeometry({ positions: { length: position.count * 3 }, skinIndices: attributeFloats(skinIndex), skinWeights: attributeFloats(skinWeight) }, createSkinPose(jointCount));
+    const { skinIndex, position } = source.attributes;
+    const repaired = clampNegativeSkinWeights(source.attributes.skinWeight, skinIndex);
+    const skinWeight = repaired.weights;
+    source.skinWeightRepairs = { clampedWeights: repaired.clampedWeights, vertexesBoundToJointZero: repaired.vertexesBoundToJointZero };
+    const skinIndices = repaired.indices ?? skinIndex;
+    validateSkinGeometry({ positions: { length: position.count * 3 }, skinIndices: attributeFloats(skinIndices), skinWeights: attributeFloats(skinWeight) }, createSkinPose(jointCount));
+    source.attributes.skinIndex = skinIndices;
     source.attributes.skinWeight = normalizedWeights(skinWeight);
     source.skinPrepared = true;
   }
