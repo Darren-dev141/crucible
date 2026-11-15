@@ -634,7 +634,7 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
     case 'mesh': {
       const base = value.base;
       if (!base || typeof base !== 'object' || Array.isArray(base) || base.type === 'mesh' || Object.hasOwn(base, 'id')) {
-        throw invalidField('base', base, 'a primitive or profile record without an id, such as { "type": "box" } (box, cylinder, sphere, torus, lathe, extrude or tube)', TypeError);
+        throw invalidField('base', base, 'a primitive or profile record without an id, such as { "type": "box" } (box, cylinder, sphere, torus, lathe, extrude, tube, grid or plane)', TypeError);
       }
       let estimate = geometryEstimate({ id: 'base', ...base });
       const cutterScope = meshCutterScope(value, scope);

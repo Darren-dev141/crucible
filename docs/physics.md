@@ -376,7 +376,7 @@ A scene recipe takes a `physics` section, and `set-physics` edits it (`null` cle
 ```
 
 Each body is a root node with a geometry. Its collider is fitted to that geometry at the node scale: `box`, `ball`, `capsule`, `cylinder` and `cone` from the bounds, `convex` from at most 2048 distinct vertices, `trimesh` from every triangle, or `compound` with a `shapes` list of up to 16 sub-colliders (`box`, `ball`, `capsule`, `cylinder`, `cone` with optional `translation` and `rotation`).
-Recipe joints also accept `spring` (`restLength`, `stiffness`, `damping`), `motor` (`{ mode: "position" | "velocity", target, stiffness?, damping, maxForce }`) and `contactsEnabled`. Recipe `physics.events` schedules up to 128 `impulse`, `kinematicPose` and `jointMotor` events by `time` in seconds (or `tick`), and `physics.fields` applies up to 8 force fields (`wind`, `turbulence`, `vortex`, `drag`, `magnet`) to dynamic bodies at every step.
+Recipe joints also accept `name` (what `jointMotor` events refer to; fracture-node writes `glue-a-b`), `breakImpulse` (fixed joints only), `spring` (`restLength`, `stiffness`, `damping`), `motor` (`{ mode: "position" | "velocity", target, stiffness?, damping, maxForce }`) and `contactsEnabled`. Recipe `physics.events` schedules up to 128 `impulse`, `kinematicPose` and `jointMotor` events by `time` in seconds (or `tick`), and `physics.fields` applies up to 8 force fields (`wind`, `turbulence`, `vortex`, `drag`, `magnet`) to dynamic bodies at every step.
 Defaults are `box` for dynamic bodies and sensors, `trimesh` for fixed ones.
 `layer` (0 to 15) and `collidesWith` replace raw bit masks.
 A node cannot have both a physics body and a motion `translation` or `rotation` track.
