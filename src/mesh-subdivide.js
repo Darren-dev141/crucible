@@ -315,7 +315,7 @@ function refineLevel(level) {
  * and edge attributes follow each half of a split edge. Point attributes are not carried.
  */
 export function subdivideMesh(mesh, { levels = 1, crease, sharpness = MAX_CREASE_SHARPNESS } = {}) {
-requireFiniteInRange('subdivideMesh', 'levels', levels, 1, MAX_SUBDIVISION_LEVELS, true);  requireFiniteInRange('subdivideMesh', 'sharpness', sharpness, 0, MAX_CREASE_SHARPNESS);
+  requireFiniteInRange('subdivideMesh', 'levels', levels, 1, MAX_SUBDIVISION_LEVELS, true);  requireFiniteInRange('subdivideMesh', 'sharpness', sharpness, 0, MAX_CREASE_SHARPNESS);
   let level = {
     positions: Float64Array.from(mesh.positions),
     vertexCount: mesh.vertexCount, edgeCount: mesh.edgeCount, faceCount: mesh.faceCount, cornerCount: mesh.cornerCount,
