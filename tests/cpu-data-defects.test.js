@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
 import { trianglesIntersect } from '../src/triangle-math.js';
 import { floatToHalf, halfToFloat } from '../src/volume-grid.js';
 import { RenderTargetLedger } from '../src/render-target-ledger.js';
@@ -40,6 +41,30 @@ test('floatToHalf rounds every subnormal and normal midpoint and its float32 nei
     }
   }
   assert.deepEqual(wrong, []);
+});
+
+test('the ledger accepts every format the renderer passes to renderTargets.record with finite positive bytes', () => {
+  const sourceFolder = new URL('../src/', import.meta.url);
+  const formats = new Set();
+  for (const file of readdirSync(sourceFolder).filter(name => name.endsWith('.js'))) {
+    const text = readFileSync(new URL(file, sourceFolder), 'utf8');
+    for (const call of text.matchAll(/renderTargets\.record\([^;]*\);/g)) {
+      for (const token of call[0].matchAll(/'([A-Z][A-Z0-9_]+)'/g)) formats.add(token[1]);
+    }
+    for (const definition of text.matchAll(/(?:COMPACT_FORMAT|depthFormat) = '([A-Z0-9_]+)'/g)) formats.add(definition[1]);
+  }
+  assert.ok(formats.has('RG32F') && formats.has('R11F_G11F_B10F') && formats.size >= 7, [...formats].join(','));
+  const ledger = new RenderTargetLedger();
+  const missing = [];
+  for (const format of formats) {
+    try {
+      ledger.record(format, { width: 8, height: 8, format });
+    } catch {
+      missing.push(format);
+    }
+  }
+  assert.deepEqual(missing, []);
+  assert.ok(Number.isFinite(ledger.report().totalBytes) && ledger.report().totalBytes > 0);
 });
 
 test('the ledger rejects an unknown format or a size that is not a positive integer and keeps its totals finite', () => {
