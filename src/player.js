@@ -374,6 +374,8 @@ function createCameraRig(kind, options) {
   };
 
   function advance(stepSeconds) {
+    // A zero, negative or NaN step would leave the look angles or the focus NaN for good, as the controllers already refuse.
+    if (!(stepSeconds > 0)) return;
     if (wantsLook) {
       rig.yaw = wrapAngle(rig.yaw + input.getAxis(lookNames.x) * lookSpeed * stepSeconds);
     }

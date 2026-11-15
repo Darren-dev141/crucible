@@ -140,3 +140,15 @@ test('asset physics refuses unknown fields and a missing ragdoll', async () => {
     await assert.rejects(robotScene(physics));
   }
 });
+
+test('a rig whose parent bone comes later, repeats or is its own parent is refused when it is built', async () => {
+  const { createRagdoll } = await import('../src/ragdoll.js');
+  const { mat4 } = await import('gl-matrix');
+  const bone = (id, parentId, height) => ({
+    id, parentId, worldMatrix: mat4.fromTranslation(mat4.create(), [0, height, 0]), parentWorldMatrix: mat4.create(), tail: [0, height + 1, 0],
+  });
+  assert.throws(() => createRagdoll([bone('child', 'root', 1), bone('root', null, 0)]), /child.*before its parent root/);
+  assert.throws(() => createRagdoll([bone('loop', 'loop', 0)]), /loop is its own parent/);
+  assert.throws(() => createRagdoll([bone('twin', null, 0), bone('twin', null, 1)]), /twin is listed twice/);
+  assert.equal(createRagdoll([bone('root', null, 0), bone('child', 'root', 1)]).boneIds.length, 2);
+});
