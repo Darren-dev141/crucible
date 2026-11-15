@@ -67,6 +67,7 @@ Assumptions and limits:
 
 - Both rigs face the same direction, with +Y up. A source that faces the other way needs its root rotated first.
 - The clip is resampled at `frameRate`, so cubic-spline and step curves are baked to linear keys.
+- The last key is the clip's end pose, also for a clip with `loop: true`: the source is sampled without wrapping, so a walk cycle does not end on its first pose. The exported GLB of an authored rig with a looping `motion` bakes its last key the same way.
 - Source scale and non-hips translation tracks are ignored. Finger and toe bones transfer only when mapped in both rigs.
 - The source and target rest pose must be the bind pose (the node pose equals the inverse bind pose). A file that animates away from it is not detected.
 - No IK and no retargeting of rotation limits. Different proportions can make feet slide or arms intersect the body.
@@ -80,7 +81,7 @@ world matrices and calls `updateSkinPose`. The renderer still needs `updateParts
 
 ## Crowds
 
-`createCrowd({ count, clip, seed, layout, spacing, columns, size, rateJitter, randomYaw })` is deterministic for a seed. `layout` is
+`createCrowd({ count, clip, seed, layout, spacing, columns, size, rateJitter, randomYaw })` is deterministic for a seed.  `columns` must be a positive integer and `size` a positive finite number, otherwise it throws a `RangeError`. `layout` is
 `'grid'` (centred, `columns` wide) or `'scatter'` (rejection sampling with at least `0.75 * spacing` between instances where room allows).
 Each instance has `position`, `yawRadians`, a `timeOffset` in the clip duration, a `playbackRate` within `1 ± rateJitter` and a
 column-major `matrix`. `clipTime(index, seconds)` gives the instance's clip time and `sample(seconds)` returns every instance's tracks
