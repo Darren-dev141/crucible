@@ -611,7 +611,7 @@ test('a vertex whose weights are all negative is bound fully to joint 0 and coun
   const { skinIndices, skinWeights } = asset.parts[0].geometry;
   assert.deepEqual(Array.from(skinIndices.subarray(0, 4)), [0, 1, 0, 0]);
   assert.deepEqual(Array.from(skinWeights.subarray(0, 4)), [1, 0, 0, 0]);
-  assert.match(asset.warnings.join(' '), /2 negative skin weight[(]s[)] were clamped to 0.*1 vertex[(]es[)] with no positive weight are bound to joint 0/);
+  assert.match(asset.warnings.join(' '), /2 negative skin weight[(]s[)] were clamped to 0.*1 vertex[(]es[)] bound to joint 0/);
   asset.dispose();
 });
 

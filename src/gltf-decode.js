@@ -103,48 +103,29 @@ function decodedAttribute(attribute, normalized) {
 }
 
 /**
- * Set every finite negative weight to zero. A vertex whose weights are all zero or negative and that had a negative one is bound
- * fully to joint 0 instead. The inputs are left alone: the result holds new attributes, or the same ones when nothing changed.
- * `indices` is only set when a joint had to change. NaN and Infinity pass through for validateSkinGeometry to refuse.
+ * Scale each vertex's four weights to sum to one, as three.js does for skinned meshes. Negative weights are clamped to 0 first;
+ * a vertex left with none is bound fully to joint 0. A vertex that was all zero stays zero for validateSkinGeometry to refuse.
+ * `repairs` counts the clamped weights and the vertexes bound to joint 0, and `indices` is a Float32Array copy that may be edited.
  */
-function clampNegativeSkinWeights(weights, indices) {
+function normalizedWeights(weights, indices, repairs) {
   const values = attributeFloats(weights);
-  let clampedWeights = 0;
-  let vertexesBoundToJointZero = 0;
-  let boundIndices = null;
   for (let offset = 0; offset < values.length; offset += 4) {
-    let clampedHere = 0;
     let total = 0;
+    let clamped = 0;
     for (let influence = 0; influence < 4; influence++) {
       if (values[offset + influence] < 0) {
         values[offset + influence] = 0;
-        clampedHere++;
+        clamped++;
       }
       total += values[offset + influence];
     }
-    clampedWeights += clampedHere;
-    if (clampedHere === 0 || total !== 0) continue;
-    boundIndices ??= attributeFloats(indices);
-    boundIndices[offset] = 0;
-    values[offset] = 1;
-    vertexesBoundToJointZero++;
-  }
-  if (clampedWeights === 0) return { weights, indices: null, clampedWeights, vertexesBoundToJointZero };
-  const repairedWeights = { array: values, itemSize: 4, count: weights.count, normalized: false, componentType: 5126 };
-  const repairedIndices = boundIndices && { array: Uint16Array.from(boundIndices), itemSize: 4, count: indices.count, normalized: false, componentType: 5123 };
-  return { weights: repairedWeights, indices: repairedIndices, clampedWeights, vertexesBoundToJointZero };
-}
-
-/** Scale each vertex's four weights to sum to one, as three.js does for skinned meshes. */
-function normalizedWeights(weights) {
-  const values = attributeFloats(weights);
-  for (let offset = 0; offset < values.length; offset += 4) {
-    const total = values[offset] + values[offset + 1] + values[offset + 2] + values[offset + 3];
-    if (total === 0) {
-      values[offset] = 1;
-      continue;
+    repairs.clampedWeights += clamped;
+    if (total === 0 && clamped) {
+      indices[offset] = 0;
+      values[offset] = total = 1;
+      repairs.boundToJointZero++;
     }
-    for (let influence = 0; influence < 4; influence++) values[offset + influence] /= total;
+    if (total !== 0) for (let influence = 0; influence < 4; influence++) values[offset + influence] /= total;
   }
   return { array: values, itemSize: 4, count: weights.count, normalized: false, componentType: 5126 };
 }
@@ -375,20 +356,17 @@ export async function decodeGltf({ document, glbBinary, resourceBytes, decoders,
     return source;
   }
 
-  /**
-   * Negative weights are clamped first, as files from the wild carry them and three.js and Blender load them. Raw joints and
-   * weights are then checked before normalizing, so zero-weight vertices and non-finite weights are still reported.
-   */
+  /** Weights are normalized first, clamping negatives; joints and the result are then checked, so all-zero and non-finite weights are still reported. */
   function prepareSkinnedSource(source, jointCount) {
     if (source.skinPrepared) return;
     const { skinIndex, position } = source.attributes;
-    const repaired = clampNegativeSkinWeights(source.attributes.skinWeight, skinIndex);
-    const skinWeight = repaired.weights;
-    source.skinWeightRepairs = { clampedWeights: repaired.clampedWeights, vertexesBoundToJointZero: repaired.vertexesBoundToJointZero };
-    const skinIndices = repaired.indices ?? skinIndex;
-    validateSkinGeometry({ positions: { length: position.count * 3 }, skinIndices: attributeFloats(skinIndices), skinWeights: attributeFloats(skinWeight) }, createSkinPose(jointCount));
-    source.attributes.skinIndex = skinIndices;
-    source.attributes.skinWeight = normalizedWeights(skinWeight);
+    const repairs = { clampedWeights: 0, boundToJointZero: 0 };
+    const skinIndices = attributeFloats(skinIndex);
+    const skinWeight = normalizedWeights(source.attributes.skinWeight, skinIndices, repairs);
+    validateSkinGeometry({ positions: { length: position.count * 3 }, skinIndices, skinWeights: skinWeight.array }, createSkinPose(jointCount));
+    source.skinWeightRepairs = repairs;
+    if (repairs.boundToJointZero) source.attributes.skinIndex = { array: Uint16Array.from(skinIndices), itemSize: 4, count: skinIndex.count, normalized: false, componentType: 5123 };
+    source.attributes.skinWeight = skinWeight;
     source.skinPrepared = true;
   }
 
