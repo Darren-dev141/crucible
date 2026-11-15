@@ -73,7 +73,12 @@ export function weightedNormals(mesh, { angle, weight }) {
     const group = groupOfCorner[corner] * 3;
     const length = Math.hypot(sums[group], sums[group + 1], sums[group + 2]);
     const face = faces[corner] * 3;
-    for (let axis = 0; axis < 3; axis++) data[corner * 3 + axis] = length > 0 ? sums[group + axis] / length : normals[face + axis];
+    const faceLength = Math.hypot(normals[face], normals[face + 1], normals[face + 2]);
+    for (let axis = 0; axis < 3; axis++) {
+      if (length > 0) data[corner * 3 + axis] = sums[group + axis] / length;
+      else if (faceLength > 0) data[corner * 3 + axis] = normals[face + axis];
+      else data[corner * 3 + axis] = axis === 2 ? 1 : 0;
+    }
   }
   return withAttributes(mesh, { corner: { normal: { data, size: 3 } } });
 }

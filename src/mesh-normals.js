@@ -46,6 +46,16 @@ function cornerAngle(positions, previous, current, next) {
   return Math.atan2(crossLength, firstX * secondX + firstY * secondY + firstZ * secondZ);
 }
 
+// 180 degrees converted to radians can land an ulp above pi, so the upper bound keeps a small margin.
+const SHARP_ANGLE_MARGIN = 1e-9;
+
+/** Refuse a sharpAngle that would silently smooth or split everything: NaN, negative, or beyond a half turn (Infinity disables the test). */
+export function assertSharpAngle(sharpAngle) {
+  if (sharpAngle === Infinity) return;
+  if (typeof sharpAngle === 'number' && sharpAngle >= 0 && sharpAngle <= Math.PI + SHARP_ANGLE_MARGIN) return;
+  throw new RangeError(`sharpAngle is ${sharpAngle}; pass radians from 0 to ${Math.PI} (3.14159 is 180 degrees), or Infinity to smooth every edge.`);
+}
+
 /**
  * Corner normals with hard edges, following Blender's model: corners around a vertex are smoothed together across
  * an edge unless the edge is marked sharp (edge attribute "sharp"), is a boundary or non-manifold edge, has faces
@@ -54,6 +64,7 @@ function cornerAngle(positions, previous, current, next) {
  * every corner (groupOfCorner); the normal of corner c is groupNormals[groupOfCorner[c]].
  */
 export function cornerNormals(mesh, { sharpAngle = Infinity } = {}) {
+  assertSharpAngle(sharpAngle);
   const { normals: faceNormal } = faceNormals(mesh);
   const { nextCorner, previousCorner } = cornerCycles(mesh);
   const facesOfCorners = cornerFaces(mesh);
