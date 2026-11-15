@@ -152,7 +152,7 @@ The pass is 8-bit like the others, works with `png16` and `exr` and packs into a
 
 The lighting passes hold linear values above 1, so write them as `exr` (a `png` or `png16` file clamps at 1). They add back to the lit image: `diffuse + glossy + emission * exposure` is the radiance before fog, and with an open world the lit image is that radiance mixed toward the fog colour by `mist`, then tone mapped. `tests/lighting-passes.test.js` checks the sum against the beauty frame (mean difference under 1.5 display levels, under 2% of samples off by more than 4). Not covered: unlit parts, the editor floor, parts that a probe or irradiance grid changes after the sky term, and anything the lit image adds after the shader (bloom, grading, depth of field).
 
-`scene_render_result` metrics carry `objectNames`, the part name for ID 1, 2 and so on (the first 1000, with `objectNamesTruncated`), and `depthRangeMetres`.
+`scene_render_result` metrics carry `objectNames`, the part name for ID 1, 2 and so on (the first 1000, with `objectNamesTruncated`), `objectNodes` (`{ "<node id>": [ids] }`: a placed asset with five parts is one node owning five IDs; the first 1000 nodes, with `objectNodesTruncated`), and `depthRangeMetres`.
 IDs follow draw order, which groups parts by shared geometry, so read the names list and not node order.
 Videos hold the lit image only.
 

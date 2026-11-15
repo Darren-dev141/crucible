@@ -19,12 +19,35 @@ That draws a dark outline at silhouettes, part boundaries, creases and depth jum
 | `depthJump` | 0.08 | A line where one surface sits in front of another of the same part. Relative step of the inverse depth. 0 turns it off. |
 | `toon` | 0 | Light steps for every material that sets no `toon` of its own, 0 to 8. 0 leaves the smooth light. |
 | `polylines` | none | Lines drawn in the world with a screen width, see below. |
+| `nodes` | none | Lines on a subset of nodes, see below. |
 
 The width is in pixels of the output, so a 480 pixel preview and a 1920 pixel render carry lines of the same thickness. A scene that wants the same look at every size should scale `width` with the image height itself.
 
 ## Toon light
 
 `toon` on a material (also a layer field, 0 to 8, 0 off) steps the cosine of each light that reaches it. The sun, a point light and a spot light each make their own bands, and the edge between two bands is 0.02 of the light range wide. Shadows keep their own softness, and the sky light that fills the dark side is not banded. A material with `toon` set wins over `lines.toon`.
+
+## Lines on some nodes
+
+`nodes` keys are node IDs (a placed asset is one node, however many parts it has). A node it does not name draws as usual.
+
+```json
+{ "environment": { "lines": { "nodes": {
+  "basket": { "silhouetteOnly": true },
+  "rug": { "lines": false },
+  "vase": { "color": [0.8, 0.1, 0.1] }
+} } } }
+```
+
+| Field | Default | What it does |
+| --- | --- | --- |
+| `lines` | `true` | `false` draws no line at the node: not its silhouette, and no neighbour draws one for it. |
+| `silhouetteOnly` | `false` | Only the contour where the node meets another node or the background. No creases, no depth jumps, no lines between its own parts. Use it for dense textured props. |
+| `color` | `lines.color` | Linear RGB of the node's lines. A line between two nodes is drawn half by each side, each in its own colour; the background side takes the colour of the node it borders. |
+
+At most 64 nodes. A name that is not drawn in the frame (hidden, or not opaque) is ignored, so a node can be switched off by a motion track without an error.
+
+To composite lines for some nodes over shading for others, read `metrics.objectNodes` of the `objectId` pass (see [render jobs](agent-render-jobs.md)): it maps each node ID to the object IDs it owns.
 
 ## Polylines
 

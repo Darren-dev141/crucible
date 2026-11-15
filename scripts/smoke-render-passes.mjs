@@ -91,6 +91,7 @@ try {
   assert.equal(stills.files.size, 8 * (1 + ALL_PASSES.length));
   for (const pass of ALL_PASSES) assert.ok(stills.files.has(`frame-3-${pass}.png`), `frame-3-${pass}.png is missing.`);
   assert.deepEqual([...stills.metrics.objectNames].sort(), ['far-block', 'floor', 'near-ball']);
+  assert.deepEqual(Object.keys(stills.metrics.objectNodes).sort(), ['far-block', 'floor', 'near-ball']);
   for (const [name, bytes] of process.env.RENDER_PASSES_COPY_DIRECTORY ? stills.files : []) await writeFile(join(process.env.RENDER_PASSES_COPY_DIRECTORY, name), bytes);
   const digests = new Set(ALL_PASSES.map(pass => pixelDigest(stills.files.get(`frame-3-${pass}.png`))));
   assert.equal(digests.size, ALL_PASSES.length, 'Each pass must differ from the others.');

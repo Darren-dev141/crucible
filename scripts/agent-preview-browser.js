@@ -1011,7 +1011,7 @@ window.__agentPreview = {
     const checkLitFrame = diagnose && !pass && !floatOutput && brightness === 1;
     const info = renderInfo(record.renderer, pass ? [] : viewProblems(record, shotCamera ?? record.scene.camera, checkLitFrame ? record.scene.effects.exposure : undefined));
     return pass === 'wireframe' ? { ...info, wireframe }
-      : pass === 'objectId' ? { ...info, objectNames: record.renderer.passSupport.objectNames() }
+      : pass === 'objectId' ? { ...info, objectNames: record.renderer.passSupport.objectNames(), objectNodes: record.renderer.passSupport.objectNodes() }
       : pass === 'cryptomatte' ? { ...info, cryptomatte: record.renderer.passSupport.cryptomatteManifest() }
       : info;
   },

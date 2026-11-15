@@ -62,6 +62,17 @@ const MAXIMUM_MOTION_SOURCES = 4;
 const MAXIMUM_JOB_FRAME_BYTES = 12 * 1024 * 1024;
 // The object ID pass lists the part behind each ID in the job metrics; longer lists are cut and flagged.
 const MAXIMUM_OBJECT_NAMES = 1000;
+
+// The part behind each object ID, and the IDs of each node (a prop made of several parts is one node), cut at the limit.
+function objectIdMetrics(passInfo) {
+  const nodeEntries = Object.entries(passInfo.objectNodes ?? {});
+  return {
+    objectNames: passInfo.objectNames.slice(0, MAXIMUM_OBJECT_NAMES),
+    objectNamesTruncated: passInfo.objectNames.length > MAXIMUM_OBJECT_NAMES,
+    objectNodes: Object.fromEntries(nodeEntries.slice(0, MAXIMUM_OBJECT_NAMES)),
+    objectNodesTruncated: nodeEntries.length > MAXIMUM_OBJECT_NAMES,
+  };
+}
 // A path trace shares the machine with the person using it, so it takes half of the eight-thread ceiling.
 const PATH_TRACER_THREADS = 8;
 const MAXIMUM_QUEUED_CALLS = 16;
@@ -870,8 +881,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
               passPixels[pass] = (await readFloatPass(pass)).pixels;
               if (pass === 'depth') metrics.depthRangeMetres = RENDER_PASS_DEPTH_RANGE;
               if (pass === 'objectId') {
-                metrics.objectNames = passInfo.objectNames.slice(0, MAXIMUM_OBJECT_NAMES);
-                metrics.objectNamesTruncated = passInfo.objectNames.length > MAXIMUM_OBJECT_NAMES;
+                Object.assign(metrics, objectIdMetrics(passInfo));
               }
               if (pass === 'cryptomatte') metrics.cryptomatte = passInfo.cryptomatte;
               if (pass === 'wireframe') metrics.wireframe = passInfo.wireframe;
@@ -891,8 +901,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             if (pass === 'wireframe') metrics.wireframe = passInfo.wireframe;
             if (pass === 'depth') metrics.depthRangeMetres = RENDER_PASS_DEPTH_RANGE;
             if (pass === 'objectId') {
-              metrics.objectNames = passInfo.objectNames.slice(0, MAXIMUM_OBJECT_NAMES);
-              metrics.objectNamesTruncated = passInfo.objectNames.length > MAXIMUM_OBJECT_NAMES;
+              Object.assign(metrics, objectIdMetrics(passInfo));
             }
           }
         }

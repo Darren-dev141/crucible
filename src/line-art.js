@@ -61,10 +61,16 @@ export const LINE_ART_LIMITS = Object.freeze({
   maxPolylinePoints: 256,
   maxPolylineSegments: 4096,
   coordinate: 1e6,
+  maxNodes: 64,
+  nodeNameLength: 256,
 });
 
-const LINE_ART_FIELDS = [...Object.keys(LINE_ART_DEFAULTS), 'polylines'];
+const LINE_ART_FIELDS = [...Object.keys(LINE_ART_DEFAULTS), 'polylines', 'nodes'];
 const POLYLINE_FIELDS = ['points', 'color', 'width', 'depthTest', 'closed'];
+const NODE_LINE_FIELDS = ['lines', 'silhouetteOnly', 'color'];
+// How the outline shader reads a node: the mode and the node's index share one float (mode + 4 * index).
+const NODE_MODE = Object.freeze({ normal: 0, off: 1, silhouette: 2 });
+const NODE_TABLE_WIDTH = 1024;
 const OUTLINE_RING_LIMIT = Math.ceil(LINE_ART_LIMITS.width[1] / 2);
 
 function plainObject(value, label) {
@@ -116,6 +122,29 @@ function polylineFrom(input, index, defaults) {
   };
 }
 
+function nodeLinesFrom(input, name, defaultColor) {
+  const label = `lines.nodes["${name}"]`;
+  plainObject(input, label);
+  onlyKeys(input, NODE_LINE_FIELDS, label);
+  const drawn = booleanValue(input.lines ?? true, `${label}.lines`);
+  const silhouetteOnly = booleanValue(input.silhouetteOnly ?? false, `${label}.silhouetteOnly`);
+  if (!drawn && (silhouetteOnly || input.color !== undefined)) {
+    throw new RangeError(`${label} sets lines false together with ${silhouetteOnly ? 'silhouetteOnly' : 'color'}. Fix: drop lines:false, or drop the other field.`);
+  }
+  return { lines: drawn, silhouetteOnly, color: colorValue(input.color ?? defaultColor, `${label}.color`) };
+}
+
+function nodesFrom(input, defaultColor) {
+  plainObject(input, 'lines.nodes');
+  const names = Object.keys(input);
+  if (names.length > LINE_ART_LIMITS.maxNodes) {
+    throw new RangeError(`lines.nodes names ${names.length} nodes; the limit is ${LINE_ART_LIMITS.maxNodes}. Fix: list only the nodes that differ from the rest.`);
+  }
+  const empty = names.find(name => name.length === 0 || name.length > LINE_ART_LIMITS.nodeNameLength);
+  if (empty !== undefined) throw new RangeError(`lines.nodes keys are node IDs of 1 to ${LINE_ART_LIMITS.nodeNameLength} characters, such as "basket".`);
+  return Object.fromEntries(names.map(name => [name, nodeLinesFrom(input[name], name, defaultColor)]));
+}
+
 function segmentCount(polyline) {
   return polyline.points.length - 1 + (polyline.closed ? 1 : 0);
 }
@@ -145,7 +174,31 @@ export function resolveLineArt(input = {}) {
       throw new RangeError(`lines.polylines hold ${segments} segments; the limit is ${LINE_ART_LIMITS.maxPolylineSegments}.`);
     }
   }
+  if (input.nodes !== undefined) resolved.nodes = nodesFrom(input.nodes, resolved.color);
   return resolved;
+}
+
+/**
+ * The per-ID table the outline shader reads, one RGBA float texel per object ID (ID 0 is the background):
+ * RGB is the line colour, A is the mode plus four times the index of the owning node. `groups` is
+ * renderer.passSupport.objectNodes(), the IDs of each node; a node that `lines.nodes` does not name draws normally,
+ * and a name that is not drawn in the frame is ignored. Returns { count: 0 } when the frame has no per-node settings.
+ */
+export function lineNodeTable(lines, groups) {
+  if (!lines.nodes || Object.keys(lines.nodes).length === 0) return { count: 0, data: null, width: 0, height: 0 };
+  const names = Object.keys(groups);
+  const count = names.reduce((highest, name) => Math.max(highest, ...groups[name]), 0) + 1;
+  const height = Math.ceil(count / NODE_TABLE_WIDTH);
+  const data = new Float32Array(NODE_TABLE_WIDTH * height * 4);
+  names.forEach((name, nodeIndex) => {
+    const setting = lines.nodes[name];
+    const mode = !setting ? NODE_MODE.normal : !setting.lines ? NODE_MODE.off : setting.silhouetteOnly ? NODE_MODE.silhouette : NODE_MODE.normal;
+    const color = setting?.color ?? lines.color;
+    for (const identifier of groups[name]) {
+      data.set([...color, mode + 4 * (nodeIndex + 1)], identifier * 4);
+    }
+  });
+  return { count, data, width: NODE_TABLE_WIDTH, height };
 }
 
 function drawsOutlines(lines) {
@@ -165,8 +218,11 @@ uniform vec3 lineColor;
 uniform float useBoundaries;
 uniform float creaseCosine;
 uniform float depthJump;
+uniform sampler2D nodeTexture;
+uniform int nodeCount;
 out vec4 outputColor;
 ivec2 lastPixel;
+vec3 edgeColor;
 vec3 partAt(ivec2 pixel) { return texelFetch(partTexture, clamp(pixel, ivec2(0), lastPixel), 0).rgb; }
 vec3 normalAt(ivec2 pixel) { return normalize(texelFetch(normalTexture, clamp(pixel, ivec2(0), lastPixel), 0).rgb * 2.0 - 1.0); }
 float depthAt(ivec2 pixel) {
@@ -174,23 +230,44 @@ float depthAt(ivec2 pixel) {
   return projectionDepth.z > 0.5 ? -(ndc - projectionDepth.y) / projectionDepth.x : (ndc + projectionDepth.x) / projectionDepth.y;
 }
 bool hasPart(vec3 part) { return dot(part, vec3(1.0)) > 0.0; }
-bool differs(ivec2 center, ivec2 other, vec3 centerPart, vec3 centerNormal) {
+// Per-node settings: mode 0 draws as usual, 1 draws no line (a neighbour draws none for it either), 2 draws only where the node
+// meets another node or the background.
+struct NodeLine { float mode; float index; vec3 color; };
+NodeLine nodeAt(vec3 part) {
+  NodeLine node = NodeLine(0.0, 0.0, lineColor);
+  if (nodeCount == 0 || !hasPart(part)) return node;
+  int identifier = int(dot(floor(part * 255.0 + 0.5), vec3(1.0, 256.0, 65536.0)));
+  if (identifier >= nodeCount) return node;
+  vec4 texel = texelFetch(nodeTexture, ivec2(identifier & ${NODE_TABLE_WIDTH - 1}, identifier >> 10), 0);
+  node.index = floor(texel.a / 4.0);
+  node.mode = texel.a - node.index * 4.0;
+  node.color = texel.rgb;
+  return node;
+}
+bool differs(ivec2 center, ivec2 other, vec3 centerPart, vec3 centerNormal, NodeLine centerNode) {
   vec3 otherPart = partAt(other);
-  if (useBoundaries > 0.5 && dot(abs(otherPart - centerPart), vec3(1.0)) > 0.001) return true;
-  if (creaseCosine > -1.5 && hasPart(centerPart) && hasPart(otherPart) && dot(centerNormal, normalAt(other)) < creaseCosine) return true;
+  NodeLine otherNode = nodeAt(otherPart);
+  bool centerDrawn = hasPart(centerPart);
+  if (otherNode.mode == 1.0) return false;
+  bool silhouetteOnly = centerDrawn && centerNode.mode == 2.0;
+  if (useBoundaries > 0.5 && dot(abs(otherPart - centerPart), vec3(1.0)) > 0.001 && (!silhouetteOnly || otherNode.index != centerNode.index)) {
+    edgeColor = centerDrawn ? centerNode.color : otherNode.color;
+    return true;
+  }
+  if (!silhouetteOnly && creaseCosine > -1.5 && centerDrawn && hasPart(otherPart) && dot(centerNormal, normalAt(other)) < creaseCosine) return true;
   return false;
 }
 bool depthEdge(ivec2 center, ivec2 offset, float centerDepth) {
   float jump = abs(depthAt(center + offset) + depthAt(center - offset) - 2.0 * centerDepth);
   return jump > depthJump * abs(centerDepth);
 }
-bool ringHasEdge(ivec2 center, int ring, vec3 centerPart, vec3 centerNormal, float centerDepth) {
+bool ringHasEdge(ivec2 center, int ring, vec3 centerPart, vec3 centerNormal, float centerDepth, NodeLine centerNode) {
   int diagonal = max(1, int(round(float(ring) * 0.70710678)));
   ivec2 offsets[4] = ivec2[4](ivec2(ring, 0), ivec2(0, ring), ivec2(diagonal, diagonal), ivec2(diagonal, -diagonal));
   for (int index = 0; index < 4; index++) {
     ivec2 offset = offsets[index];
-    if (differs(center, center + offset, centerPart, centerNormal) || differs(center, center - offset, centerPart, centerNormal)) return true;
-    if (depthJump > 0.0 && depthEdge(center, offset, centerDepth)) return true;
+    if (differs(center, center + offset, centerPart, centerNormal, centerNode) || differs(center, center - offset, centerPart, centerNormal, centerNode)) return true;
+    if (depthJump > 0.0 && centerNode.mode == 0.0 && nodeAt(partAt(center + offset)).mode != 1.0 && nodeAt(partAt(center - offset)).mode != 1.0 && depthEdge(center, offset, centerDepth)) return true;
   }
   return false;
 }
@@ -201,17 +278,19 @@ void main() {
   vec3 centerPart = partAt(pixel);
   vec3 centerNormal = normalAt(pixel);
   float centerDepth = depthAt(pixel);
+  NodeLine centerNode = nodeAt(centerPart);
+  edgeColor = centerNode.color;
   float fullRings = floor(halfWidth);
   float partial = halfWidth - fullRings;
   float coverage = 0.0;
   for (int ring = 1; ring <= ${OUTLINE_RING_LIMIT}; ring++) {
-    if (float(ring) > ceil(halfWidth)) break;
-    if (ringHasEdge(pixel, ring, centerPart, centerNormal, centerDepth)) {
+    if (float(ring) > ceil(halfWidth) || centerNode.mode == 1.0) break;
+    if (ringHasEdge(pixel, ring, centerPart, centerNormal, centerDepth, centerNode)) {
       coverage = float(ring) <= fullRings ? 1.0 : partial;
       break;
     }
   }
-  outputColor = vec4(source.rgb * (1.0 - coverage) + lineColor * coverage, source.a * (1.0 - coverage) + coverage);
+  outputColor = vec4(source.rgb * (1.0 - coverage) + edgeColor * coverage, source.a * (1.0 - coverage) + coverage);
 }`;
 
 const polylineVertex = `#version 300 es
@@ -316,6 +395,7 @@ function createLineArtStage(state) {
   let polylineUniforms = null;
   let vertexArray = null;
   let outputTarget = null;
+  let nodeTexture = null;
   const guideTargets = new Map();
   const segmentBuffers = new Map();
 
@@ -347,6 +427,27 @@ function createLineArtStage(state) {
       context.deleteFramebuffer(target.framebuffer);
     }
     guideTargets.clear();
+    if (nodeTexture) {
+      context.deleteTexture(nodeTexture);
+      nodeTexture = null;
+    }
+  }
+
+  // Uploads the per-ID table; a one-texel table stands in when the frame has no per-node settings, so the sampler is always complete.
+  function bindNodeTable(renderer, lines, unit) {
+    const { context } = renderer;
+    const table = lineNodeTable(lines, renderer.passSupport.objectNodes());
+    if (!nodeTexture) {
+      nodeTexture = context.createTexture();
+      context.bindTexture(context.TEXTURE_2D, nodeTexture);
+      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.NEAREST);
+      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, context.NEAREST);
+    }
+    context.activeTexture(context.TEXTURE0 + unit);
+    context.bindTexture(context.TEXTURE_2D, nodeTexture);
+    const data = table.data ?? new Float32Array(4);
+    context.texImage2D(context.TEXTURE_2D, 0, context.RGBA32F, table.data ? table.width : 1, table.data ? table.height : 1, 0, context.RGBA, context.FLOAT, data);
+    return table.count;
   }
 
   function releaseSegmentBuffers(context, keep = new Set()) {
@@ -379,7 +480,7 @@ function createLineArtStage(state) {
     if (!outlineProgram) {
       outlineProgram = compileProgram(context, fullscreenVertex, outlineFragment);
       outlineUniforms = uniformLocations(context, outlineProgram, ['sourceTexture', 'sceneDepth', 'partTexture', 'normalTexture',
-        'projectionDepth', 'halfWidth', 'lineColor', 'useBoundaries', 'creaseCosine', 'depthJump']);
+        'projectionDepth', 'halfWidth', 'lineColor', 'useBoundaries', 'creaseCosine', 'depthJump', 'nodeTexture', 'nodeCount']);
     }
     context.useProgram(outlineProgram);
     const bindings = [[sourceTexture, 'sourceTexture'], [renderer.depthTexture, 'sceneDepth'], [guideTarget(renderer, 'part').texture, 'partTexture'], [guideTarget(renderer, 'normal').texture, 'normalTexture']];
@@ -388,6 +489,8 @@ function createLineArtStage(state) {
       context.bindTexture(context.TEXTURE_2D, texture);
       context.uniform1i(outlineUniforms[uniform], unit);
     });
+    context.uniform1i(outlineUniforms.nodeTexture, bindings.length);
+    context.uniform1i(outlineUniforms.nodeCount, bindNodeTable(renderer, lines, bindings.length));
     context.uniform3fv(outlineUniforms.projectionDepth, projectionDepth(renderer));
     context.uniform1f(outlineUniforms.halfWidth, lines.width / 2);
     context.uniform3fv(outlineUniforms.lineColor, lines.color);
