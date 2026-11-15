@@ -256,6 +256,7 @@
   },
   "peerDependencies": {
     "@dimforge/rapier3d-compat": "0.21.0",
+    "draco3d": "1.5.9",
     "jolt-physics": "1.1.1",
     "manifold-3d": "3.5.4"
   },
@@ -264,6 +265,9 @@
   },
   "peerDependenciesMeta": {
     "@dimforge/rapier3d-compat": {
+      "optional": true
+    },
+    "draco3d": {
       "optional": true
     },
     "jolt-physics": {
@@ -281,6 +285,7 @@
     "@modelcontextprotocol/server": "2.4.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
+    "draco3d": "1.5.9",
     "esbuild": "0.28.2",
     "gl-matrix": "3.4.4",
     "highlight.js": "11.12.0",
