@@ -1,10 +1,11 @@
 // Lighting and auxiliary render passes (issues 601 and 706) drawn for real: diffuse + glossy + emission add back to the
 // beauty frame, and shadow, ao, mist, position, velocity, uv, transmission, volume, environment, cryptomatte and aov read accurately.
-// It draws in headless Chrome (SwiftShader, no GPU) from the Vite dev server, and skips when Chrome cannot start.
+// It draws in headless Chrome (SwiftShader, no GPU) from the Vite dev server, and skips when Chrome cannot start outside CI, where it fails instead.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { freePort } from './helpers/free-port.js';
+import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
 
 async function startServer(port) {
   const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -94,7 +95,7 @@ test('diffuse + glossy + emission match the beauty frame, and auxiliary passes r
   try {
     ({ chromium } = await import('playwright'));
   } catch {
-    context.skip('playwright is not installed');
+    skipOrThrow(context, 'playwright is not installed');
     return;
   }
   const port = await freePort();
@@ -102,10 +103,9 @@ test('diffuse + glossy + emission match the beauty frame, and auxiliary passes r
   let browser;
   try {
     try {
-      const launchArgs = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-webgl', '--ignore-gpu-blocklist'];
-      browser = await chromium.launch({ headless: true, args: launchArgs }).catch(() => chromium.launch({ headless: true, channel: 'chrome', args: launchArgs }));
+      browser = await launchChrome(chromium);
     } catch (error) {
-      context.skip(`Chrome did not start: ${error.message.split('\n')[0]}`);
+      skipOrThrow(context, `Chrome did not start: ${error.message.split('\n')[0]}`);
       return;
     }
     const page = await browser.newPage({ viewport: { width: 64, height: 64 } });
