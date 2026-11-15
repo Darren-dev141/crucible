@@ -728,7 +728,7 @@ Every field also takes `strength` (default 1, -1000 to 1000), `position` (defaul
 A recipe `particles` section holds up to 4 systems (`src/particles.js`, `src/hair.js`, `src/agent-particles.js`). It needs no peer dependency and loads on demand with the `particles` module, so a scene without particles pays nothing. Blender's particle system has the same two kinds, Emitter and Hair.
 
 ```json
-{ "geometries": [{ "id": "speck", "type": "box" }],
+{ "geometries": [{ "id": "speck", "type": "box", "bevel": 0 }],
   "nodes": [{ "id": "sparks", "geometry": "speck", "material": "glow" }],
   "particles": { "systems": [{ "node": "sparks", "seed": 11, "count": 300, "rate": 150, "lifetime": [0.8, 1.6],
                                "speed": [2, 4], "spread": 35, "size": 0.035, "drag": 0.3, "floor": 0, "scale": "shrink",
