@@ -27,7 +27,7 @@ function createRenderer(parts) {
 
 test('the snapshot lists cover every material map and layer field the batch compares', () => {
   const covered = new Set([...SNAPSHOT_VALUE_FIELDS, ...SNAPSHOT_REFERENCE_FIELDS]);
-  for (const field of ['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap', 'alphaMode', 'alphaCutoff', 'opacity', 'doubleSided', 'tag', 'lightMask', ...MATERIAL_LAYER_FIELDS]) {
+  for (const field of ['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap', 'alphaMode', 'alphaCutoff', 'opacity', 'doubleSided', 'tag', 'lightMask', 'emissionFresnel', 'emissionMask', ...MATERIAL_LAYER_FIELDS]) {
     assert.ok(covered.has(field), `${field} is missing from the material snapshot`);
   }
 });
@@ -75,6 +75,8 @@ test('rejections still throw after the fast path has been taken', () => {
     [material => { material.moss = 0.5; }, /Material map or scale/],
     [material => { material.normalScale = [2, 2]; }, /Material map or scale/],
     [material => { material.lightMask = 1; }, /Material map or scale/],
+    [material => { material.emissionFresnel = 1.5; }, /Material map or scale/],
+    [material => { material.emissionMask = { axis: 'y', from: 0, to: 0.5 }; }, /Material map or scale/],
   ];
   for (const [change, expected] of rejected) {
     const parts = [createPart('mover')];

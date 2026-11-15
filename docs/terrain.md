@@ -81,7 +81,7 @@ Memory: three `TEXTURE_2D_ARRAY`s on units 11 to 13 (sRGB colour, normal, roughn
 - The ground spans x and z from `-size / 2` to `size / 2`. `chunks` per side, each with `resolution` cells at level 0 (so `resolution` must divide by `2 ** (levels - 1)`). Level `n` uses `resolution / 2 ** n` cells.
 - `height` is a function `(x, z) => metres`, a square array or typed array (`Float32Array`, `Float64Array`) of metres stretched over the ground (`heightmapFromImageData(imageData, amplitude)` builds one from an image), or noise options: `amplitude` (hills, 14), `mountainAmplitude` (46), `featureSize` (160 m), `octaves`, `gain`, `lacunarity`, `warp` (domain warp in metres), `baseHeight` and `mountainMask(x, z)` (0 to 1, where ridged mountains replace hills). Hills use slope-damped octaves and mountains use ridged multifractal noise, which gives smooth flanks, sharp crests and carved valleys. The same `seed` always gives the same ground.
 - `heightAt(x, z)` walks the same triangles as the level 0 mesh, so it matches the rendered surface there (coarser levels differ by their simplification). Coordinates outside the ground clamp to its edge. `normalAt` interpolates smooth grid normals.
-- `update(eye)` picks a level per chunk from its distance (`lodDistance`, default 1.6 chunk sizes, doubling per level) and returns the parts whose geometry changed. Edges shared with a coarser neighbour are snapped onto the neighbour's edge, so there are no cracks and no skirts.
+- `update(eye)` picks a level per chunk from its distance (`lodDistance`, a positive finite number of metres, default 1.6 chunk sizes, doubling per level) and returns the parts whose geometry changed. Edges shared with a coarser neighbour are snapped onto the neighbour's edge, so there are no cracks and no skirts.
 - UVs are world metres `(x, z)`. Vertex normals are smooth and shared across chunk borders.
 
 ## Holes
@@ -128,8 +128,11 @@ Where the rest of the port's load goes (marks in a scratch copy, ms from navigat
 `addons/navmesh` finds walking routes over any triangle ground, so a character can go around holes, steep slopes and obstacles. It is pure JavaScript and gives the same path for the same input.
 
 ```js
+import { createTerrain } from 'crucible/addons/terrain';
 import { createNavmesh } from 'crucible/addons/navmesh';
-const { positions, indices } = terrain.parts[0].geometry; // world space, Y up
+// One chunk covers the whole ground, so its geometry is the walkable surface. A terrain of many chunks has one geometry per chunk.
+const walkable = createTerrain({ size: 40, chunks: 1, resolution: 64, levels: 1, seed: 11 });
+const { positions, indices } = walkable.parts[0].geometry; // world space, Y up
 const navmesh = createNavmesh({ positions, indices, agentRadius: 0.3, maxSlopeDegrees: 40, obstacles: [{ min: [4, 4], max: [6, 6] }] });
 const { points, length, searchNodes } = navmesh.findPath([-15, -15], [15, 15], { spacing: 1.5 });
 ```

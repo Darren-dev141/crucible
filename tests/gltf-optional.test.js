@@ -112,6 +112,15 @@ test('KHR_lights_punctual lights map onto point, spot and key light options', as
   assert.deepEqual(asset.warnings, []);
 });
 
+test('a file with lights turns the fill lights off, and the key light when no light is directional (#1178)', async () => {
+  const pointOnly = await parseGltf(triangleDocument(document => addLights(document, [{ type: 'point', intensity: 40 }])));
+  assert.equal(pointOnly.lights.fillIntensity, 0, 'the studio fill lights are not in the file');
+  assert.equal(pointOnly.lights.keyIntensity, 0, 'no directional light means no key light');
+  const withSun = await parseGltf(triangleDocument(document => addLights(document, [{ type: 'directional', intensity: 3 }])));
+  assert.equal(withSun.lights.fillIntensity, 0);
+  assert.equal(withSun.lights.keyIntensity, 1, 'its own directional light stays the key light');
+});
+
 test('lights beyond the renderer limits are skipped, each with a warning', async () => {
   const lights = Array.from({ length: MAX_POINT_LIGHTS + 2 }, () => ({ type: 'point' }));
   lights.push(...Array.from({ length: MAX_SPOT_LIGHTS + 1 }, () => ({ type: 'spot' })));

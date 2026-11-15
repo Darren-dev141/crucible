@@ -382,8 +382,12 @@ export async function createPhysicsSystem(definition, options = {}) {
       stepEvents = collectEvents();
       // In 'both' mode update() writes the interpolated pose; otherwise this step is the only writer.
       if (context?.mode !== 'both') writeBindings(1);
+      // A listener may dispose this system (a game restart does); the listeners after it must not run on the freed world.
       for (const event of stepEvents) {
-        for (const listener of listeners[event.kind]) listener(event);
+        for (const listener of listeners[event.kind]) {
+          if (disposed) return;
+          listener(event);
+        }
       }
     },
     update(_delta, context) {

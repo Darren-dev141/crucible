@@ -174,3 +174,12 @@ test('stepped lands on the new step at frame times that are inexact in binary', 
     }
   }
 });
+
+test('cycles repeat shows the first value on a cycle start at a fractional frame rate (#1515)', () => {
+  const keyframes = [{ time: 0, value: 0 }, { time: 0.1, value: 1 }];
+  const repeat = sampler({ modifiers: [{ type: 'cycles' }] }, keyframes);
+  for (const frame of [9, 21]) {
+    assert.ok(Math.abs(repeat(frame / 30)) < 1e-6, `repeat at frame ${frame}`);
+  }
+  assert.ok(Math.abs(repeat(-0.3)) < 1e-6, 'before the keys, -0.3 s starts a cycle too');
+});

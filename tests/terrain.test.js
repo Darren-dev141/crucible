@@ -204,3 +204,12 @@ test('update rejects an eye position with a non-finite coordinate and keeps the 
   assert.throws(() => terrain.update([0, 1]), /finite numbers/);
   assert.deepEqual(terrain.chunkLevels(), levelsBefore);
 });
+
+test('createTerrain refuses a lodDistance that would build empty terrain', async () => {
+  const { createTerrain } = await import('../src/terrain.js');
+  for (const lodDistance of [-5, 0, NaN, Infinity]) {
+    assert.throws(() => createTerrain({ size: 64, resolution: 8, chunks: 2, levels: 3, lodDistance, height: () => 1 }), /lodDistance must be a positive number of metres/, `lodDistance ${lodDistance}`);
+  }
+  const terrain = createTerrain({ size: 64, resolution: 8, chunks: 2, levels: 3, lodDistance: 10, height: () => 1 });
+  assert.ok(terrain.triangleCount > 0);
+});

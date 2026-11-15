@@ -49,7 +49,7 @@ Tag rules worth knowing: caps keep the tags their faces had (an inset on `right`
 Outside MCP, the same recipe runs in Node:
 
 ```js
-import { createAgentScene } from './src/agent-scene.js'; // or '@codepawlhq/crucible/addons/agent-scene' once released
+import { createAgentScene } from '@codepawlhq/crucible/addons/agent-scene';
 const scene = createAgentScene({
   format: 'crucible.scene', schemaVersion: 1,
   geometries: [mesh], materials: [{ id: 'paint', color: [0.6, 0.6, 0.6] }],

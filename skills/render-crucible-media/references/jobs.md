@@ -9,7 +9,7 @@ This is the [Render job settings](#render-job-settings) reference. Read the open
 
 Every recipe is the arguments of `scene_render_submit`. `sessionId` may be left out. `expectedRevision` is the
 revision `scene_inspect` returned. Required in `settings`: `kind` (`image`, `stills` or `video`), `width`, `height`
-(64 to 1920 each and at most 1920x1080 pixels together, so 1080x1920 fits and 1920x1920 fails; video sizes must be
+(image jobs 64 to 3840 each and at most 3840x2160 pixels together, so 2880x1620 fits; stills and video 64 to 1920 each and at most 1920x1080, so 1080x1920 fits and 1920x1920 fails; video sizes must be
 even). Defaults: 24 fps and one second.
 `tests/render-skill-examples.test.js` checks that these blocks stay valid JSON with known settings fields.
 
@@ -123,6 +123,7 @@ stops at 30 minutes, so keep a traced video short and small. It writes no passes
 (hardware ray queries; it falls back to `gpu` or `cpu` and `metrics.pathTracer.backendNote` says why). Start with 16
 samples to judge the light, then raise them. Ranges: `samples` 1 to 1024, `bounces` 1 to 16, `maxSeconds` 1 to 600.
 `denoise` is `true` (the built-in filter), `false`, or `"oidn"` where the server has that optional package.
+The OIDN package `@codepawlhq/crucible-denoise-oidn` is not on npm yet, so an npm install of `@codepawlhq/crucible` does not have it. Use a source checkout: `npm run fetch --prefix packages/denoise-oidn` (or set `OIDN_DENOISE_PATH`). Without it the job does not fail: it runs the wavelet filter (the GPU a-trous filter on `backend: "native"`) and says so in `metrics.pathTracer.denoiser` and `denoiserNote`. Check `denoiser` before you judge grain.
 
 ## Imported character clips
 

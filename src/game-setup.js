@@ -78,7 +78,7 @@ function normalizePlayer(player, nodeIds, nodes, controllerNames) {
     maximumSpeed: boundedNumber(player.maximumSpeed, 20, 0, GAME_SETUP_LIMITS.maxVehicleSpeed, 'player.maximumSpeed'),
     footOffset: boundedNumber(player.footOffset, 0, -GAME_SETUP_LIMITS.maxFootOffset, GAME_SETUP_LIMITS.maxFootOffset, 'player.footOffset'),
   };
-  if (player.animation !== undefined) normalized.animation = normalizeGameAnimation(player.animation, nodes, player.node, { path: 'player.animation' });
+  if (player.animation !== undefined) normalized.animation = normalizeGameAnimation(player.animation, nodes, player.node, { path: 'player.animation', controller: normalized.controller });
   return normalized;
 }
 

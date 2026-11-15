@@ -11,7 +11,11 @@ export function checkScatterOptions({ area, density, spacing, variants, scale, m
   need(spacing ?? 1, 'Scatter spacing', Number.MIN_VALUE, 1e6);
   need(variants, 'Scatter variants', 1, 16, true);
   need(scale[0], 'Scatter scale minimum', 0.001, 1000);
+  need(scale[1], 'Scatter scale maximum', scale[0], 1000);
   if (!Object.values(mix).some(weight => weight > 0)) throw new RangeError('Scatter mix needs a positive weight.');
+  for (const [species, weight] of Object.entries(mix)) {
+    if (weight > 0 && !Number.isFinite(weight)) throw new RangeError(`Scatter mix weight for ${species} must be finite; got ${weight}.`);
+  }
   const cellSize = (spacing ?? Math.sqrt(0.6 / density)) / Math.SQRT2;
   const cells = (Math.ceil((area.maxX - area.minX) / cellSize) + 1) * (Math.ceil((area.maxZ - area.minZ) / cellSize) + 1);
   need(cells, 'Scatter grid cells', 0, 16e6);
