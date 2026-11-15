@@ -200,9 +200,9 @@ test('the browser tests fail instead of skipping under CI', () => {
   }
 });
 
-const MIGRATED_BROWSER_TESTS = ['agent-motion-look', 'large-bounds', 'light-bake-backends', 'local-volume-blur', 'local-volume-mesh-raster', 'local-volume-noise', 'local-volume-parts-raster', 'local-volume-scatter', 'local-volumes-entry-points', 'local-volumes', 'render-flags', 'vegetation-pop', 'volume-grid-raster'];
+const MIGRATED_BROWSER_TESTS = ['agent-motion-look', 'large-bounds', 'light-bake-backends', 'lighting-passes', 'local-volume-blur', 'local-volume-mesh-raster', 'local-volume-noise', 'local-volume-parts-raster', 'local-volume-scatter', 'local-volumes-entry-points', 'local-volumes', 'netcode-two-browsers', 'render-flags', 'vegetation-pop', 'volume-grid-raster'];
 
-test('the 13 browser tests launch through the shared launcher and skip through the CI guard', () => {
+test('the 15 browser tests launch through the shared launcher and skip through the CI guard', () => {
   for (const name of MIGRATED_BROWSER_TESTS) {
     const source = readText(`tests/${name}.test.js`);
     assert.doesNotMatch(source, /chromium\.launch\(/, `${name} launches Chromium by itself`);

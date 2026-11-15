@@ -9,6 +9,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { startNetcodeRelay } from '../scripts/netcode-relay.mjs';
+import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SERVED_FOLDERS = ['/src/', '/scripts/netcode-sample.'];
@@ -142,25 +143,13 @@ async function playTogether(context, transport, relayUrl) {
   return { hostToClientLag, clientToHostLag, positions };
 }
 
-// Playwright's own browser download is not installed on CI, so fall back to the Google Chrome the runner already has.
-async function launchChrome(chromium) {
-  try {
-    return await chromium.launch({ headless: true });
-  } catch {
-    return chromium.launch({ headless: true, channel: 'chrome' });
-  }
-}
-
 for (const transport of ['broadcast', 'websocket']) {
   test(`two browser pages converge and show a move within bounded lag over ${transport}`, async testContext => {
     let chromium;
     try {
       ({ chromium } = await import('playwright'));
-    } catch (error) {
-      if (process.env.CI) {
-        throw error;
-      }
-      testContext.skip('playwright is not installed');
+    } catch {
+      skipOrThrow(testContext, 'playwright is not installed');
       return;
     }
     const server = await startStaticServer();
@@ -170,11 +159,7 @@ for (const transport of ['broadcast', 'websocket']) {
       try {
         browser = await launchChrome(chromium);
       } catch (error) {
-        // On CI the runner ships Chrome, so a launch failure there is a real failure, not a reason to skip.
-        if (process.env.CI) {
-          throw error;
-        }
-        testContext.skip(`Chrome did not start: ${error.message.split('\n')[0]}`);
+        skipOrThrow(testContext, `Chrome did not start: ${error.message.split('\n')[0]}`);
         return;
       }
       const context = await browser.newContext();
