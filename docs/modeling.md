@@ -73,7 +73,8 @@ Volume, area and bounds match Blender 5.2 for an open and a closed Bezier curve 
 in `splines`, never both. A spline is `{ points | shape, closed, kind, weights, order, knots, knotMode, trim }`, and `curve(points, { kind, weights, order, knots, knotMode, trim })` is the one-spline form.
 
 - `kind` is `bezier` (default), `poly` or `nurbs`. A poly spline is straight segments with sharp corners; each ring takes the
-  direction of the segment that leaves it, so corners are not mitred. A NURBS spline is a cubic B-spline by default: open ones are
+  direction of the segment that leaves it, so corners are not mitred. Where points repeat, a ring takes the direction of the
+  nearest distinct point (trailing repeats keep the direction they arrived with); a curve whose points all coincide is an error. A NURBS spline is a cubic B-spline by default: open ones are
   clamped (they start and end on the first and last point), closed ones are periodic. `weights` holds one number above 0 per
   point (default 1); a higher weight pulls the curve toward its point.
 - NURBS `order` is an integer from 2 to 8 and at most the point count (default 4, cubic; 2 follows the control polygon, 3 with
@@ -86,7 +87,7 @@ in `splines`, never both. A spline is `{ points | shape, closed, kind, weights, 
   recursion written out from its definition.
 - `shape` replaces `points` with a primitive in the XY plane, and sets `closed` and `kind` itself:
   - `{ type: 'arc', radius = 1, startAngle = 0, sweep = 3.14159, segments = 8 }`: a Bezier arc, exact to about 1e-7 of the radius;
-    a sweep of 2 pi closes it. Angles are radians; circle segments are arcs.
+    a sweep of 2 pi closes it. Each segment spans at most half a turn (pi), so a full circle needs `segments` of 2 or more. Angles are radians; circle segments are arcs.
   - `{ type: 'spiral', rotations = 2, startRadius = 1, endRadius = 1, height = 2, pointsPerRotation = 12, reverse }`: a helix
     along +Z, smooth through its points (a spiral staircase rail is `height` over `rotations`).
   - `{ type: 'star', points = 5, innerRadius = 0.5, outerRadius = 1, innerTwist = 0 }`: a closed poly spline of `2 * points` vertices.
@@ -143,6 +144,7 @@ This bounds geometry size, not total browser memory.
 Account for maps, instance counts and render targets separately.
 Polygon intersection validation uses quadratic edge comparisons, bounded by the input limit.
 Nonfinite output, invalid normals and entirely collapsed Float32 meshes throw.
+The mesh library calls check the same limits as the recipe layer and throw an error that names the parameter, the value and the range: `bevelEdges` segments 1 to 16, `loopCut` cuts 1 to 16, `subdivideMesh` levels 1 to 4, finite `width`, `profile`, `factor`, `sharpness` and `distance`, a `bisectPlane` `point` and nonzero `normal`, `resampleCurve` and `resampleSamples` counts of at least 2 (closed curves: 1), and a `filletCurve` radius above 0 with no coincident points.
 Center small geometry near the origin and place it with part transforms when working at large world coordinates.
 
 ## API choice

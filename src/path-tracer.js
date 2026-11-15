@@ -1236,7 +1236,7 @@ export async function renderPathTracedImage({ parts, environment = {}, camera },
     ? await (options.backend === 'webgpu' ? import('./path-tracer-webgpu.js') : import('./path-tracer-gpu.js'))
     : null;
   const scene = gpuModule ? await buildTraceSceneForDevice(parts, environment, gpuModule) : buildTraceScene(parts, environment);
-  if (options.backend !== 'cpu') refuseLocalVolumes(scene, `backend "${options.backend}"`);
+  if (options.backend !== 'cpu' && options.backend !== 'webgpu') refuseLocalVolumes(scene, `backend "${options.backend}"`);
   const pixelCount = width * height;
   const buffers = {
     color: new Float32Array(pixelCount * 3), albedo: new Float32Array(pixelCount * 3), normal: new Float32Array(pixelCount * 3),

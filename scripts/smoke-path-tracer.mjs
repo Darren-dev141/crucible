@@ -44,7 +44,7 @@ async function renderedBytes(sessionId, settings) {
   assert.equal(submitted.isError, undefined, submitted.content?.[0]?.text);
   const record = await finished(submitted.structuredContent.jobId);
   assert.equal(record.state, 'completed', JSON.stringify(record));
-  const result = (await call('scene_render_result', { jobId: submitted.structuredContent.jobId })).structuredContent;
+  const result = (await call('scene_render_result', { jobId: submitted.structuredContent.jobId, response_format: 'detailed' })).structuredContent;
   const bytes = await readFile(result.artifacts[0].path);
   assert.equal(createHash('sha256').update(bytes).digest('hex'), result.artifacts[0].sha256);
   await call('scene_render_release', { jobId: submitted.structuredContent.jobId });

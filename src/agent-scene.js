@@ -14,6 +14,7 @@ import { ALL_LIGHTS_MASK, MATERIAL_LAYER_FIELDS, validateMaterialLayers } from '
 import { recipeDiagnostics, closedRoomDiagnostic } from './agent-diagnostics.js';
 import { closedRoomShare, CLOSED_ROOM_SHARE } from './closed-room.js';
 import { depthLayerOf, MAXIMUM_DEPTH_LAYER } from './depth-layer.js';
+import { normalizeRayVisibility } from './ray-visibility.js';
 import { armatureNodes, bakeRigExport, bindSkins, createSkinStages, normalizeArmatures, publishSkinPoses, restWorldMatrix, rigReport, stageSkinPoses, transformedBounds, withoutArmatureNodes } from './rig.js';
 export { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS };
 
@@ -59,7 +60,7 @@ const CAMERA_DEFAULTS = Object.freeze({ eye: [4, 3, 5], target: [0, 0, 0], up: [
 // Per-node render flags: `visible` hides a node and its children; the rest become renderer part flags of a mesh node.
 const RENDER_FLAG_FIELDS = ['visible', 'castShadow', 'receiveShadow', 'holdout', 'shadowCatcher', 'shadowOnly'];
 const PART_FLAG_FIELDS = RENDER_FLAG_FIELDS.slice(1);
-const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'decal', 'depthLayer', 'blend', ...RENDER_FLAG_FIELDS];
+const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'decal', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
 const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'aov', 'wear', 'emissionMask', ...MATERIAL_LAYER_FIELDS];
 const PATTERN_TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'layerMaps', 'transmissionMap', 'aovMap', 'emissionFresnel', 'boxMapScale', 'boxMapAxis'];
 const CAMERA_FIELDS = [...Object.keys(CAMERA_DEFAULTS), ...CAMERA_LENS_FIELDS];
@@ -396,6 +397,15 @@ function nodeFrom(value) {
     if (value[flag] !== undefined && typeof value[flag] !== 'boolean') throw invalidField(flag, value[flag], 'true or false', TypeError);
     if (flag !== 'visible' && value[flag] !== undefined && value.geometry === undefined) throw invalidField(flag, value[flag], 'a flag on a mesh node with geometry and material; remove it from group nodes', TypeError);
   }
+  if (value.rayVisibility !== undefined) {
+    if (value.geometry === undefined) throw invalidField('rayVisibility', value.rayVisibility, 'a field on a mesh node; remove it from group nodes', TypeError);
+    const rayVisibility = normalizeRayVisibility(value.rayVisibility);
+    if (rayVisibility === undefined) delete result.rayVisibility;
+    else result.rayVisibility = rayVisibility;
+    if (rayVisibility?.shadow === false && value.shadowOnly === true) {
+      throw invalidField('rayVisibility', value.rayVisibility, 'shadow rays on when shadowOnly is true', TypeError);
+    }
+  }
   if (value.holdout === true && value.shadowCatcher === true) throw invalidField('shadowCatcher', value.shadowCatcher, 'false when holdout is true; a node is a holdout or a shadow catcher, not both', TypeError);
   if (value.shadowOnly === true && (value.castShadow === false || value.holdout === true || value.shadowCatcher === true)) {
     throw invalidField('shadowOnly', value.shadowOnly, 'false with castShadow false, holdout or shadowCatcher', TypeError);
@@ -549,6 +559,8 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
     return input.length;
   }
   for (const field of GEOMETRY_FIELDS[value.type]) {
+    // Terrain checks its own numbers (a whole resolution from 2 to 256), so its message names the real range; null is not absent there, so it still fails below.
+    if (value.type === 'terrain' && ['size', 'resolution', 'amplitude'].includes(field) && value[field] !== null) continue;
     if (value[field] !== undefined && !['profile', 'contour', 'holes', 'path', 'closed', 'base', 'edits', 'stack', 'shapeKeys', 'points', 'taper', 'text', 'font', 'align', 'from', 'to', 'shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'root', 'source', 'impact'].includes(field)) {
       finite(value[field], field);
     }
@@ -624,7 +636,7 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
     case 'mesh': {
       const base = value.base;
       if (!base || typeof base !== 'object' || Array.isArray(base) || base.type === 'mesh' || Object.hasOwn(base, 'id')) {
-        throw invalidField('base', base, 'a primitive or profile record without an id, such as { "type": "box" } (box, cylinder, sphere, torus, lathe, extrude or tube)', TypeError);
+        throw invalidField('base', base, 'a primitive or profile record without an id, such as { "type": "box" } (box, cylinder, sphere, torus, lathe, extrude, tube, grid or plane)', TypeError);
       }
       let estimate = geometryEstimate({ id: 'base', ...base });
       const cutterScope = meshCutterScope(value, scope);
@@ -958,6 +970,25 @@ function checkLightLinkNames(recipe) {
   }
 }
 
+// A typo in lines.nodes would turn nothing off without a sign. A node that exists but is hidden stays valid.
+function checkLineNodeNames(recipe) {
+  const lines = recipe.environment?.lines;
+  if (!lines?.nodes) {
+    return;
+  }
+  const unknown = agentSceneModule('lineArt').unknownLineNodeNames(lines, recipe.nodes);
+  if (unknown.length > 0) {
+    throw invalidField('environment.lines.nodes', unknown.slice(0, 4), `node IDs that exist in nodes${unknown.length > 4 ? ` (${unknown.length - 4} more are unknown too)` : ''}; scene_inspect lists them. After remove-node, drop that node's entry from lines.nodes in the same call`);
+  }
+  // A group that draws nothing itself (an expanded instances node, a plain group) would do nothing without a sign.
+  // A placed asset, vegetation and crowd nodes are groups too, but their parts name them in `group`.
+  const drawsNothing = recipe.nodes.find(node => Object.hasOwn(lines.nodes, node.id) && node.geometry === undefined && !node.asset && !node.vegetation);
+  if (drawsNothing) {
+    const childIds = recipe.nodes.filter(node => node.parent === drawsNothing.id).map(node => node.id);
+    throw invalidField(`environment.lines.nodes.${drawsNothing.id}`, drawsNothing.id, `the ID of a node that draws a part; ${JSON.stringify(drawsNothing.id)} is a group with no geometry of its own. ${childIds.length > 0 ? `Name its children instead, such as ${childIds.slice(0, 3).join(', ')}` : 'It has no children, so remove its entry from lines.nodes'}`);
+  }
+}
+
 // Every light's affects list in light order: the mask of a part depends on these lists and nothing else of the environment.
 function lightLinksKey(environment) {
   const lights = [...environment.pointLights, ...(environment.spotLights ?? []), ...(environment.areaLights ?? [])];
@@ -1043,6 +1074,7 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
     throw invalidField('camera.fStop', recipe.camera.fStop, 'a camera without effects.depthOfField.blur above 0; set blur to 0 or remove fStop');
   }
   checkLightLinkNames(recipe);
+  checkLineNodeNames(recipe);
   if (recipe.effects?.distortion || recipe.effects?.flash) agentSceneModule('postSteps').checkAirStepNodes(recipe);
   if (Object.hasOwn(recipe, 'motion')) {
     recipe.motion = recipe.motion === null || recipe.motion === undefined ? null : agentSceneModule('motion').normalizeAgentMotion(recipe.motion, recipe);
@@ -1322,11 +1354,17 @@ function sampledGeometries(stagedState, time, sampled) {
 }
 
 function partFlagsOf(node) {
-  return Object.fromEntries(PART_FLAG_FIELDS.filter(flag => node[flag] !== undefined).map(flag => [flag, node[flag]]));
+  const flags = Object.fromEntries(PART_FLAG_FIELDS.filter(flag => node[flag] !== undefined).map(flag => [flag, node[flag]]));
+  if (node.rayVisibility !== undefined) flags.rayVisibility = node.rayVisibility;
+  return flags;
+}
+
+function sameRayVisibility(first, second) {
+  return JSON.stringify(first ?? null) === JSON.stringify(second ?? null);
 }
 
 function sameRenderFlags(part, node, usesVisibility, assetExtras) {
-  return PART_FLAG_FIELDS.every(flag => part[flag] === (node[flag] ?? assetExtras?.[flag])) && Boolean(part.visibility) === usesVisibility;
+  return PART_FLAG_FIELDS.every(flag => part[flag] === (node[flag] ?? assetExtras?.[flag])) && sameRayVisibility(part.rayVisibility, node.rayVisibility) && Boolean(part.visibility) === usesVisibility;
 }
 
 function recipeUsesVisibility(recipe) {
@@ -1553,6 +1591,13 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     return records;
   }
 
+  function geometryBudgetError({ residentStats, pendingVertices }, plans, budget, heldCheckpoints) {
+    const largest = plans.filter(plan => !plan.existing).sort((first, second) => second.estimatedVertices - first.estimatedVertices)[0];
+    const largestNote = largest === undefined ? 'no new geometry is added' : `largest new geometry "${largest.definition.id}" has ${largest.estimatedVertices}`;
+    return invalidField('geometry.vertices', residentStats.vertices + pendingVertices, `a geometry preflight peak of at most ${budget.maxVertices} vertices and ${budget.maxGeometryBytes} bytes (this needs ${residentStats.geometryBytes + pendingVertices * 56} bytes): ${residentStats.vertices} vertices are already held by the active scene, checkpoints and staged resources and ${pendingVertices} are new; ${largestNote}. Reduce detail${heldCheckpoints ? ' or release checkpoints' : ''}`);
+  }
+
+
   // The edit only moves nodes of a plain scene (no relations, placed assets, armatures or motion) and every geometry is
   // resident: the committed state's graph is moved in place instead of being built again.
   function canMoveStagedGraph(recipe, movedNodeIds, assetRuntime) {
@@ -1620,7 +1665,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     let { residentStats } = planned;
     const { plans, pendingVertices } = planned;
     if (planned.overBudget) {
-      throw new RangeError('Geometry preflight exceeds peak maxVertices or maxGeometryBytes across active, checkpoint and staged resources. Reduce detail or release checkpoints');
+      throw geometryBudgetError(planned, plans, limits, checkpoints.size);
     }
 
     // Validate references, hierarchy and matrix arithmetic before generating any new resource.
@@ -1843,7 +1888,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       return [];
     }
     if (closedRoomCache?.revision !== revision) {
-      const worldMatrices = new Map(state.parts.map(part => [part.name, state.graph.getNode(part.name).worldMatrix]));
+      const worldMatrices = new Map(state.parts.map(part => [part, state.graph.getNode(part.name).worldMatrix]));
       closedRoomCache = { revision, share: closedRoomShare(state.parts, worldMatrices) };
     }
     const { share } = closedRoomCache;

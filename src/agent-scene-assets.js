@@ -304,6 +304,7 @@ export function expandAssetPlacements(recipe, assets, limits, outputCache = new 
         geometry: geometryId, material: materialKey, assetPart: { placement: node.id, index, matrix: Array.from(part.matrix) },
       });
       runtime.partExtras.set(partNodeId, {
+        group: node.id,
         ...(part.skin ? { skin: part.skin } : {}), ...(part.morph ? { morph: part.morph } : {}),
         ...(part.castShadow !== undefined ? { castShadow: part.castShadow } : {}),
       });

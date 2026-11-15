@@ -133,8 +133,20 @@ function clipEars(points, ring) {
   return triangles;
 }
 
+function assertFinitePoints(ring, label) {
+  ring.forEach((point, index) => {
+    if (!Number.isFinite(point[0]) || !Number.isFinite(point[1])) {
+      throw new RangeError(`triangulate ${label} point ${index} must have finite x and y, got [${point[0]}, ${point[1]}].`);
+    }
+  });
+}
+
 /** Vertex numbers follow the contour, then each hole in order. Returns counter-clockwise [a, b, c] triples. */
 export function triangulate(contour, holes) {
+  if (contour.length === 0) throw new RangeError('triangulate needs a contour with points, got an empty contour. Pass [[x, y], ...].');
+  if (contour.length < 3) return [];
+  assertFinitePoints(contour, 'contour');
+  holes.forEach((hole, index) => assertFinitePoints(hole, `hole ${index}`));
   const points = [...contour, ...holes.flat()];
   const outerRing = contour.map((_, index) => index);
   if (signedArea(contour) < 0) outerRing.reverse();

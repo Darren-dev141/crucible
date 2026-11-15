@@ -28,6 +28,10 @@ function levelBytes(width, height, blockBytes) {
   return blocksFor(width) * blocksFor(height) * blockBytes;
 }
 
+function hasPositiveIntegerSize(level) {
+  return Number.isInteger(level?.width) && Number.isInteger(level?.height) && level.width >= 1 && level.height >= 1;
+}
+
 function levelCountFor(width, height) {
   return Math.floor(Math.log2(Math.max(width, height))) + 1;
 }
@@ -46,15 +50,23 @@ export function describeCompressedImage(glFormat, levels, field, colorSpace) {
   if (!info) throw new Error(`${field} decoded to GPU format ${glFormat}, which Crucible does not upload. Use BC7, BC1, BC3, ASTC 4x4 or ETC2, or transcode to RGBA8 (see docs/gltf.md).`);
   if (!Array.isArray(levels) || !levels.length) throw new Error(`${field} compressed texture has no mip levels.`);
   const [base] = levels;
+  if (!hasPositiveIntegerSize(base)) {
+    throw new Error(`${field} ${info.name} texture base level must have a whole width and height of at least 1, got ${base?.width}x${base?.height}.`);
+  }
   if (info.strictBlocks && (base.width % BLOCK_SIZE || base.height % BLOCK_SIZE)) {
     throw new Error(`${field} ${info.name} texture must have width and height in multiples of 4.`);
   }
   const usable = levels.length === levelCountFor(base.width, base.height) ? levels : [base];
-  for (const level of usable) {
+  usable.forEach((level, index) => {
+    const expectedWidth = Math.max(1, base.width >> index);
+    const expectedHeight = Math.max(1, base.height >> index);
+    if (level.width !== expectedWidth || level.height !== expectedHeight) {
+      throw new Error(`${field} ${info.name} mip level ${index} is ${level.width}x${level.height}, but a chain from ${base.width}x${base.height} needs ${expectedWidth}x${expectedHeight}.`);
+    }
     if (!(level.data instanceof Uint8Array) || level.data.length !== levelBytes(level.width, level.height, info.blockBytes)) {
       throw new Error(`${field} ${info.name} mip level data does not match its size.`);
     }
-  }
+  });
   const bytes = usable.reduce((sum, level) => sum + level.data.length, 0);
   const srgb = colorSpace !== 'linear';
   const extension = srgb && info.srgbExtension ? info.srgbExtension : info.extension;

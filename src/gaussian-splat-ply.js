@@ -127,7 +127,7 @@ function toByte(unit) {
 /**
  * Parses a standard 3DGS PLY into flat typed arrays. Throws a RangeError, before reading any splat, when the file is
  * larger than `maximumBytes` (default 512 MiB) or holds more than `maximumCount` splats (default 2,000,000; never more
- * than 4,000,000). Returns `{ count, positions, colors, scales, rotations, bounds }`: positions are xyz, colors are
+ * than 4,000,000). Returns `{ count, positions, colors, scales, rotations, bounds, skipped }`, where `skipped` is `{ count, fields }`: a splat with any non-finite field (a scale that overflows counts) is dropped, `count` is how many were dropped (0 for a clean file) and `fields` names the fields that were non-finite. It throws only when no splat is usable. In the arrays: positions are xyz, colors are
  * RGBA bytes (RGB from the DC spherical harmonic, A from the sigmoid of opacity), scales are the exponentiated
  * axis lengths in metres and rotations are unit quaternions in w, x, y, z order.
  */
@@ -177,58 +177,69 @@ function openSplatPly(buffer, options, caller) {
   return { view: body, vertexCount, layout, stride };
 }
 
-function createSplatReader({ view, vertexCount: count, layout, stride }) {
-  const positions = new Float32Array(count * 3);
-  const colors = new Uint8Array(count * 4);
-  const scales = new Float32Array(count * 3);
-  const rotations = new Float32Array(count * 4);
+const FIELD_NAMES = [...REQUIRED_PROPERTIES];
+
+function createSplatReader({ view, vertexCount, layout, stride }) {
+  const positions = new Float32Array(vertexCount * 3);
+  const colors = new Uint8Array(vertexCount * 4);
+  const scales = new Float32Array(vertexCount * 3);
+  const rotations = new Float32Array(vertexCount * 4);
   const minimum = [Infinity, Infinity, Infinity];
   const maximum = [-Infinity, -Infinity, -Infinity];
-  const positionFields = ['x', 'y', 'z'].map(name => layout.get(name));
-  const colorFields = ['f_dc_0', 'f_dc_1', 'f_dc_2'].map(name => layout.get(name));
-  const opacityField = layout.get('opacity');
-  const scaleFields = ['scale_0', 'scale_1', 'scale_2'].map(name => layout.get(name));
-  const rotationFields = ['rot_0', 'rot_1', 'rot_2', 'rot_3'].map(name => layout.get(name));
+  const fields = FIELD_NAMES.map(name => layout.get(name));
+  const values = new Float64Array(fields.length);
+  const badFieldNames = new Set();
+  let kept = 0;
   function readRange(start, end) {
     for (let index = start; index < end; index++) readSplat(index);
   }
+  // A splat with any non-finite field is dropped; the next good splat takes its slot.
   function readSplat(index) {
     const row = index * stride;
-    for (let axis = 0; axis < 3; axis++) {
-      const field = positionFields[axis];
-      const coordinate = field.read(view, row + field.offset);
-      if (!Number.isFinite(coordinate)) {
-        throw new Error(`Gaussian splat ${index} has a non-finite position`);
-      }
-      positions[index * 3 + axis] = coordinate;
-      if (coordinate < minimum[axis]) minimum[axis] = coordinate;
-      if (coordinate > maximum[axis]) maximum[axis] = coordinate;
-      const colorField = colorFields[axis];
-      colors[index * 4 + axis] = toByte(0.5 + SPHERICAL_HARMONIC_DC * colorField.read(view, row + colorField.offset));
-      const scaleField = scaleFields[axis];
-      scales[index * 3 + axis] = Math.exp(scaleField.read(view, row + scaleField.offset));
-      if (!Number.isFinite(scales[index * 3 + axis])) {
-        throw new Error(`Gaussian splat ${index} has a non-finite scale (scale_${axis} is NaN or too large to exponentiate). Re-export the file or drop that splat.`);
+    let valid = true;
+    for (let field = 0; field < fields.length; field++) {
+      const value = fields[field].read(view, row + fields[field].offset);
+      values[field] = field >= 7 && field <= 9 ? Math.fround(Math.exp(value)) : value;
+      if (!Number.isFinite(values[field])) {
+        badFieldNames.add(FIELD_NAMES[field]);
+        valid = false;
       }
     }
-    colors[index * 4 + 3] = toByte(1 / (1 + Math.exp(-opacityField.read(view, row + opacityField.offset))));
-    writeUnitQuaternion(rotations, index, view, row, rotationFields);
+    if (!valid) return;
+    writeSplat(kept++, values);
+  }
+  function writeSplat(slot, row) {
+    for (let axis = 0; axis < 3; axis++) {
+      positions[slot * 3 + axis] = row[axis];
+      if (row[axis] < minimum[axis]) minimum[axis] = row[axis];
+      if (row[axis] > maximum[axis]) maximum[axis] = row[axis];
+      colors[slot * 4 + axis] = toByte(0.5 + SPHERICAL_HARMONIC_DC * row[3 + axis]);
+      scales[slot * 3 + axis] = row[7 + axis];
+    }
+    colors[slot * 4 + 3] = toByte(1 / (1 + Math.exp(-row[6])));
+    rotations.set(unitQuaternion(row[10], row[11], row[12], row[13]), slot * 4);
   }
   function result() {
-    return { count, positions, colors, scales, rotations, bounds: { minimum, maximum } };
+    const skipped = { count: vertexCount - kept, fields: FIELD_NAMES.filter(name => badFieldNames.has(name)) };
+    if (kept === 0) {
+      throw new Error(`Gaussian splat PLY has no usable splat: every one of the ${vertexCount} has a non-finite ${skipped.fields.join(', ')}. Re-export the file.`);
+    }
+    if (skipped.count === 0) return { count: kept, positions, colors, scales, rotations, bounds: { minimum, maximum }, skipped };
+    return {
+      count: kept,
+      positions: positions.slice(0, kept * 3),
+      colors: colors.slice(0, kept * 4),
+      scales: scales.slice(0, kept * 3),
+      rotations: rotations.slice(0, kept * 4),
+      bounds: { minimum, maximum },
+      skipped,
+    };
   }
   return { readRange, result };
 }
 
-function writeUnitQuaternion(rotations, index, view, row, fields) {
-  const base = index * 4;
-  for (let component = 0; component < 4; component++) {
-    rotations[base + component] = fields[component].read(view, row + fields[component].offset);
-  }
-  const length = Math.hypot(rotations[base], rotations[base + 1], rotations[base + 2], rotations[base + 3]);
-  if (length > 1e-12) {
-    for (let component = 0; component < 4; component++) rotations[base + component] /= length;
-  } else {
-    rotations.set([1, 0, 0, 0], base);
-  }
+function unitQuaternion(w, x, y, z) {
+  const length = Math.hypot(w, x, y, z);
+  if (length > 1e-12) return [w / length, x / length, y / length, z / length];
+  return [1, 0, 0, 0];
 }

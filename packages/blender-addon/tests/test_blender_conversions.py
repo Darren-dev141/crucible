@@ -296,12 +296,12 @@ class HdrTests(unittest.TestCase):
         self.assertTrue(content.startswith(b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 4 +X 8\n"))
         self.assertEqual(len(content), len(b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 4 +X 8\n") + 4 * 8 * 4)
 
-    def test_environment_is_flipped_and_turned_a_quarter(self):
+    def test_environment_is_flipped_and_not_turned(self):
         rows = numpy.zeros((2, 8, 3), dtype=numpy.float32)
         rows[0, 2] = 1.0  # bottom row, column 2
-        turned = conversions.blender_environment_to_cook_rows(rows)
-        self.assertEqual(float(turned[1, 4, 0]), 1.0)  # now the last row, moved 8 // 4 = 2 columns on
-        self.assertEqual(float(turned.sum()), 3.0)
+        flipped = conversions.blender_environment_to_cook_rows(rows)
+        self.assertEqual(float(flipped[1, 2, 0]), 1.0)  # the last row, the same column: Crucible turns the quarter when it loads the file
+        self.assertEqual(float(flipped.sum()), 3.0)
 
 
 class NativeRunnerTests(unittest.TestCase):

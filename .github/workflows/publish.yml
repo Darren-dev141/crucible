@@ -40,6 +40,10 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Publish a new version through OIDC
         run: npm run publish:ci
+      # A new addon needs a manual first publish and a trusted publisher on npm; until then it warns and the core release goes on.
+      - name: Publish the addon packages through OIDC
+        continue-on-error: true
+        run: npm run publish:addons:ci
       - name: Check that the registry serves the version in package.json
         run: |
           expected=$(node -p "require('./package.json').version")

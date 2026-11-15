@@ -185,3 +185,7 @@ test('a bounce in the probe trace adds light to a lit surface and never takes di
   assert.ok(withoutBounce > 0);
   assert.ok(total({ bounces: 1 }) >= withoutBounce, 'the gatherer reuses the direct light buffer, which must not leak into the probe pixel');
 });
+
+test('a probe map width that is odd is refused instead of dropping the last rows of the map', () => {
+  assert.throws(() => traceProbeMaps(closedRoom(), lamp, [[0, 1.5, 0]], { width: 9, samples: 2 }), /even integer/);
+});

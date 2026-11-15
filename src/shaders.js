@@ -1,8 +1,16 @@
+import { blendOutputGlsl } from './blend-output.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
 import { registeredFeatureCode, requireFeatureCode, registerShaderFeatureCode, registerSplatSupport, requireSplatSupport, layerTextureSupport, viewTransformShader, SPLAT_UNITS } from './shader-registry.js';
 
 export { registerShaderFeatureCode, registerSplatSupport, requireSplatSupport, layerTextureSupport, viewTransformShader, SPLAT_UNITS };
 
+/**
+ * The main program rebuilds the sun shadow coordinate from the world position in the fragment shader instead of carrying it
+ * as a vec4 varying. Meshes with about one triangle per pixel pay for every varying in setup and interpolation (Monk 13.5 to
+ * 11.4 ms, measured), and the world position is already interpolated. Not in SHADER_FEATURES: the liquid pass shares the
+ * default vertex shader and reads the varying.
+ */
+export const FRAGMENT_SHADOW_POSITION_FEATURE = 'fragmentShadowPosition';
 // The GPU crowd path (src/crowd-skinning.js) replaces this stub with its own code when that addon is imported, so the core pays for two lines.
 const CROWD_SHADER_STUB = 'uniform float crowdEnabled;\nmat4 crowdTransform() { return mat4(1.0); }';
 let crowdShaderCode = CROWD_SHADER_STUB;
@@ -87,7 +95,9 @@ out float vertexSkyVisibility;
 out vec2 vertexWear;
 #endif
 #endif
+#ifndef SHADOW_IN_FRAGMENT
 out vec4 shadowPosition;
+#endif
 out vec2 textureUV, lightmapUV;
 out vec3 boxPosition, boxNormal;
 ${skinningShader(features)}
@@ -139,7 +149,9 @@ void main() {
   vertexSkyVisibility = USES_CROWD ? 1.0 : vertexColor.a;
 #endif
 #endif
+#ifndef SHADOW_IN_FRAGMENT
   shadowPosition = lightProjection * world;
+#endif
   gl_Position = viewProjection * world;
   // A depth rank (renderer applyDepthRank): the depth of this point moved toward the eye by flushBias.x metres plus
   // flushBias.y of its distance, at the same place on screen, so ranked faces never crack or slide.
@@ -333,7 +345,12 @@ float wearNoise(vec3 position) {
   float high = mix(mix(wearCellHash(cell + vec3(0, 0, 1)), wearCellHash(cell + vec3(1, 0, 1)), blend.x), mix(wearCellHash(cell + vec3(0, 1, 1)), wearCellHash(cell + vec3(1, 1, 1)), blend.x), blend.y);
   return mix(low, high, blend.z);
 }
+#ifdef SHADOW_IN_FRAGMENT
+uniform mat4 lightProjection;
+vec4 shadowPosition;
+#else
 in vec4 shadowPosition;
+#endif
 in vec2 textureUV, lightmapUV;
 uniform sampler2D lightMap;
 uniform float lightMapScale;
@@ -504,6 +521,8 @@ vec3 directSpecularGain = vec3(1.0);
 vec2 mapUV(float flag) {
   return flag > 1.5 ? lightmapUV : textureUV;
 }
+// The specular light of a blended part, kept apart so its opacity fades only the diffuse share (blend-output.js).
+vec3 blendSpecular = vec3(0.0);
 ${featureCode("declarations")}vec3 illuminate(vec3 normal, vec3 viewDirection, vec3 lightDirection, vec3 radiance, vec3 color, float metallic, float roughness) {
   float normalLight = max(dot(normal, lightDirection), 0.0);
   if (normalLight == 0.0) return vec3(0);
@@ -530,7 +549,8 @@ ${featureCode("declarations")}vec3 illuminate(vec3 normal, vec3 viewDirection, v
 ${featureCode("illuminateReflectance")}  vec3 reflectance = fresnel(max(dot(halfway, viewDirection), 0.0), baseReflectance);
   vec3 specular = distribution * geometry * reflectance / visibilityDenominator;
   specular *= directSpecularGain;
-${featureCode("illuminateSpecular")}  vec3 diffuse = (1.0 - reflectance) * (1.0 - metallic) * color / PI;
+${featureCode("illuminateSpecular")}  if (USES_ALPHA_MODE) blendSpecular += specular * radiance * normalLight;
+  vec3 diffuse = (1.0 - reflectance) * (1.0 - metallic) * color / PI;
   return (diffuse + specular) * radiance * normalLight;
 }
 
@@ -538,6 +558,10 @@ vec3 toneMap(vec3 color) {
   return clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);
 }
 
+vec3 displayRadiance(vec3 radiance) {
+  return hdrEnabled > 0.5 ? clamp(radiance * exposure, vec3(0), vec3(65504.0)) : pow(toneMap(radiance * exposure), vec3(1.0 / 2.2));
+}
+${blendOutputGlsl}
 // Box projection: three texture lookups along the object axes, blended by the normal, so a surface needs no UVs.
 // Swapping two axes makes the texture's V direction, and with it a grain, run along the chosen axis.
 vec3 boxAxisSwap(vec3 value) {
@@ -713,6 +737,9 @@ vec3 renderPassValue(vec3 color, vec3 normal, vec3 emission) {
 }
 
 void main() {
+#ifdef SHADOW_IN_FRAGMENT
+  shadowPosition = lightProjection * vec4(worldPosition, 1.0);
+#endif
   vec3 normal = normalize(worldNormal);
   // Foliage and grass cards are single-sided geometry whose shading normal already leans toward the
   // canopy, so the back face keeps it instead of flipping to point into the crown.
@@ -738,7 +765,8 @@ ${featureCode("emissionHook")}  if (USES_RENDER_PASS) {
   }
   if (TAG_UNLIT) {
     vec3 radiance = color * exposure + emission;
-    outputColor = vec4(hdrEnabled > 0.5 ? radiance : pow(max(radiance, vec3(0)), vec3(1.0 / 2.2)), alpha);
+    vec3 unlitColor = hdrEnabled > 0.5 ? radiance : pow(max(radiance, vec3(0)), vec3(1.0 / 2.2));
+    outputColor = blendedOutput(unlitColor, unlitColor, alpha);
     return;
   }
   float metallic = surface.x;
@@ -872,10 +900,13 @@ ${featureCode("areaRadiance")}      radiance += illuminate(normal, viewDirection
   vec3 reflected = reflect(-viewDirection, specularNormal);
 ${featureCode("probeReflection")}${featureCode("irradianceGridOcclusion")}  if (ENVIRONMENT_ENABLED) {
     radiance += environmentLighting(normal, specularNormal, baseReflectance, viewDirection, reflected, color, metallic, roughness, occlusion, ambientIntensity, skyReflection);
+    if (USES_ALPHA_MODE) blendSpecular += environmentLighting(normal, specularNormal, baseReflectance, viewDirection, reflected, vec3(0.0), metallic, roughness, occlusion, ambientIntensity, skyReflection);
   } else {
     // Outdoors the surroundings are sky and haze; reflecting the studio softboxes there lit grazing leaves white and cyan.
     vec3 surroundings = worldMode > 0.5 ? mix(fogColor * 0.8, vec3(0.20, 0.38, 0.52) * 1.6, smoothstep(-0.15, 0.7, reflected.y)) : studio(reflected, roughness);
-${featureCode("probeSurroundings")}    radiance += surroundings * reflectance * skyReflection * (1.0 - roughness * 0.55) * mix(1.0, 0.5 * daylight, worldMode) * occlusion * ambientIntensity;
+${featureCode("probeSurroundings")}    vec3 surroundingsSpecular = surroundings * reflectance * skyReflection * (1.0 - roughness * 0.55) * mix(1.0, 0.5 * daylight, worldMode) * occlusion * ambientIntensity;
+    radiance += surroundingsSpecular;
+    if (USES_ALPHA_MODE) blendSpecular += surroundingsSpecular;
     radiance += color * (1.0 - metallic) * mix(vec3(0.16, 0.20, 0.22), vec3(0.19, 0.25, 0.30) * max(daylight, 0.08), worldMode) * (0.45 + 0.55 * max(normal.y, 0.0)) * occlusion * ambientIntensity;
   }
   // Baked bounced light arrives as irradiance, so the surface colour (pattern and texture included) tints it here.
@@ -895,7 +926,9 @@ ${featureCode("worldFinal")}  float fog = 1.0 - exp(-length(worldPosition - eye)
   // Additive light fades to black through fog; mixing it toward the fog colour would add a glow of fog.
   radiance = alphaMode > 2.5 ? radiance * (1.0 - fog * worldMode) : mix(radiance, fogColor, fog * worldMode);
   if (inspection > 0.5) radiance = normal * 0.5 + 0.5;
-  outputColor = vec4(hdrEnabled > 0.5 ? clamp(radiance * exposure, vec3(0), vec3(65504.0)) : pow(toneMap(radiance * exposure), vec3(1.0 / 2.2)), alpha);
+  vec3 displayedColor = displayRadiance(radiance);
+  vec3 displayedDiffuse = USES_ALPHA_MODE ? displayRadiance(max(radiance - blendSpecular, vec3(0.0))) : displayedColor;
+  outputColor = blendedOutput(displayedColor, displayedDiffuse, alpha);
   if (TAG_FLOOR && inspection < 0.5) {
     float distanceFade = exp(-length(worldPosition.xz) * 0.08);
     float contact = 1.0 - 0.1 * exp(-dot(worldPosition.xz, worldPosition.xz) * 1.4);
@@ -998,7 +1031,7 @@ export function liquidPassDrawer() {
 
 function hasSeparateCode(feature) {
   if (feature in MODULE_FEATURES) return true;
-  if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE) return false;
+  if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE || feature === FRAGMENT_SHADOW_POSITION_FEATURE) return false;
   return !ENVIRONMENT_FEATURES.includes(feature) && !VERTEX_ONLY_FEATURES.includes(feature);
 }
 
@@ -1019,7 +1052,7 @@ export const SHADER_FEATURES = Object.freeze([...Object.keys(SHADER_FEATURE_COND
 // choice between them whether or not the uniform picks it, so a renderer without those parts compiles them out.
 // The varyings that both shaders carry: per-vertex colours, and the per-instance values that a draw of one instance sets as uniforms.
 function interpolantDefines(enabled) {
-  return [['vertexColors', 'VERTEX_COLORS'], ['surfaceWear', 'SURFACE_WEAR'], ['instanced', 'INSTANCED']].filter(([feature]) => enabled.has(feature)).map(([, macro]) => `#define ${macro}`);
+  return [['vertexColors', 'VERTEX_COLORS'], ['surfaceWear', 'SURFACE_WEAR'], ['instanced', 'INSTANCED'], [FRAGMENT_SHADOW_POSITION_FEATURE, 'SHADOW_IN_FRAGMENT']].filter(([feature]) => enabled.has(feature)).map(([, macro]) => `#define ${macro}`);
 }
 
 function vertexDefinitions(enabled) {

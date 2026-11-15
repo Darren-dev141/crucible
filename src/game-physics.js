@@ -38,6 +38,7 @@ export async function createGamePhysics({ recipe, scene, playerNode, physicsUrl 
   let system = await createSystem();
   let rebuilding = Promise.resolve();
   let disposed = false;
+  let failure = null;
   const bodies = new Map(recipe.physics.bodies.map(body => [body.node, body]));
   const sentPoses = new Map();
 
@@ -45,10 +46,15 @@ export async function createGamePhysics({ recipe, scene, playerNode, physicsUrl 
     get system() {
       return system;
     },
+    /** The error of the last restart that could not rebuild the world, or null while the world runs. */
+    get failure() {
+      return failure;
+    },
     bodies,
     playerIsBody: bodies.get(playerNode)?.type === 'kinematic',
     /** Drive the kinematic player body to the controller position, then step the world once. */
     fixedUpdate(stepSeconds, context, playerPosition, playerYaw) {
+      if (failure) throw new Error(`The physics world could not be rebuilt on restart, so the game has no physics: ${failure.message}. Fix the physics section and call restart() again.`);
       if (!system) return;
       if (playerPosition) {
         system.setKinematicPose(playerNode, {
@@ -85,6 +91,7 @@ export async function createGamePhysics({ recipe, scene, playerNode, physicsUrl 
       // A failed rebuild must not block the next restart, so each one starts after the earlier one settles, whichever way.
       rebuilding = rebuilding.catch(() => {}).then(async () => {
         const next = await createSystem().catch(error => {
+          failure = error;
           console.error(`The physics world could not be rebuilt on restart: ${error.message}`);
           throw error;
         });
@@ -93,6 +100,7 @@ export async function createGamePhysics({ recipe, scene, playerNode, physicsUrl 
           // A second restart may have queued behind the first, which already installed a world.
           system?.dispose();
           system = next;
+          failure = null;
         }
       });
       return rebuilding;

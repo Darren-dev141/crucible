@@ -62,6 +62,21 @@ test('sensor events report a body entering and leaving a trigger', async () => {
   physics.dispose();
 });
 
+test('a listener that disposes the system stops the listeners after it from running on the freed world', async () => {
+  const physics = await createPhysicsSystem(worldDefinition());
+  const heard = [];
+  physics.on('contact', () => {
+    heard.push('first');
+    physics.dispose();
+  });
+  physics.on('contact', () => {
+    heard.push('second');
+    physics.getPose('box');
+  });
+  for (let step = 0; step < 120 && heard.length === 0; step++) physics.fixedUpdate(STEP, { mode: 'fixed' });
+  assert.deepEqual(heard, ['first']);
+});
+
 test('a kinematic body follows setKinematicPose and carries the world', async () => {
   const physics = await createPhysicsSystem(worldDefinition());
   physics.setKinematicPose('platform', { translation: [-4, 3, 0] });
@@ -252,4 +267,14 @@ test('a huge impulse never writes a bad pose into a bound part', async () => {
 test('the rapier adapter is frozen and named', () => {
   assert.equal(rapierAdapter.name, 'rapier');
   assert.ok(Object.isFrozen(rapierAdapter));
+});
+
+test('a NaN step and null query options throw errors that say what to pass', async () => {
+  const physics = await createPhysicsSystem(worldDefinition());
+  assert.throws(() => physics.fixedUpdate(Number.NaN, { mode: 'fixed' }), /fixed step must be a finite number.*Pass 0\.016/);
+  assert.equal(physics.stepCount, 0);
+  assert.throws(() => physics.raycast([0, 5, 0], [0, -1, 0], null), /query options value must be an object/);
+  assert.throws(() => physics.shapeCast({ type: 'ball', radius: 0.5 }, [0, 5, 0], [0, -1, 0], null), /query options value must be an object/);
+  assert.throws(() => physics.overlap({ type: 'ball', radius: 0.5 }, [0, 1, 0], null), /query options value must be an object/);
+  physics.dispose();
 });

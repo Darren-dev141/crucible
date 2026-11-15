@@ -105,7 +105,7 @@ test('the edited crate unwraps into flat panels and renders with uvs', () => {
   assert.ok(report.islands > 6);
   assert.ok(report.areaDistortion < 1e-3);
   assert.ok(report.utilization > 0.3 && report.utilization <= 1);
-  const { geometry } = extractRender(mesh, { sharpAngle: 30 });
+  const { geometry } = extractRender(mesh, { sharpAngle: 30 * Math.PI / 180 });
   assert.equal(geometry.uvs.length, geometry.positions.length / 3 * 2);
 });
 

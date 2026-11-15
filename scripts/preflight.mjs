@@ -10,6 +10,7 @@ import { createWriteStream, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { RELEASE_FIX, readReleaseProblem } from './check-release-changelog.mjs';
+import { isFragmentName } from './changelog-fragments.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const logFolder = join(root, 'artifacts', 'preflight');
@@ -37,8 +38,11 @@ const MANUAL_CHECKS = Object.freeze([
   { pattern: /^src\/(renderer|frame|render)/, command: 'npm run benchmark:runtime', reason: 'the frame path' },
 ]);
 
+// The same rule the fold uses, so a note this gate accepts is a note changes:fold writes into CHANGELOG.md.
+// A note in a subfolder of changes/ or named readme.md passes a looser check and is then skipped by the fold.
 function isNewChangeNote(path) {
-  return path.startsWith('changes/') && path.endsWith('.md') && path !== 'changes/README.md';
+  const [folder, name, ...deeper] = path.split('/');
+  return folder === 'changes' && name !== undefined && deeper.length === 0 && isFragmentName(name);
 }
 
 const RELEASE_SKIP_REASON = 'a release: the version changed, so the notes are folded and the budgets reset (CONTRIBUTING.md#release)';
@@ -51,9 +55,12 @@ export function isVersionBump(basePackageText, headPackageText) {
 
 // Decides which checks apply to a list of changed paths. Pure, so tests can call it without git.
 // `baseRef` is the ref size and tool cost compare with; `releaseProblem` is what check-release-changelog.mjs found on a release.
-export function planChecks(changedPaths, { skipTests = false, release = false, baseRef = null, releaseProblem = null } = {}) {
+// `addedPaths` are the changed paths this branch adds. Only an added note is this pull request's note: a deleted note, or an
+// edit of a note another pull request added, is a change to something else. Without it every changed path counts as added.
+export function planChecks(changedPaths, { skipTests = false, release = false, baseRef = null, releaseProblem = null, addedPaths = null } = {}) {
   const baseArguments = baseRef ? ['--', '--base', baseRef] : [];
   const paths = changedPaths.map(path => path.replace(/\\/g, '/'));
+  const addedNotePaths = (addedPaths ?? changedPaths).map(path => path.replace(/\\/g, '/'));
   const changesShippedCode = paths.some(path => shippedCodePattern.test(path));
   const changesToolCode = paths.some(path => toolCodePattern.test(path));
   const checks = [];
@@ -76,7 +83,7 @@ export function planChecks(changedPaths, { skipTests = false, release = false, b
   });
 
   const needsNote = !release && paths.some(path => userFacingPattern.test(path));
-  const hasNote = paths.some(path => isNewChangeNote(path) && !path.endsWith('.size.md'));
+  const hasNote = addedNotePaths.some(path => isNewChangeNote(path) && !path.endsWith('.size.md'));
   let noteSkipReason = needsNote ? null : 'no change under src/, bin/, packages/ or skills/';
   if (release) noteSkipReason = RELEASE_SKIP_REASON;
   checks.push({
@@ -177,6 +184,15 @@ export function changedPathsSince(baseRef, folder = root) {
   return [...new Set(lines)].sort();
 }
 
+// The paths the branch adds (committed, staged or untracked), for the change note check.
+export function addedPathsSince(baseRef, folder = root) {
+  const mergeBase = git(['merge-base', baseRef, 'HEAD'], folder) ?? baseRef;
+  const committedAndStaged = git(['diff', '--name-only', '--no-renames', '--diff-filter=A', mergeBase], folder) ?? '';
+  const untracked = git(['ls-files', '--others', '--exclude-standard'], folder) ?? '';
+  const lines = `${committedAndStaged}\n${untracked}`.split('\n').filter(Boolean);
+  return [...new Set(lines)].sort();
+}
+
 function logPathFor(check) {
   return join(logFolder, `${check.name.replace(/\W+/g, '-')}.log`);
 }
@@ -257,7 +273,7 @@ export async function planFromArguments(args, baseRef, folder = root) {
   const changedPaths = changedPathsSince(baseRef, folder);
   const release = isVersionBump(git(['show', `${baseRef}:package.json`], folder), readFileSync(join(folder, 'package.json'), 'utf8'));
   const releaseProblem = release ? await readReleaseProblem(folder) : null;
-  const checks = planChecks(changedPaths, { skipTests: args.includes('--skip-tests'), release, baseRef, releaseProblem });
+  const checks = planChecks(changedPaths, { skipTests: args.includes('--skip-tests'), release, baseRef, releaseProblem, addedPaths: addedPathsSince(baseRef, folder) });
   return { changedPaths, checks };
 }
 

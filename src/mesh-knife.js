@@ -177,7 +177,10 @@ function splitFace(mesh, polygon, outline, events, context) {
       const first = part.vertices.indexOf(from.vertex);
       const last = part.vertices.indexOf(to.vertex);
       if (first < 0 || last < 0) return [part];
-      return splitPolygon(part, first, last, inner, part.sourceCorners[first]).map(piece => ({ ...piece, tags: [...polygon.tags, `${name}.cut`] }));
+      const pieces = splitPolygon(part, first, last, inner, part.sourceCorners[first]);
+      // A stretch that runs along an existing edge leaves a two-corner piece; the face is already split there.
+      if (pieces.some(piece => piece.vertices.length < 3)) return [part];
+      return pieces.map(piece => ({ ...piece, tags: [...polygon.tags, `${name}.cut`] }));
     });
   }
   return parts;

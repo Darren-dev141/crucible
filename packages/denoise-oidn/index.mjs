@@ -56,6 +56,23 @@ export function decodePfm(bytes, width, height) {
   return pixels;
 }
 
+const IMAGE_NAMES = ['color', 'albedo', 'normal'];
+
+// A short buffer would be padded with zeros by encodePfm and denoised as if it were a real image.
+function checkDenoiseInput(label, { width, height, color, albedo, normal }) {
+  for (const [name, size] of [['width', width], ['height', height]]) {
+    if (!Number.isInteger(size) || size < 1) throw new TypeError(`${label}: ${name} must be a whole number of pixels, at least 1, not ${size}. Pass the size of the images.`);
+  }
+  const images = { color, albedo, normal };
+  for (const name of IMAGE_NAMES) {
+    const image = images[name];
+    if (!(image instanceof Float32Array)) throw new TypeError(`${label}: ${name} must be a Float32Array of width * height * 3 floats. Pass the ${name} image the path tracer wrote.`);
+    if (image.length !== width * height * 3) {
+      throw new RangeError(`${label}: ${name} holds ${image.length} floats, but ${width} x ${height} pixels need ${width * height * 3}. Pass width and height that match the buffers.`);
+    }
+  }
+}
+
 function runTool(binary, toolArguments) {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, toolArguments, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
@@ -73,6 +90,7 @@ function runTool(binary, toolArguments) {
  * `oidnDenoise --device` takes. Rejects when the tool is missing, so a caller can fall back.
  */
 export async function denoiseWithOidn({ width, height, color, albedo, normal, device = 'cpu', quality = 'high', threads = 0, cleanAux = false }) {
+  checkDenoiseInput('denoiseWithOidn', { width, height, color, albedo, normal });
   const binary = findOidnBinary();
   if (!binary) throw new Error('The oidnDenoise tool is not installed: run `npm run fetch` in the denoise package, or set OIDN_DENOISE_PATH.');
   const directory = await mkdtemp(join(tmpdir(), 'crucible-oidn-'));
@@ -149,6 +167,7 @@ export function createOidnDenoiser({ createNative, device = 'cpu', quality = 'hi
     deviceSeconds: native.deviceSeconds,
     get lastTimings() { return lastTimings; },
     async denoise({ width, height, color, albedo, normal }) {
+      checkDenoiseInput('createOidnDenoiser().denoise', { width, height, color, albedo, normal });
       const result = native.denoise({ width, height, color, albedo, normal });
       const { color: denoised, ...timings } = result;
       lastTimings = timings;

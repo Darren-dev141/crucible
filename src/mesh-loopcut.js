@@ -1,6 +1,9 @@
 import { editMesh } from './mesh-edit.js';
 import { MeshBuilder } from './mesh-stack.js';
 import { selectEdges, edgeFaces } from './mesh-bevel.js';
+import { requireFiniteInRange } from './modeling-limits.js';
+
+export const MAX_LOOP_CUTS = 16;
 
 // Loop cut, as Blender's: an edge ring is walked across quads (from an edge to the opposite edge of each quad), every
 // ring edge is split into cuts + 1 pieces, and each quad of the ring is split into bands between the new points.
@@ -69,6 +72,7 @@ function edgeRings(edit, seeds, positionOf) {
  * `<name>.band-0` (low side) to `<name>.band-<cuts>`; they keep the face's other tags.
  */
 export function loopCut(mesh, edgeRule, { cuts = 1, factor = 0.5, name = 'loop' } = {}) {
+  requireFiniteInRange('loopCut', 'cuts', cuts, 1, MAX_LOOP_CUTS, true);
   const table = edgeFaces(mesh);
   const seeds = [];
   selectEdges(mesh, edgeRule, table).forEach((selected, edge) => {
@@ -83,7 +87,7 @@ export function loopCut(mesh, edgeRule, { cuts = 1, factor = 0.5, name = 'loop' 
 
   const builder = new MeshBuilder(mesh);
   const vertexPoint = new Uint32Array(mesh.vertexCount);
-  for (let vertex = 0; vertex < mesh.vertexCount; vertex++) vertexPoint[vertex] = builder.addVertex(...positionOf(vertex));
+  for (let vertex = 0; vertex < mesh.vertexCount; vertex++) vertexPoint[vertex] = builder.addVertex(...positionOf(vertex), vertex);
   // New points on each split edge, ordered from its low vertex.
   const edgePoints = new Map();
   const lowOfEdge = new Map();
@@ -92,7 +96,8 @@ export function loopCut(mesh, edgeRule, { cuts = 1, factor = 0.5, name = 'loop' 
       const high = edit.edgeOtherVertex(edge, low);
       const start = positionOf(low);
       const end = positionOf(high);
-      edgePoints.set(edge, fractions.map(t => builder.addVertex(...[0, 1, 2].map(axis => start[axis] + (end[axis] - start[axis]) * t))));
+      // Point attributes blend by the same fraction; integer and boolean values take the low end.
+      edgePoints.set(edge, fractions.map(t => builder.addVertex(...[0, 1, 2].map(axis => start[axis] + (end[axis] - start[axis]) * t), { from: low, to: high, t })));
       lowOfEdge.set(edge, low);
     }
   }

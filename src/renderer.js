@@ -1,7 +1,8 @@
 import { resolveBackground, clearColourFor } from './clear-colour.js';
 import { materialTags } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
-import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
+import { BLEND_FACTORS } from './blend-output.js';
+import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
 import { postFragment, createPostFragment, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
 import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
@@ -382,6 +383,11 @@ function isCullable(parts) {
   if (DEFORMING_TAGS.has(first.material.tag) && !SWAYING_TAGS.has(first.material.tag)) return false;
   if (renderPass(first.material) !== 'opaque' || isTranslucentMode(materialAlphaState(first.material)[0])) return false;
   return parts.every(part => !part.assembly || part.crowd);
+}
+
+/** Whether a part may take `lods`: rigid or swaying and opaque, without assembly motion (the parts that culling can choose levels for). */
+export function partTakesLods(part) {
+  return isCullable([part]);
 }
 
 function validateLods(part, levels) {
@@ -868,6 +874,7 @@ export class CrucibleRenderer {
     this.shaderFeatures.add(environment.map ? 'environmentMap' : 'studioLighting');
     shaderFeaturesOfLighting(this.lighting).forEach(feature => this.shaderFeatures.add(feature));
     if (shading === 'light') this.shaderFeatures.add(LIGHT_SHADING_FEATURE);
+    this.shaderFeatures.add(FRAGMENT_SHADOW_POSITION_FEATURE);
     if (shadowCascades) this.shaderFeatures.add(shadowCascades.shaderFeature);
     // Cascades replace the single map the tint is cut against, and the tint map is a half float render target.
     if (this.shaderFeatures.has('tintedShadows') && (shadowCascades || !this.context.getExtension('EXT_color_buffer_float'))) this.shaderFeatures.delete('tintedShadows');
@@ -2542,7 +2549,8 @@ export class CrucibleRenderer {
       if (this.hasOpaqueInstance(batch)) this.drawAlphaBatch({ ...batch, alphaMode: 'mask', alphaCutoff: 0.999 }, true);
     }
     context.enable(context.BLEND);
-    context.blendFuncSeparate(context.SRC_ALPHA, context.ONE_MINUS_SRC_ALPHA, context.ONE, context.ONE_MINUS_SRC_ALPHA);
+    // The program writes a blended part premultiplied, so its specular is not faded by alpha (blend-output.js).
+    context.blendFuncSeparate(context[BLEND_FACTORS.sourceColor], context[BLEND_FACTORS.destinationColor], context[BLEND_FACTORS.sourceAlpha], context[BLEND_FACTORS.destinationAlpha]);
     context.depthMask(false);
     for (const { batch } of ordered) {
       this.uploadSortedInstances(batch, eye);

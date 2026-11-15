@@ -8,6 +8,9 @@ import { flushOrderOf } from './depth-layer.js';
 // vertex may be shared by triangles of different ranks.
 const RANK_STEP = 1e-4;
 const RANK_RELATIVE_STEP = 2 ** -19;
+// Every per-vertex array that rides along with the positions, and its numbers per vertex. A copied vertex needs all of them,
+// or an array is left shorter than the positions and whatever reads it next (box projection, validation) gets NaN (#1504).
+const PER_VERTEX_WIDTHS = { normals: 3, uvs: 2, lightUvs: 2, colors: 3, skyVisibility: 1, surfaceMasks: 1 };
 
 /** The rank of every triangle of the geometry a part is traced with (see `traceGeometryOf`), or null when none is above zero. */
 function ranksOfTracedGeometry(order) {
@@ -48,8 +51,8 @@ export function liftRankedTriangles(part, geometry) {
   const liftedTriangles = ranks.reduce((count, rank) => count + (rank > 0 ? 1 : 0), 0);
   const copied = { positions: new Float32Array((vertexCount + liftedTriangles * 3) * 3), indices: Uint32Array.from(indices) };
   copied.positions.set(positions);
-  const optional = ['normals', 'uvs', 'colors'].filter(name => geometry[name]);
-  const widths = { normals: 3, uvs: 2, colors: 3 };
+  const optional = Object.keys(PER_VERTEX_WIDTHS).filter(name => geometry[name]);
+  const widths = PER_VERTEX_WIDTHS;
   for (const name of optional) {
     copied[name] = new Float32Array((vertexCount + liftedTriangles * 3) * widths[name]);
     copied[name].set(geometry[name]);

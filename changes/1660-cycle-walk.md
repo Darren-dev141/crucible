@@ -1,0 +1,1 @@
+- A game setup whose nodes form a parent cycle no longer spends about 10 seconds growing the character descendant list until it runs out of array length (#1660)

@@ -1,0 +1,1 @@
+- `createClutter` refuses a seed that is not a finite number, as grass and terrain already do, instead of scattering one fixed layout or joining a string seed into its hashes (#1652).
