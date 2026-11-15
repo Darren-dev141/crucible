@@ -46,3 +46,22 @@ test('a sparse accessor without indices or values fails by name, not with a prop
   assert.throws(() => readSparse({ count: 1, values }), /Invalid glTF sparse.*indices, values/);
   assert.throws(() => readSparse({ count: 1, indices }), /Invalid glTF sparse.*indices, values/);
 });
+
+// The glTF spec asks for strictly increasing sparse indices, but files in the wild break it. three.js writes the
+// values in file order, so a repeated index keeps its last value; the reader must do the same.
+test('repeated or decreasing sparse indices apply in file order, so the last write wins as in three.js', () => {
+  const baseBytes = new Uint8Array(new Float32Array([1, 2, 3, 4]).buffer);
+  const sparseValueBytes = new Uint8Array(new Float32Array([10, 20, 30]).buffer);
+  const sparseIndexBytes = new Uint8Array(new Uint16Array([2, 0, 2]).buffer);
+  const bytes = new Uint8Array([...baseBytes, ...sparseValueBytes, ...sparseIndexBytes]);
+  const document = {
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: baseBytes.length },
+      { buffer: 0, byteOffset: baseBytes.length, byteLength: sparseValueBytes.length },
+      { buffer: 0, byteOffset: baseBytes.length + sparseValueBytes.length, byteLength: sparseIndexBytes.length },
+    ],
+    accessors: [{ bufferView: 0, componentType: FLOAT_TYPE, type: 'SCALAR', count: ACCESSOR_COUNT,
+      sparse: { count: 3, indices: { bufferView: 2, componentType: UNSIGNED_SHORT_TYPE }, values: { bufferView: 1 } } }],
+  };
+  assert.deepEqual([...createAccessorReader(document, () => bytes).readAccessor(0).array], [20, 2, 30, 4]);
+});
