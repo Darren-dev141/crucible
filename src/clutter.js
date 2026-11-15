@@ -92,7 +92,7 @@ function planTileItems(tile, settings) {
       const acceptRoll = random();
       const keepRoll = random();
       const shapeRolls = [random(), random(), random(), random(), random(), random()];
-      const coverage = settings.mask ? clamp(settings.mask(x, z), 0, 1) : 1;
+      const coverage = settings.mask ? clamp(settings.mask(x, z), 0, 1) || 0 : 1; // a NaN mask value means no coverage, not full
       if (acceptRoll * 2 >= clumpWeight(x, z, settings, 131 + kindIndex * 17) * coverage) continue;
       const keepKey = kind === 'rocks' ? keepRoll * ROCK_KEY_LIMIT : lerp(ROCK_KEY_LIMIT, 1, keepRoll);
       items.push({ kind, x, z, keepKey, shapeRolls });
