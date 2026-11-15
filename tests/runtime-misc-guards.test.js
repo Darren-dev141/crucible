@@ -3,7 +3,7 @@ import test from 'node:test';
 import { triangulate } from '../src/triangulate.js';
 import { createStreaming } from '../src/streaming.js';
 import { createInput } from '../src/input.js';
-import { crowdFrameBlend } from '../src/crowd-skinning.js';
+import { crowdFrameBlend, createCrowdParts } from '../src/crowd-skinning.js';
 
 test('triangulate rejects an empty contour with a named error and keeps two points empty', () => {
   assert.deepEqual(triangulate([[0, 0], [1, 0]], []), []);
@@ -34,7 +34,20 @@ test('input unregisterSource still removes the source when its dispose throws', 
   assert.deepEqual(input.sources, []);
 });
 
-test('crowdFrameBlend rejects non-finite seconds', () => {
+test('crowdFrameBlend never throws and maps non-finite seconds to the first frame', () => {
   const palette = { frameCount: 10, frameStep: 0.1, duration: 0.9, jointCount: 4, loop: true };
-  for (const seconds of [Number.NaN, Infinity]) assert.throws(() => crowdFrameBlend(palette, seconds), /seconds must be a finite/);
+  for (const loop of [true, false]) {
+    for (const seconds of [Number.NaN, Infinity]) {
+      assert.deepEqual([...crowdFrameBlend({ ...palette, loop }, seconds)], [0, 16, 0]);
+    }
+  }
+});
+
+test('crowd setTimes refuses non-finite seconds and names the instance', () => {
+  const geometry = { positions: new Float32Array(9), indices: new Uint32Array([0, 1, 2]) };
+  const rig = { parts: [{ geometry, material: {} }], jointCount: 1 };
+  const palette = { frameCount: 2, frameStep: 0.5, duration: 1, jointCount: 1, loop: true, data: new Float32Array(32) };
+  const instances = [{ matrix: new Float32Array(16) }, { matrix: new Float32Array(16) }];
+  const crowd = createCrowdParts({ rig, palette, instances, lods: false });
+  assert.throws(() => crowd.setTimes([0, Number.NaN]), /setTimes instance 1 needs finite seconds/);
 });
