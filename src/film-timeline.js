@@ -9,6 +9,9 @@ export const FILM_TIMELINE_LIMITS = Object.freeze({
 const SHOT_NAME_PATTERN = /^[A-Za-z0-9_-]{1,24}$/;
 // A running sum of shot lengths can overshoot the motion by float rounding, as agent-motion-bake.js allows.
 const MOTION_END_TOLERANCE = 1e-9;
+// A frame time such as 9 / 30 = 0.3 can sit a hair below the running sum 0.1 + 0.2; it still belongs to the later shot, as
+// videoFrameCount counts it.
+const SHOT_BOUNDARY_TOLERANCE = 1e-9;
 const SHOT_FIELDS = ['name', 'duration', 'motionStart', 'camera', 'dip', 'focusDistance', 'blur'];
 const MAX_FOCUS_DISTANCE = 100000;
 
@@ -147,13 +150,13 @@ export function sampleFilmTimeline(timeline, recipe, time) {
   }
   let index = starts.length - 1;
   for (let candidate = 0; candidate < starts.length; candidate++) {
-    if (time < starts[candidate].start + starts[candidate].duration) {
+    if (time < starts[candidate].start + starts[candidate].duration - SHOT_BOUNDARY_TOLERANCE) {
       index = candidate;
       break;
     }
   }
   const shot = timeline.shots[index];
-  const shotTime = time - starts[index].start;
+  const shotTime = Math.max(0, time - starts[index].start);
   const motionTime = hasAnimatedScene(recipe) ? (shot.motionStart ?? starts[index].start) + shotTime : null;
   return {
     shotIndex: index, shotName: shot.name, shotTime, motionTime,

@@ -70,3 +70,17 @@ test('the object reflection cache is kept for an unchanged stage and replaced wh
   assert.notEqual(moved, first);
   assert.equal(stageObjectReflections(moved, staged, sourceParts, sourceParts, graph, null), moved);
 });
+
+test('the object reflection cache is replaced when only the physical sky changes', async () => {
+  const { stageObjectReflections } = await import('../src/agent-reflections.js');
+  const scene = createAgentScene(stillLife(0.05, { sky: { type: 'physical', sunElevation: 30 } }));
+  const recipe = scene.exportRecipe();
+  const sourceParts = scene.parts.map(part => ({ name: part.name, geometry: part.geometry, material: plainMaterial(part.material), matrix: Float32Array.from(part.matrix) }));
+  const worldMatrices = new Map(sourceParts.map(part => [part.name, part.matrix]));
+  const graph = { getNode: name => ({ worldMatrix: worldMatrices.get(name) }) };
+  const withSky = sky => ({ ...recipe, environment: { keyColor: [1, 1, 1], pointLights: [], spotLights: [], areaLights: [], ...recipe.environment, sky } });
+  const first = stageObjectReflections(null, withSky(recipe.environment.sky), sourceParts, sourceParts, graph, null);
+  assert.equal(stageObjectReflections(first, withSky({ ...recipe.environment.sky }), sourceParts, sourceParts, graph, null), first);
+  const withoutSunDisc = stageObjectReflections(first, withSky({ ...recipe.environment.sky, sunDisc: false }), sourceParts, sourceParts, graph, null);
+  assert.notEqual(withoutSunDisc, first);
+});

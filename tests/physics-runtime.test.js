@@ -253,3 +253,13 @@ test('the rapier adapter is frozen and named', () => {
   assert.equal(rapierAdapter.name, 'rapier');
   assert.ok(Object.isFrozen(rapierAdapter));
 });
+
+test('a NaN step and null query options throw errors that say what to pass', async () => {
+  const physics = await createPhysicsSystem(worldDefinition());
+  assert.throws(() => physics.fixedUpdate(Number.NaN, { mode: 'fixed' }), /fixed step must be a finite number.*Pass 0\.016/);
+  assert.equal(physics.stepCount, 0);
+  assert.throws(() => physics.raycast([0, 5, 0], [0, -1, 0], null), /query options value must be an object/);
+  assert.throws(() => physics.shapeCast({ type: 'ball', radius: 0.5 }, [0, 5, 0], [0, -1, 0], null), /query options value must be an object/);
+  assert.throws(() => physics.overlap({ type: 'ball', radius: 0.5 }, [0, 1, 0], null), /query options value must be an object/);
+  physics.dispose();
+});

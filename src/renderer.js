@@ -385,6 +385,11 @@ function isCullable(parts) {
   return parts.every(part => !part.assembly || part.crowd);
 }
 
+/** Whether a part may take `lods`: rigid or swaying and opaque, without assembly motion (the parts that culling can choose levels for). */
+export function partTakesLods(part) {
+  return isCullable([part]);
+}
+
 function validateLods(part, levels) {
   if (!Array.isArray(levels) || levels.length < 2 || levels[0].geometry !== part.geometry) {
     throw new TypeError(`lods must list level 0 (the own geometry of the part) and at least one coarser level: ${part.name}`);

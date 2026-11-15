@@ -64,6 +64,20 @@ export async function withWebGpuPage(testContext, body, options = {}) {
       skipOrThrow(testContext, 'Chrome has no WebGPU adapter');
       return;
     }
+    if (options.hardwareOnly) {
+      // WEBGPU_TEST_SOFTWARE_ONLY=1 forces the skip, to check the gate on a machine with a real adapter.
+      // The CI runners expose a software adapter (SwiftShader) that is far too slow for a CPU-against-GPU comparison, so such a check runs on real hardware only.
+      const description = await page.evaluate(async () => {
+        const found = await navigator.gpu.requestAdapter();
+        const info = found.info ?? {};
+        const software = Boolean(found.isFallbackAdapter || info.isFallbackAdapter);
+        return { software, text: [info.vendor, info.architecture, info.device, info.description].join(' ') };
+      });
+      if (description.software || /swiftshader|llvmpipe|software|lavapipe/i.test(description.text) || process.env.WEBGPU_TEST_SOFTWARE_ONLY === '1') {
+        testContext.skip(`the WebGPU adapter is software (${description.text.trim()}) and too slow for this comparison`);
+        return;
+      }
+    }
     await body(page);
   } finally {
     await browser?.close();

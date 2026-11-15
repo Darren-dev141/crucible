@@ -102,7 +102,9 @@ test('the catalog limits are the documented values and never exceed the loadGltf
     maxTexturePixels: 4_194_304, maxJoints: 1024, maxClips: 256,
   });
   const defaults = GLTF_CAPABILITIES.limits;
-  for (const [name, value] of Object.entries(agentAssetDecodeOptions())) {
+  const { allowExternalResources, ...decodeLimits } = agentAssetDecodeOptions();
+  assert.equal(allowExternalResources, false);
+  for (const [name, value] of Object.entries(decodeLimits)) {
     assert.ok(value <= defaults[name], `${name} ${value} is above the loadGltf default ${defaults[name]}`);
     assert.equal(value, AGENT_ASSET_LIMITS[name]);
   }

@@ -8,8 +8,24 @@ import { SUBSURFACE_WALK_STEPS } from './path-tracer-subsurface.js';
 // albedo and the longest distance. The subsurface table (two vectors per material) follows the material table in the
 // materials buffer; params.seedAndAtlas.z is the vector index where it starts.
 
+/** The Henyey-Greenstein phase function and its sampler, shared by fog and local volumes. */
+export const PHASE_FUNCTIONS = /* wgsl */ `
+fn henyeyGreensteinPhase(anisotropy: f32, cosine: f32) -> f32 {
+  let squared = anisotropy * anisotropy;
+  return (1.0 - squared) / (4.0 * PI * pow(1.0 + squared - 2.0 * anisotropy * cosine, 1.5));
+}
+
+fn sampleHenyeyGreensteinCosine(anisotropy: f32, unit: f32) -> f32 {
+  if (abs(anisotropy) < 1e-3) { return 1.0 - 2.0 * unit; }
+  let squared = anisotropy * anisotropy;
+  let ratio = (1.0 - squared) / (1.0 - anisotropy + 2.0 * anisotropy * unit);
+  return clamp((1.0 + squared - ratio * ratio) / (2.0 * anisotropy), -1.0, 1.0);
+}
+
+`;
+
 /** The fog functions that the shared part of the kernel calls from addDirect. */
-export const VOLUME_FUNCTIONS = /* wgsl */ `
+export const VOLUME_FUNCTIONS = PHASE_FUNCTIONS + /* wgsl */ `
 var<private> volumeSpan: vec2<f32>;
 
 fn clipAxis(origin: f32, axisDirection: f32, minimum: f32, maximum: f32, span: ptr<function, vec2<f32>>) -> bool {
@@ -31,18 +47,6 @@ fn volumeInterval(origin: vec3<f32>, rayDirection: vec3<f32>, limit: f32) -> boo
   if (!(span.x < span.y)) { return false; }
   volumeSpan = span;
   return true;
-}
-
-fn henyeyGreensteinPhase(anisotropy: f32, cosine: f32) -> f32 {
-  let squared = anisotropy * anisotropy;
-  return (1.0 - squared) / (4.0 * PI * pow(1.0 + squared - 2.0 * anisotropy * cosine, 1.5));
-}
-
-fn sampleHenyeyGreensteinCosine(anisotropy: f32, unit: f32) -> f32 {
-  if (abs(anisotropy) < 1e-3) { return 1.0 - 2.0 * unit; }
-  let squared = anisotropy * anisotropy;
-  let ratio = (1.0 - squared) / (1.0 - anisotropy + 2.0 * anisotropy * unit);
-  return clamp((1.0 + squared - ratio * ratio) / (2.0 * anisotropy), -1.0, 1.0);
 }
 
 fn fogTransmittance(origin: vec3<f32>, distance: f32) -> f32 {
