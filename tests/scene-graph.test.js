@@ -345,3 +345,29 @@ test('update reuses parent matrices and effective-local buffers across repeated 
   }
   assert.equal(calls, 200);
 });
+
+test('replaceLocalMatrices moves the named nodes and their children, and the returned function puts them back', () => {
+  const graph = createSceneGraph([
+    { name: 'parent' },
+    { name: 'child', parent: 'parent', matrix: transform([1, 0, 0]) },
+    { name: 'other' },
+  ]);
+  const before = snapshot(graph);
+  const restore = graph.replaceLocalMatrices(new Map([['parent', transform([0, 5, 0])]]));
+  closeMatrix(graph.getNode('parent').worldMatrix, transform([0, 5, 0]));
+  closeMatrix(graph.getNode('child').worldMatrix, transform([1, 5, 0]));
+  assert.deepEqual(snapshot(graph).find(node => node.name === 'other'), before.find(node => node.name === 'other'));
+  restore();
+  assert.deepEqual(snapshot(graph), before);
+});
+
+test('replaceLocalMatrices throws on a non-finite matrix or an unknown name and leaves the graph unchanged', () => {
+  const graph = createSceneGraph([{ name: 'a' }, { name: 'b' }]);
+  const before = snapshot(graph);
+  const broken = transform([1, 2, 3]);
+  broken[5] = Number.NaN;
+  assert.throws(() => graph.replaceLocalMatrices(new Map([['a', transform([9, 9, 9])], ['b', broken]])));
+  assert.deepEqual(snapshot(graph), before);
+  assert.throws(() => graph.replaceLocalMatrices(new Map([['missing', transform()]])));
+  assert.deepEqual(snapshot(graph), before);
+});

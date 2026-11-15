@@ -71,3 +71,58 @@ test('a node added after pose edits is built from a fresh graph and the edits be
   scene.apply([{ type: 'set-node', id: 'extra', translation: [8, 0, 0] }], { expectedRevision: scene.revision });
   assert.deepEqual(sceneState(scene), freshState(scene));
 });
+
+test('a refusal raised after the in-place move restores every matrix and the next pose edit matches a fresh build', () => {
+  const scene = createAgentScene(hierarchyRecipe([1e-20, 1e-20, 1e-20]), { maxNodes: 50 });
+  const before = sceneState(scene);
+  const boundsBefore = scene.inspect({ includeBounds: true });
+  const revisionBefore = scene.revision;
+  assert.throws(
+    () => scene.apply([
+      { type: 'set-node', id: 'bystander', translation: [5, 0, 0] },
+      { type: 'set-node', id: 'rider', scale: [1e-20, 1e-20, 1e-20] },
+    ], { expectedRevision: scene.revision }),
+    { name: 'RangeError', message: /exceeds Float32 range/ },
+  );
+  assert.equal(scene.revision, revisionBefore);
+  assert.deepEqual(sceneState(scene), before);
+  assert.deepEqual(scene.inspect({ includeBounds: true }), boundsBefore);
+  scene.apply([{ type: 'set-node', id: 'bystander', translation: [6, 0, 0] }], { expectedRevision: scene.revision });
+  assert.deepEqual(sceneState(scene), freshState(scene));
+});
+
+
+// Building a graph allocates one 16-number Float64Array per node, so counting them tells a rebuild from an in-place move.
+function graphMatrixAllocations(action) {
+  const NativeFloat64Array = globalThis.Float64Array;
+  let allocations = 0;
+  globalThis.Float64Array = new Proxy(NativeFloat64Array, {
+    construct(target, constructorArguments, newTarget) {
+      if (constructorArguments[0] === 16) allocations++;
+      return Reflect.construct(target, constructorArguments, newTarget);
+    },
+  });
+  try {
+    action();
+  } finally {
+    globalThis.Float64Array = NativeFloat64Array;
+  }
+  return allocations;
+}
+
+test('a pose-only batch moves the committed graph in place and any other edit builds a new one', () => {
+  const recipe = hierarchyRecipe([1, 1, 1]);
+  for (let index = 0; index < 40; index++) {
+    recipe.nodes.push({ id: `filler${index}`, geometry: 'block', material: 'wall', translation: [index, 0, 5] });
+  }
+  const scene = createAgentScene(recipe, { maxNodes: 100 });
+  const nodeCount = recipe.nodes.length;
+  const poseAllocations = graphMatrixAllocations(() => {
+    scene.apply([{ type: 'set-node', id: 'bystander', translation: [7, 0, 0] }], { expectedRevision: scene.revision });
+  });
+  assert.ok(poseAllocations < nodeCount / 2, `a pose edit allocated ${poseAllocations} graph matrices for ${nodeCount} nodes`);
+  const addAllocations = graphMatrixAllocations(() => {
+    scene.apply([{ type: 'add-node', node: { id: 'extra', geometry: 'block', material: 'wall' } }], { expectedRevision: scene.revision });
+  });
+  assert.ok(addAllocations >= nodeCount, `an added node allocated ${addAllocations} graph matrices for ${nodeCount} nodes`);
+});
