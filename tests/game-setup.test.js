@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentScene, AGENT_SCENE_CAPABILITIES } from '../src/agent-scene.js';
 import { GAME_CAPABILITIES } from '../src/game-setup-notes.js';
-import { normalizeGameSetup, GAME_CAMERAS, GAME_INPUT_PRESETS, GAME_CONTROLLERS, GAME_SETUP_LIMITS } from '../src/game-setup.js';
+import { normalizeGameSetup, GAME_CAMERAS, GAME_INPUT_PRESETS, GAME_CONTROLLERS, GAME_INPUT_ACTIONS, GAME_SETUP_LIMITS } from '../src/game-setup.js';
 import { writeWebBuild, engineModuleNames, indexHtml, WEB_EXPORT_LIMITS } from '../scripts/web-export.mjs';
 
 const NODE_IDS = new Set(['creature', 'coin-1']);
@@ -133,4 +133,18 @@ test('the web export refuses what it cannot play and says how to fix it', async 
   const big = await fakeBuild();
   await writeFile(join(big, 'chunk-a.js'), `${'/'.repeat(WEB_EXPORT_LIMITS.maxEngineBytes)}\nexport {};`);
   await assert.rejects(async () => writeWebBuild({ recipe: recipeWith(game), buildDirectory: big, outputDirectory: await out() }), /above the \d+ byte limit/);
+});
+
+test('a rules input trigger on an action the game does not bind is refused with the actions to use', () => {
+  const rules = { ...RULES, rules: [{ when: { type: 'input', action: 'fire' }, do: [{ type: 'win' }] }] };
+  assert.throws(() => normalizeGameSetup({ player: { node: 'creature' }, rules }, NODE_IDS), /rules\.rules\[0\]\.when\.action is "fire".*Use one of: jump, run/);
+  const jumpRules = { ...RULES, rules: [{ when: { type: 'input', action: 'jump' }, do: [{ type: 'win' }] }] };
+  assert.doesNotThrow(() => normalizeGameSetup({ player: { node: 'creature' }, rules: jumpRules }, NODE_IDS));
+});
+
+test('GAME_INPUT_ACTIONS names exactly the actions startGame binds for every input preset', async () => {
+  const { inputDefinition } = await import('../src/game.js');
+  for (const preset of GAME_INPUT_PRESETS) {
+    assert.deepEqual(Object.keys(inputDefinition(preset).actions).sort(), [...GAME_INPUT_ACTIONS].sort(), preset);
+  }
 });
