@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
 import { worldBounds } from '../src/probe-trace.js';
-import { startGame } from '../src/game.js';
+import { applyFloorSkyVisibility } from '../src/floor-sky-visibility.js';
+import { startGame, lastOperationPerKey } from '../src/game.js';
 
 const PART_COUNT = 60;
 
@@ -90,6 +91,9 @@ function closedRoomRecipe() {
   const slab = (id, translation, scale) => ({ id, geometry: 'slab', material: 'stone', translation, scale });
   return {
     format: 'crucible.scene', schemaVersion: 1,
+    // The default sky trace of a closed room spends about 20 seconds of wall clock, and gives up when the machine is slow, so the
+    // scene skips it and the test runs the trace itself with a small budget on the parts the scene holds.
+    environment: { floorSkyTrace: false },
     geometries: [{ id: 'slab', type: 'box' }], materials: [{ id: 'stone', color: [0.7, 0.7, 0.7] }],
     nodes: [
       slab('floor', [0, 0, 0], [6, 0.1, 6]),
@@ -103,9 +107,13 @@ function closedRoomRecipe() {
   };
 }
 
-// Main already differs from a fresh build by up to 0.0032 on 25 of 122661 floor samples after the second edit
-// (measured on main and on the branch), so sky is compared within that tolerance: a stale cached bound moves far more.
-const SKY_TOLERANCE = 0.01;
+const SMALL_TRACE = { includeClosedRooms: true, maximumTexels: 300, raysPerTexel: 8, maxSeconds: 1000 };
+
+function tracedSky(scene) {
+  const traced = applyFloorSkyVisibility(scene.parts, SMALL_TRACE);
+  assert.equal(traced.report.reason, null, 'the small trace ran to the end');
+  return traced.parts.map(part => Array.from(part.geometry.skyVisibility ?? []));
+}
 
 test('floor sky visibility after a pose edit in a closed room matches a fresh build', () => {
   const scene = createAgentScene(closedRoomRecipe());
@@ -114,14 +122,11 @@ test('floor sky visibility after a pose edit in a closed room matches a fresh bu
     const fresh = createAgentScene(scene.exportRecipe());
     assert.deepEqual(scene.exportRecipe(), fresh.exportRecipe());
     assert.deepEqual(partMatrices(scene), partMatrices(fresh));
-    scene.parts.forEach((part, index) => {
-      const actual = Array.from(part.geometry.skyVisibility ?? []);
-      const expected = Array.from(fresh.parts[index].geometry.skyVisibility ?? []);
-      assert.equal(actual.length, expected.length, `${part.name} sky sample count`);
-      actual.forEach((value, sample) => assert.ok(Math.abs(value - expected[sample]) <= SKY_TOLERANCE, `${part.name} sky sample ${sample}: ${value} vs ${expected[sample]}`));
-    });
+    const actual = tracedSky(scene);
+    const expected = tracedSky(fresh);
+    assert.ok(actual[0].length > 0, 'the floor carries sky visibility, so the cached part bounds are read');
+    assert.deepEqual(actual, expected);
   }
-  assert.ok(scene.parts[0].geometry.skyVisibility?.length > 0, 'the floor carries sky visibility, so the cached-bounds path is exercised');
 });
 
 test('worldBounds follows a part whose matrix changes in place', () => {
@@ -177,4 +182,12 @@ test('a game frame that sends the same pose as the last one does not call scene.
 test('a game frame that moves the player still applies the pose', async () => {
   const revisions = await revisionsAfterFrames(HOLD_FORWARD, 30);
   assert.ok(revisions[29] > revisions[10], 'walking keeps bumping the scene revision');
+});
+
+test('lastOperationPerKey keeps the last of two operations that write the same fields of one node', () => {
+  const first = { type: 'set-node', id: 'crate', translation: [1, 0, 0] };
+  const second = { type: 'set-node', id: 'crate', translation: [2, 0, 0] };
+  const other = { type: 'set-node', id: 'crate', visible: false };
+  const elsewhere = { type: 'set-node', id: 'ball', translation: [1, 0, 0] };
+  assert.deepEqual(lastOperationPerKey([first, other, elsewhere, second]), [second, other, elsewhere]);
 });

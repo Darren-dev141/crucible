@@ -171,6 +171,20 @@ function runCleanups(cleanups) {
   while (cleanups.length > 0) cleanups.pop()();
 }
 
+function operationKey(operation) {
+  return `${operation.type}:${operation.id}:${Object.keys(operation).join(',')}`;
+}
+
+/**
+ * Two operations of one frame that write the same fields of the same node leave only the later one standing, so the earlier one is
+ * dropped before a frame is compared with the last one sent: otherwise the earlier write would be compared with what the later one sent.
+ */
+export function lastOperationPerKey(operations) {
+  const byKey = new Map();
+  for (const operation of operations) byKey.set(operationKey(operation), operation);
+  return [...byKey.values()];
+}
+
 async function buildGame(canvas, recipe, { replay, showStatus = true, assets: providedAssets, assetUrls, physicsUrl, createRenderer = (...rendererArguments) => new CrucibleRenderer(...rendererArguments) }, cleanups) {
   const setup = recipe.game;
   if (!setup) throw new Error('startGame needs a recipe with a game section. Add one with the set-game operation.');
@@ -262,12 +276,7 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
   let lastAppliedRevision = -1;
   function operationsChangedSinceLastFrame(operations) {
     if (scene.revision !== lastAppliedRevision) lastSentOperations.clear();
-    return operations.filter(operation => lastSentOperations.get(operationKey(operation)) !== JSON.stringify(operation));
-  }
-  // Assumes no two operations in one frame write the same field of the same node: the player is kinematic, physics sends only
-  // dynamic bodies and animation writes descendants. A node written twice would have its later write dropped while the earlier one repeats.
-  function operationKey(operation) {
-    return `${operation.type}:${operation.id}:${Object.keys(operation).join(',')}`;
+    return lastOperationPerKey(operations).filter(operation => lastSentOperations.get(operationKey(operation)) !== JSON.stringify(operation));
   }
 
   const sceneSystem = {
