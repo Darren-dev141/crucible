@@ -157,9 +157,9 @@ export function meshBoolean(mesh, cutter, operation, { cutTag } = {}) {
   const module = requireModule();
   for (const [label, input] of [['The mesh', mesh], ['The cutter', cutter]]) {
     const report = lintMesh(input);
-    const open = report.problems.filter(problem => ['boundary-edge', 'non-manifold-edge', 'inconsistent-winding'].includes(problem.kind));
+    const open = report.problems.filter(problem => ['boundary-edge', 'non-manifold-edge', 'inconsistent-winding', 'inverted-part'].includes(problem.kind));
     if (open.length) {
-      throw new RangeError(`${label} must be closed for a boolean: ${open.map(problem => `${problem.count} ${problem.kind}`).join(', ')}. ${open[0].fix}`);
+      throw new RangeError(`${label} must be closed and outward facing for a boolean: ${open.map(problem => `${problem.count} ${problem.kind}`).join(', ')}. ${open[0].fix}`);
     }
   }
   const propertyCount = hasCornerUv(mesh) ? 5 : 3;
