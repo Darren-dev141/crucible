@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CrucibleRenderer } from '../src/renderer.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
+import { worldBounds } from '../src/probe-trace.js';
 
 /** A WebGL2 stand-in that records buffer writes, with one rigid part already uploaded. */
 function fakeRenderer() {
@@ -58,4 +59,15 @@ test('updatePartVertices refuses a changed vertex count, an unknown part and a s
   assert.throws(() => updatePartVertices(renderer, { name: 'other' }, new Float32Array(9)), /Unknown part/);
   renderer.partLocations.get(part).skin = {};
   assert.throws(() => updatePartVertices(renderer, part, new Float32Array(9)), /rigid/);
+});
+
+test('worldBounds follows vertices moved by updatePartVertices after bounds were cached', () => {
+  const { renderer, part } = fakeRenderer();
+  part.matrix = Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const before = worldBounds(part);
+  assert.equal(before.maximum[2], 0);
+  updatePartVertices(renderer, part, new Float32Array([0, 0, 50, 1, 0, 50, 0, 1, 50]));
+  const after = worldBounds(part);
+  assert.equal(after.minimum[2], 50, 'bounds must not stay stale after an in-place vertex rewrite');
+  assert.equal(after.maximum[2], 50);
 });
