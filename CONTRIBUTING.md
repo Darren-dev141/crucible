@@ -61,6 +61,13 @@ Run `npm run preflight` before you open a pull request. It runs every check belo
 
 `npm ci` points git at `.githooks/`, whose pre-push hook runs `npm run preflight -- --skip-tests` and stops the push when a gate fails. Pushing only tags or branch deletions skips it. To skip it once, run `SKIP_PREFLIGHT=1 git push` in Bash or `$env:SKIP_PREFLIGHT=1; git push` in PowerShell. `git push --no-verify` skips it too. The unit tests stay out of the hook because they take minutes; run the full preflight before you open the pull request.
 
+Between one test file and the full pass there are four commands made for coding agents. Their output is short (one `FAIL file :: test :: first message` line per failure, at most ten, then a count) and the full TAP goes to `artifacts/test-logs/`:
+
+- `npm run test:affected -- <files...>` runs every test file that mentions one of the files, or a module that re-exports it; with no files it uses the files your branch changed.
+- `npm run test:fast` runs a deterministic 10 percent of the test files, seeded by the branch name (`-- --seed <text> --percent <n>` changes it). It does not replace `npm test`.
+- `npm run test:mutation-check -- tests/<name>.test.js` reverts your changes under `src/`, `bin/` and `packages/`, runs the tests, prints the ones that fail and restores the tree. It exits 1 when none fail, because then the test does not pin your change. Stage unstaged edits outside those folders first and `git add -N` new files under them.
+- `npm test -- --test-reporter=./scripts/test-compact-reporter.mjs` gives the full pass the same short output.
+
 The checks it runs, if you want one alone:
 
 1. Run `npm test`. All Node tests must pass.
@@ -167,7 +174,7 @@ Keep site assets out of the npm package: the `files` list in `package.json` deci
 
 ## Release
 
-Maintainers make releases. `package.json` holds the version, and the publish workflow runs when it changes on `main`.
+Maintainers make releases. `package.json` holds the version, and the publish workflow runs when it changes on `main`. A bump must carry its `## <version>` section in `CHANGELOG.md` and no unfolded `changes/*.md` notes: the pull request gate (`check-change-note`) checks that, and `npm run check:release-changelog` checks it again before `publish` (skipped when npm already serves the version, so a non-bump change to `package.json` stays green), so npm is never published from a commit whose release page cannot be built.
 
 A minor release ships about once a week, give or take one to three days. A maintainer picks the issues that must be in it,
 waits a few days at most for the issues that should be in it, and moves the rest to the next release. A look change still

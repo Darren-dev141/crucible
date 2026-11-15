@@ -1,13 +1,15 @@
 import test, { after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentRuntime } from '../scripts/agent-runtime.mjs';
+import { createAgentAssetCatalog } from '../scripts/agent-asset-catalog.mjs';
 import { isPreviewHost } from '../scripts/preview-host.mjs';
 import { addonCapabilities, addonFileFor, addonImportMap } from '../scripts/mcp-addons.mjs';
 import { sampleBrowserHeap, exceedsMemoryGuard } from '../scripts/agent-memory-guard.mjs';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { readVolumeGridFiles } from '../src/mcp-volume-grids.js';
 import { writeWebBuild } from '../scripts/web-export.mjs';
 import { EXPORT_DIRECTORY_NAME, RENDER_HISTORY_FILE, normalizeJobSettings } from '../scripts/agent-render-jobs.mjs';
 import { createServer } from 'node:http';
@@ -105,7 +107,7 @@ async function importedBindings(source) {
 }
 
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
-  failDispose = false, heapSize = 1024, stallPrivatePage = false, resumeDelayMs = 0, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0 } = {}) {
+  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, disposeGate, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
   const events = [];
   const sandboxTimers = new Set();
   const viewports = [];
@@ -130,10 +132,22 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     context() { return { newCDPSession: async () => ({
       send: async () => ({ usedSize: heapSize }), detach: async () => { events.push('detach'); },
     }) }; }
-    async evaluate(callback, { method, input }) {
+    async evaluate(callback, argument) {
+      // The render job disposes its private session with a bare session id instead of a method call.
+      const { method, input } = typeof argument === 'string' ? { method: 'dispose', input: { sessionId: argument } } : argument;
       events.push(`${this.privateTarget ? 'private' : 'source'}:${method}`);
+      if (method === hangMethod && !this.privateTarget) return new Promise(() => {});
+      if (method === 'create' && this.privateTarget && failPrivateCreate) {
+        failPrivateCreate = false;
+        throw new Error('Injected private create failure');
+      }
+      if (method === 'dispose' && disposeGate) await disposeGate;
+      if (method === 'resume' && failResume) throw new Error('Injected resume failure');
+      if (method === 'create' && this.privateTarget && blockPrivateCreate) return new Promise((resolve, reject) => { this.rejectShot = reject; });
       if (method === 'create') return { sessionId: input.sessionId, revision: 0 };
+      if (method === 'inspect' && inspection) return inspection;
       if (method === 'exportRecipe') return { recipe: exportedRecipe, revision: 1 };
+      if (method === 'exportGlb') return { data: Buffer.from('glb bytes').toString('base64') };
       if (method === 'snapshot') {
         if (input.expectedRevision !== sourceRevision) throw new Error('Stale revision for render snapshot.');
         return { sourceRevision, recipe };
@@ -153,6 +167,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
         data: Buffer.alloc(oversize ? 1024 * 1024 + 1 : 16).toString('base64') };
       if (method === 'dispose' && failDispose) throw new Error('Injected disposal failure');
       if (method === 'resume' && resumeDelayMs) await new Promise(resolve => setTimeout(resolve, resumeDelayMs));
+      if (method === 'suspend' && suspendDelayMs) await new Promise(resolve => setTimeout(resolve, suspendDelayMs));
       if (method === 'apply') { sourceRevision++; return { revision: sourceRevision }; }
       return {};
     }
@@ -165,7 +180,8 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
   }
   const sourcePage = new FakePage(false);
   let pageCount = 0;
-  const browser = { isConnected: () => true,
+  let browserConnected = true;
+  const browser = { isConnected: () => browserConnected,
     newPage: async () => {
       if (++pageCount === 1) return sourcePage;
       resolveAcquisitionStarted();
@@ -186,7 +202,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     runAnnotateSession: async () => ({ outcome: 'timeout' }), openInDefaultBrowser: async () => {},
     createNativeTracerLocator: () => ({ find: async () => ({ reason: 'no native tracer in tests' }) }),
     createAgentRenderJobs: async () => ({ list: () => [], close: async () => {} }), resolveJobRoot: path => path,
-    chromium: { launch: async () => browser }, URL, Buffer, process, performance, clearTimeout, runtimeOptions, ...contextOverrides,
+    chromium: { launch: async () => { browserConnected = true; return browser; } }, URL, Buffer, AbortController, process, performance, clearTimeout, runtimeOptions, ...contextOverrides,
     setTimeout: (callback, delay) => {
       deadlines.push(delay);
       const timer = setTimeout(callback, delay);
@@ -198,7 +214,8 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
   const runtime = context.runtime;
   openHarnesses.push({ runtime, sandboxTimers, releasePages: () => { resolvePrivatePage(); privatePage?.rejectShot?.(new Error('Harness cleanup')); } });
   const created = await runtime.create({ recipe });
-  return { runtime, sessionId: created.sessionId, deadlines, events, viewports, shotStarted, acquisitionStarted, resolvePrivatePage };
+  const disconnectBrowser = () => { browserConnected = false; };
+  return { runtime, sessionId: created.sessionId, disconnectBrowser, deadlines, events, viewports, shotStarted, acquisitionStarted, resolvePrivatePage };
 }
 
 function boundedResult(promise) {
@@ -339,11 +356,180 @@ runTest('successful review elapsed time includes source renderer recovery', asyn
 runTest('total review deadline closes private page and restores the usable source', async () => {
   const { runtime, sessionId, events } = await reviewRuntimeHarness({ blockShot: true, deadlineMs: 40 });
   try {
-    await assert.rejects(runtime.review({ sessionId, expectedRevision: 0, shots: [{}] }), /total 30 second deadline/);
+    await assert.rejects(runtime.review({ sessionId, expectedRevision: 0, shots: [{}] }), /total [\d.]+ second deadline after 0 of 1 shots/);
     assert.ok(events.includes('private:close'));
     assert.ok(events.includes('source:resume'));
     assert.equal((await runtime.capabilities()).phase, 'ready');
     assert.equal((await runtime.apply({ sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a job cut short by its deadline leaves the runtime usable although the scene page is slow to resume (#1256)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId, events } = await reviewRuntimeHarness({ blockPrivateCreate: true, resumeDelayMs: 100, deadlineMs: 40,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    const abortController = new AbortController();
+    setTimeout(() => abortController.abort(new Error('Render job exceeded its elapsed deadline.')), 20);
+    await assert.rejects(runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: abortController.signal, progress: async () => {} }), /Review page closed/);
+    assert.ok(events.includes('source:resume'));
+    assert.equal((await runtime.capabilities()).phase, 'ready');
+    assert.equal((await runtime.apply({ sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+const NON_INDEXED_INSPECTION = vertices => ({ counts: { parts: 1, vertices, materials: 1 }, nodes: [], look: {} });
+
+async function submitWithInspection(inspection, settings) {
+  const submitted = [];
+  const controller = { list: () => [], close: async () => {}, submit: async request => { submitted.push(request); return { jobId: 'job' }; } };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ inspection,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async () => controller } });
+  try {
+    const attempt = await runtime.submitJob({ sessionId, expectedRevision: 0, settings }).then(() => undefined, error => error);
+    return { attempt, submitted, phase: (await runtime.capabilities()).phase };
+  } finally { await runtime.close(); }
+}
+
+runTest('submitJob refuses a path trace over the cpu triangle cap with the count, creates no job and stays ready (#1325)', async () => {
+  const rejected = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer' } });
+  assert.match(rejected.attempt?.message ?? '', /about 850000 triangles and the cpu path tracer takes at most 400000/);
+  assert.match(rejected.attempt.message, /this runtime has no GPU backend/);
+  assert.equal(rejected.submitted.length, 0);
+  assert.equal(rejected.phase, 'ready');
+});
+
+runTest('submitJob accepts the same oversized scene as a raster job, with backend gpu, and a non-indexed scene under the cap (#1325)', async () => {
+  const raster = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64 });
+  assert.equal(raster.attempt, undefined);
+  assert.equal(raster.submitted.length, 1);
+  const gpu = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer', backend: 'gpu' } });
+  assert.equal(gpu.attempt, undefined);
+  assert.equal(gpu.submitted.length, 1);
+  // 1,150,000 vertices without indices are about 383,000 real triangles; the estimate says 575,000, inside the safety margin.
+  const borderline = await submitWithInspection(NON_INDEXED_INSPECTION(1150000), { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer' } });
+  assert.equal(borderline.attempt, undefined);
+  assert.equal(borderline.submitted.length, 1);
+});
+
+runTest('submitJob refuses a scene of plain nodes whose exact count is over the cap even inside the safety margin (#1325)', async () => {
+  // 455,168 listed triangles are exact; the vertex-based estimate (3 vertices each, halved) says 682,752, under the 800,000 margin.
+  const exactNodes = Array.from({ length: 4 }, (_, index) => ({ id: `node-${index}`, triangles: 113792 }));
+  const inspection = { counts: { parts: 4, vertices: 455168 * 3, materials: 1 }, nodes: exactNodes, look: {} };
+  const rejected = await submitWithInspection(inspection, { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer' } });
+  assert.match(rejected.attempt?.message ?? '', /this scene has 455168 triangles and the cpu path tracer takes at most 400000/);
+  assert.equal(rejected.submitted.length, 0);
+  assert.equal(rejected.phase, 'ready');
+  const underCap = { ...inspection, nodes: exactNodes.map(node => ({ ...node, triangles: 90000 })) };
+  const accepted = await submitWithInspection(underCap, { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer' } });
+  assert.equal(accepted.attempt, undefined);
+});
+
+runTest('a slow suspend at job start does not fail the runtime (#1256)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId, events } = await reviewRuntimeHarness({ blockPrivateCreate: true, suspendDelayMs: 100, deadlineMs: 40,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    const abortController = new AbortController();
+    setTimeout(() => abortController.abort(new Error('Render job exceeded its elapsed deadline.')), 150);
+    await assert.rejects(runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: abortController.signal, progress: async () => {} }));
+    assert.ok(events.includes('source:suspend'));
+    assert.equal((await runtime.capabilities()).phase, 'ready');
+  } finally { await runtime.close(); }
+});
+
+runTest('a failed runtime starts fresh for the next scene, while other calls still say it is failed (#1256)', async () => {
+  const { runtime, sessionId, disconnectBrowser } = await reviewRuntimeHarness();
+  try {
+    disconnectBrowser();
+    await assert.rejects(runtime.inspect({ sessionId }), /browser disconnected.*scene_create/s);
+    assert.equal((await runtime.capabilities()).phase, 'failed');
+    await assert.rejects(runtime.inspect({ sessionId }), /The agent runtime is failed.*scenes.*lost.*scene_create.*scene_create_asset.*no server restart/s);
+    const fresh = await runtime.create({ recipe: { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] } });
+    assert.notEqual(fresh.sessionId, sessionId);
+    assert.equal((await runtime.capabilities()).phase, 'ready');
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+    await assert.rejects(runtime.apply({ sessionId }), /session|scene/i);
+  } finally { await runtime.close(); }
+});
+
+const FRESH_RECIPE = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] };
+
+runTest('a scene page that times out fails the runtime with the recovery hint, and the next scene starts fresh (#1256)', async () => {
+  const { runtime, sessionId } = await reviewRuntimeHarness({ hangMethod: 'inspect', deadlineMs: 40 });
+  try {
+    await assert.rejects(runtime.inspect({ sessionId }), error => /exceeded.*scene_create.*no server restart/s.test(error.message) && !/must be closed/.test(error.message));
+    assert.equal((await runtime.capabilities()).phase, 'failed');
+    const fresh = await runtime.create({ recipe: FRESH_RECIPE });
+    assert.equal((await runtime.capabilities()).phase, 'ready');
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a failed resume after a render job fails the runtime, and the next scene starts fresh (#1256)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ failResume: true, failPrivateCreate: true,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    await assert.rejects(runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {} }), /Preview recovery failed after render job/);
+    assert.equal((await runtime.capabilities()).phase, 'failed');
+    const fresh = await runtime.create({ recipe: FRESH_RECIPE });
+    assert.equal((await runtime.capabilities()).phase, 'ready');
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a job still unwinding when the runtime restarts does not fail the new runtime (#1256)', async () => {
+  let runJob;
+  let openGate;
+  const disposeGate = new Promise(resolve => { openGate = resolve; });
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId, disconnectBrowser, events } = await reviewRuntimeHarness({ failPrivateCreate: true, disposeGate,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    const settled = runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {} }).catch(error => error);
+    while (!events.includes('private:dispose')) await new Promise(resolve => setImmediate(resolve));
+    disconnectBrowser();
+    await assert.rejects(runtime.inspect({ sessionId }), /browser disconnected/);
+    const fresh = await runtime.create({ recipe: FRESH_RECIPE });
+    openGate();
+    assert.match((await settled).message, /Injected private create failure/);
+    assert.equal((await runtime.capabilities()).phase, 'ready');
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { openGate(); await runtime.close(); }
+});
+
+runTest('runJob starts the render clock once, after the page handoff has finished (#1256)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ suspendDelayMs: 60, failPrivateCreate: true,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    const startedAt = performance.now();
+    const clockCalls = [];
+    await assert.rejects(runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {},
+      startRenderClock: () => clockCalls.push(performance.now() - startedAt) }), /Injected private create failure/);
+    assert.equal(clockCalls.length, 1);
+    assert.ok(clockCalls[0] >= 55, `the clock started ${clockCalls[0]} ms in, before the 60 ms handoff ended`);
   } finally { await runtime.close(); }
 });
 
@@ -360,7 +546,7 @@ runTest('review stale revisions and strict runtime fields reject before leasing 
   const { runtime, sessionId, events } = await reviewRuntimeHarness();
   try {
     await assert.rejects(runtime.review({ sessionId, expectedRevision: 1, shots: [{}] }), /Stale/);
-    await assert.rejects(runtime.review({ sessionId, expectedRevision: 0, shots: [{ url: 'https://example.com' }] }), /unknown/i);
+    await assert.rejects(runtime.review({ sessionId, expectedRevision: 0, shots: [{ url: 'https://example.com' }] }), /Review shot field not accepted: url/);
     assert.ok(!events.includes('source:suspend'));
     assert.equal((await runtime.apply({ sessionId })).revision, 1);
   } finally { await runtime.close(); }
@@ -398,6 +584,177 @@ runTest('requests cannot address an absent session or enter a closing runtime', 
   await closing;
 });
 
+runTest('runtime close settles a pending scene_ask_user at once and stops its page server (#1246)', async () => {
+  let sessionSignal;
+  const waitForSignal = async ({ signal }) => {
+    sessionSignal = signal;
+    return new Promise(resolve => signal.addEventListener('abort', () => resolve({ outcome: 'aborted' }), { once: true }));
+  };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ contextOverrides: { runAnnotateSession: waitForSignal } });
+  const asking = runtime.askUser({ sessionId, timeoutSeconds: 600 });
+  const askingOutcome = asking.then(() => 'resolved', error => error.message);
+  while (!sessionSignal) await new Promise(resolve => setTimeout(resolve, 5));
+  const started = performance.now();
+  await runtime.close();
+  assert.match(await askingOutcome, /closed|closing/);
+  assert.ok(sessionSignal.aborted);
+  assert.ok(performance.now() - started < 3000);
+});
+
+runTest('a failed browser launch leaves the runtime idle so the next call retries (#1246)', async () => {
+  const runtime = createAgentRuntime({ backend: 'cpu', memory: 64, browser: process.execPath });
+  after(() => runtime.close());
+  const first = await runtime.create({ recipe: {} }).then(() => undefined, error => error.message);
+  assert.ok(first, 'a node executable is not a browser, so the first launch must fail');
+  assert.equal((await runtime.capabilities()).phase, 'idle');
+  const second = await runtime.create({ recipe: {} }).then(() => undefined, error => error.message);
+  assert.ok(second);
+  assert.doesNotMatch(second, /The agent runtime is failed/);
+});
+
+runTest('a recipe over the combined asset limit is refused from file sizes before any grid file is read (#1246)', async () => {
+  const gridDirectory = await mkdtemp(join(tmpdir(), 'crucible-grid-limit-'));
+  const previousDirectory = process.env.JS67_GRID_DIRECTORY;
+  process.env.JS67_GRID_DIRECTORY = gridDirectory;
+  after(async () => {
+    if (previousDirectory === undefined) delete process.env.JS67_GRID_DIRECTORY;
+    else process.env.JS67_GRID_DIRECTORY = previousDirectory;
+    await rm(gridDirectory, { recursive: true, force: true });
+  });
+  const frameBytes = 40 * 1024 * 1024;
+  for (const name of ['first.67vg', 'second.67vg']) {
+    await writeFile(join(gridDirectory, name), '');
+    await truncate(join(gridDirectory, name), frameBytes);
+  }
+  let gridReads = 0;
+  const countingRead = (...argumentsList) => {
+    gridReads++;
+    return readVolumeGridFiles(...argumentsList);
+  };
+  const { runtime } = await reviewRuntimeHarness({ contextOverrides: { readVolumeGridFiles: countingRead } });
+  gridReads = 0;
+  const recipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [],
+    environment: { localVolumes: [{ shape: 'grid', frames: ['first.67vg', 'second.67vg'] }] } };
+  await assert.rejects(runtime.create({ recipe }), error => error instanceof RangeError
+    && error.message.includes('maxCombinedBytes') && error.message.includes(String(2 * frameBytes)));
+  assert.equal(gridReads, 0);
+});
+
+// A catalog that reports sizes and counts how often a file is read, so a test can prove a call was refused before any read.
+function countingCatalog(sizeByAssetId) {
+  const counts = { sizeCalls: 0, reads: 0 };
+  const catalog = {
+    counts,
+    list: () => ({ assets: [] }),
+    size: async assetId => {
+      counts.sizeCalls++;
+      return sizeByAssetId[assetId];
+    },
+    read: async () => {
+      counts.reads++;
+      return Buffer.alloc(0);
+    },
+  };
+  return catalog;
+}
+
+const catalogAssetIds = ['a', 'b', 'c'].map(letter => letter.repeat(64));
+
+async function catalogLimitHarness(sizeEach) {
+  const catalog = countingCatalog(Object.fromEntries(catalogAssetIds.map(assetId => [assetId, sizeEach])));
+  const harness = await reviewRuntimeHarness({
+    runtimeOptions: { assets: join(tmpdir(), 'crucible-counting-catalog') },
+    contextOverrides: { createAgentAssetCatalog: async () => catalog },
+  });
+  catalog.counts.sizeCalls = 0;
+  return { ...harness, catalog };
+}
+
+function refusedAtTotal(total) {
+  return error => error instanceof RangeError && error.message.includes('maxCombinedBytes') && error.message.includes(String(total));
+}
+
+runTest('placed catalog assets over the combined limit are refused from sizes before any read (#1246)', async () => {
+  const sizeEach = 30 * 1024 * 1024;
+  const { runtime, catalog } = await catalogLimitHarness(sizeEach);
+  const recipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [],
+    nodes: catalogAssetIds.map((assetId, index) => ({ id: `placed-${index}`, asset: { id: assetId } })) };
+  await assert.rejects(runtime.create({ recipe }), refusedAtTotal(3 * sizeEach));
+  assert.equal(catalog.counts.sizeCalls, 3);
+  assert.equal(catalog.counts.reads, 0);
+});
+
+runTest('map sequence frames over the combined limit are refused from sizes before any read (#1246)', async () => {
+  const sizeEach = 40 * 1024 * 1024;
+  const { runtime, catalog } = await catalogLimitHarness(sizeEach);
+  const recipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], nodes: [],
+    materials: [{ id: 'screen', map: { sequence: { frames: catalogAssetIds.slice(0, 2), fps: 24 } } }] };
+  await assert.rejects(runtime.create({ recipe }), refusedAtTotal(2 * sizeEach));
+  assert.equal(catalog.counts.reads, 0);
+});
+
+runTest('motion source assets count in the sum before a scene_apply reads them (#1246)', async () => {
+  const sizeEach = 30 * 1024 * 1024;
+  const { runtime, sessionId, catalog } = await catalogLimitHarness(sizeEach);
+  const motion = { layers: catalogAssetIds.map(assetId => ({ from: { asset: assetId } })) };
+  await assert.rejects(runtime.apply({ sessionId, operations: [{ type: 'set-motion', motion }] }), refusedAtTotal(3 * sizeEach));
+  assert.equal(catalog.counts.reads, 0);
+});
+
+// The same GLB with one extra field in its JSON chunk, so the catalog gives it another asset id.
+function withDistinctDocument(bytes, marker) {
+  const jsonLength = bytes.readUInt32LE(12);
+  const document = JSON.parse(bytes.subarray(20, 20 + jsonLength).toString('utf8'));
+  document.asset = { ...document.asset, extras: { marker } };
+  const json = Buffer.from(JSON.stringify(document));
+  const paddedLength = Math.ceil(json.length / 4) * 4;
+  const binary = bytes.subarray(20 + jsonLength);
+  const result = Buffer.alloc(20 + paddedLength + binary.length, 32);
+  bytes.copy(result, 0, 0, 20);
+  result.writeUInt32LE(result.length, 8);
+  result.writeUInt32LE(paddedLength, 12);
+  json.copy(result, 20);
+  binary.copy(result, 20 + paddedLength);
+  return result;
+}
+
+runTest('two textured GLBs whose embedded images pass the combined limit are refused by the real catalog (#1282)', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'crucible-textured-limit-'));
+  try {
+    await cp(new URL('./fixtures/kenney-boat/', import.meta.url), directory, { recursive: true });
+    const boat = await readFile(join(directory, 'boat-fishing-small.glb'));
+    const secondBoat = withDistinctDocument(boat, 'second');
+    await writeFile(join(directory, 'boat-second.glb'), secondBoat);
+    const sharedImageBytes = Buffer.alloc(34 * 1024 * 1024);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(sharedImageBytes);
+    await writeFile(join(directory, 'Textures', 'colormap.png'), sharedImageBytes);
+    const onDiskTotal = boat.length + secondBoat.length + sharedImageBytes.length;
+    assert.ok(onDiskTotal < AGENT_ASSET_LIMITS.maxCombinedBytes, 'on disk the files fit, so only the embedded sizes can trip the limit');
+    const realCatalog = await createAgentAssetCatalog(directory);
+    let reads = 0;
+    const countingRealCatalog = {
+      list: () => realCatalog.list(),
+      size: assetId => realCatalog.size(assetId),
+      read: assetId => {
+        reads++;
+        return realCatalog.read(assetId);
+      },
+    };
+    const { runtime } = await reviewRuntimeHarness({
+      runtimeOptions: { assets: directory },
+      contextOverrides: { createAgentAssetCatalog: async () => countingRealCatalog },
+    });
+    const assetIds = realCatalog.list().assets.map(asset => asset.assetId);
+    assert.equal(assetIds.length, 2);
+    const recipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [],
+      nodes: assetIds.map((assetId, index) => ({ id: `boat-${index}`, asset: { id: assetId } })) };
+    await assert.rejects(runtime.create({ recipe }), error => error instanceof RangeError && error.message.includes('maxCombinedBytes'));
+    assert.equal(reads, 0, 'the refusal comes from size() before any file is read and base64 encoded');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 runTest('the preview server accepts only its own loopback host', () => {
   assert.equal(isPreviewHost('127.0.0.1:4100', 4100), true);
   assert.equal(isPreviewHost('evil.example:4100', 4100), false);
@@ -406,13 +763,14 @@ runTest('the preview server accepts only its own loopback host', () => {
   assert.equal(isPreviewHost(undefined, 4100), false);
 });
 
-async function webExportHarness({ exportedRecipe, failCopy = () => false } = {}) {
+async function webExportHarness({ exportedRecipe, failCopy = () => false, seedJobsDirectory } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'crucible-web-runtime-'));
   const buildDirectory = join(root, 'build');
   await mkdir(join(buildDirectory, 'mcp'), { recursive: true });
   await writeFile(join(buildDirectory, 'game.js'), 'export {};');
   const jobsDirectory = join(root, 'jobs');
   await mkdir(jobsDirectory);
+  await seedJobsDirectory?.(jobsDirectory);
   const failingWriteWebBuild = async options => {
     if (failCopy()) {
       await mkdir(join(options.outputDirectory, 'engine'), { recursive: true });
@@ -439,6 +797,41 @@ runTest('exportWeb keeps only the newest four builds and returns a real entry pa
   assert.equal((await keptBuilds()).length, 4);
   await assert.rejects(stat(entries[0]), { code: 'ENOENT' });
   for (const entry of entries.slice(1)) assert.ok((await stat(entry)).isFile());
+});
+
+// Files and folders an earlier server run left in the exports folder, oldest first (modified one minute apart).
+async function leaveEarlierExports(jobsDirectory, { glbCount, webBuildCount }) {
+  const exportsDirectory = join(jobsDirectory, EXPORT_DIRECTORY_NAME);
+  await mkdir(exportsDirectory);
+  const names = [
+    ...Array.from({ length: glbCount }, () => `${randomUUID()}.glb`),
+    ...Array.from({ length: webBuildCount }, () => `web-${randomUUID()}`),
+  ];
+  const start = Date.now() / 1000 - 3600;
+  for (const [index, name] of names.entries()) {
+    const path = join(exportsDirectory, name);
+    if (name.startsWith('web-')) await mkdir(path);
+    else await writeFile(path, 'earlier glb');
+    await utimes(path, start + index * 60, start + index * 60);
+  }
+  return names.map(name => join(exportsDirectory, name));
+}
+
+runTest('exports left by an earlier run count toward the newest four web builds and eight GLBs (#1246)', async () => {
+  let earlier;
+  const { runtime, sessionId, keptBuilds } = await webExportHarness({ exportedRecipe: PLAYABLE_RECIPE,
+    seedJobsDirectory: async directory => { earlier = await leaveEarlierExports(directory, { glbCount: 8, webBuildCount: 4 }); } });
+  const glbEarlier = earlier.filter(path => path.endsWith('.glb'));
+  const webEarlier = earlier.filter(path => !path.endsWith('.glb'));
+  await runtime.exportWeb({ sessionId });
+  assert.equal((await keptBuilds()).length, 4);
+  await assert.rejects(stat(webEarlier[0]), { code: 'ENOENT' });
+  assert.ok((await stat(webEarlier[1])).isDirectory());
+  await runtime.exportGlb({ sessionId });
+  const keptGlbs = (await readdir(join(dirname(webEarlier[0])))).filter(name => name.endsWith('.glb'));
+  assert.equal(keptGlbs.length, 8);
+  await assert.rejects(stat(glbEarlier[0]), { code: 'ENOENT' });
+  assert.ok((await stat(glbEarlier[1])).isFile());
 });
 
 runTest('a half-written web export is removed and never evicts or uses up a kept build', async () => {
@@ -471,4 +864,105 @@ runTest('exportWeb needs a jobs folder', async () => {
   const harness = await reviewRuntimeHarness({ exportedRecipe: PLAYABLE_RECIPE });
   after(() => harness.runtime.close());
   await assert.rejects(harness.runtime.exportWeb({ sessionId: harness.sessionId }), /--jobs/);
+});
+
+// A queue that grants one unit at a time and records every request, grant and release, like a wrapper that never runs light
+// beside heavy. The runtime must work with it without ever queueing against itself.
+function recordingSerialQueue() {
+  const log = [];
+  let tail = Promise.resolve();
+  return {
+    log,
+    run(weight, work, { signal } = {}) {
+      log.push(`request:${weight}`);
+      const result = tail.then(async () => {
+        signal?.throwIfAborted();
+        log.push(`grant:${weight}`);
+        try { return await work(); } finally { log.push(`release:${weight}`); }
+      });
+      tail = result.catch(() => {});
+      return result;
+    },
+  };
+}
+
+const settleQueue = () => new Promise(resolve => setTimeout(resolve, 20));
+
+runTest('look and review take the card as light and give it back; calls that draw nothing never ask the queue', async () => {
+  const queue = recordingSerialQueue();
+  const { runtime, sessionId } = await reviewRuntimeHarness({ runtimeOptions: { gpuQueue: queue } });
+  assert.deepEqual(queue.log, []);
+  await runtime.look({ sessionId });
+  await settleQueue();
+  assert.deepEqual(queue.log, ['request:light', 'grant:light', 'release:light']);
+  queue.log.length = 0;
+  await runtime.review({ sessionId, expectedRevision: 0, shots: [{}] });
+  await settleQueue();
+  assert.deepEqual(queue.log, ['request:light', 'grant:light', 'release:light']);
+  queue.log.length = 0;
+  await runtime.apply({ sessionId });
+  await runtime.exportRecipe({ sessionId });
+  await settleQueue();
+  assert.deepEqual(queue.log, []);
+});
+
+runTest('a failed look gives the card back', async () => {
+  const queue = recordingSerialQueue();
+  const { runtime } = await reviewRuntimeHarness({ runtimeOptions: { gpuQueue: queue } });
+  await assert.rejects(runtime.look({ sessionId: randomUUID() }));
+  await settleQueue();
+  assert.deepEqual(queue.log, ['request:light', 'grant:light', 'release:light']);
+});
+
+runTest('creating a baked scene and editing a baked scene take the card as heavy, other edits do not', async () => {
+  const queue = recordingSerialQueue();
+  const { runtime, sessionId } = await reviewRuntimeHarness({ runtimeOptions: { gpuQueue: queue } });
+  const bakedRecipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [], bake: { quality: 'draft' } };
+  const baked = await runtime.create({ recipe: bakedRecipe });
+  await settleQueue();
+  assert.deepEqual(queue.log, ['request:heavy', 'grant:heavy', 'release:heavy']);
+  queue.log.length = 0;
+  await runtime.apply({ sessionId: baked.sessionId, operations: [] });
+  await settleQueue();
+  assert.deepEqual(queue.log, ['request:heavy', 'grant:heavy', 'release:heavy']);
+  queue.log.length = 0;
+  await runtime.apply({ sessionId, operations: [] });
+  await settleQueue();
+  assert.deepEqual(queue.log, []);
+});
+
+runTest('a look while a render job holds the card joins it: both finish with a strictly serial queue and no wait timeout', async () => {
+  const queue = recordingSerialQueue();
+  let jobHooks;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId, events } = await reviewRuntimeHarness({ blockPrivateCreate: true,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test'), gpuQueue: queue },
+    contextOverrides: { createAgentRenderJobs: async hooks => { jobHooks = hooks; return controller; } } });
+  await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+  assert.equal(typeof jobHooks.acquireGpu, 'function');
+  const jobAbort = new AbortController();
+  const releaseCard = await jobHooks.acquireGpu(jobAbort.signal);
+  const jobRun = jobHooks.run({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+    settings: { kind: 'image', width: 64, height: 64 }, signal: jobAbort.signal, progress: async () => {} });
+  jobRun.catch(() => {});
+  for (let attempt = 0; attempt < 100 && !events.includes('private:create'); attempt++) await new Promise(resolve => setTimeout(resolve, 5));
+  const started = Date.now();
+  await runtime.look({ sessionId });
+  assert.ok(Date.now() - started < 2000);
+  assert.deepEqual(queue.log, ['request:heavy', 'grant:heavy']);
+  jobAbort.abort(new Error('Render job cancelled.'));
+  await assert.rejects(jobRun, /Review page closed/);
+  releaseCard();
+  await settleQueue();
+  assert.deepEqual(queue.log, ['request:heavy', 'grant:heavy', 'release:heavy']);
+});
+
+runTest('without --gpu-queue the job store gets no card hook', async () => {
+  let jobHooks;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId } = await reviewRuntimeHarness({
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async hooks => { jobHooks = hooks; return controller; } } });
+  await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+  assert.equal(jobHooks.acquireGpu, undefined);
 });

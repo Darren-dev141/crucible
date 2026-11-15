@@ -178,6 +178,33 @@ export function createSceneGraph(definitions = [], { maxNodes = 4096, maxDepth =
       commitWorlds();
       return parts;
     },
+    /**
+     * Sets the local matrix of the named nodes and publishes the new worlds, without rebuilding the graph. `matrices` maps
+     * a node name to a 16-number matrix. A matrix or world that is not finite throws and leaves the graph as it was.
+     * Returns a function that puts the previous local matrices and worlds back.
+     */
+    replaceLocalMatrices(matrices) {
+      const previous = new Map();
+      for (const name of matrices.keys()) previous.set(name, new Float64Array(records[nodeIndex(name)].localMatrix));
+      const restore = () => {
+        for (const [name, matrix] of previous) records[nodeIndex(name)].localMatrix.set(matrix);
+        evaluate(order, parents);
+        commitWorlds();
+      };
+      try {
+        for (const [name, matrix] of matrices) {
+          const copy = copiedFloats(matrix, 16, `${name} matrix`);
+          validMatrix(copy, name);
+          records[nodeIndex(name)].localMatrix.set(copy);
+        }
+        evaluate(order, parents);
+      } catch (error) {
+        restore();
+        throw error;
+      }
+      commitWorlds();
+      return restore;
+    },
     reparent(name, parent = null, { keepWorld = false } = {}) {
       if (typeof keepWorld !== 'boolean') throw new TypeError('keepWorld must be boolean.');
       const index = nodeIndex(name);

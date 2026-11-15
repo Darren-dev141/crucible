@@ -215,7 +215,7 @@ bounds and rescale the node.
 Fewer faces: `decimate` keeps a `ratio` of the triangles (counted after triangulation), holds open boundaries and the borders
 between tags where they are, keeps tags, and drops `uv` (so `uv_unwrap` after it). `remesh` rebuilds a closed mesh as
 an even quad surface from a `voxelSize` or a `resolution` (cells along the longest side, at most 192); it drops tags, and
-an open mesh needs `fill_holes` first. Levels of detail for a part are made in code with `generateGeometryLods`.
+an open mesh needs `fill_holes` first, an inside-out one `flip_normals`, and it throws if the result would have a hole. Levels of detail for a part are made in code with `generateGeometryLods`.
 
 ```json
 { "id": "boulder", "type": "mesh", "base": { "type": "box", "bevel": 0 }, "stack": [
@@ -339,7 +339,7 @@ adding another pattern: a scene holds at most 16 different ones. `uv_unwrap` is 
 | `Unknown tag x. Known tags: ...` | Pick a listed tag; earlier edits may have used another name |
 | `selects no faces` / `selects no edges` | Loosen the rule (`maxAngle`, box) or check tags with `mesh_inspect` |
 | `average normal cancels out` | Use `alongNormals: true`, an `_individual` op, or a `direction` |
-| `must be closed for a boolean` | Fix the open or non-manifold edges it counts, or `merge_by_distance` first |
+| `must be closed and outward facing for a boolean` | Fix the open or non-manifold edges it counts (`merge_by_distance` first), or `flip_normals` if the part is inside out |
 | `need the optional peer dependency manifold-3d` | Booleans are unavailable here; model the cut another way or ask for the peer |
 | `rings cross` | Cut each direction in its own `loop_cut` edit |
 | `selects N boundary loops; bridge needs exactly 2` | Narrow `edges` with `{ "open": { "inside": { "min", "max" } } }` |

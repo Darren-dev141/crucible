@@ -19,7 +19,7 @@ Check that the server starts. This command downloads the package and prints its 
 npx -y --package @codepawlhq/crucible crucible-mcp --version
 ```
 
-The command prints the version, for example `0.15.0`. The package on npm is `@codepawlhq/crucible` and its command is `crucible-mcp`.
+The command prints the version, for example `0.20.0`. The package on npm is `@codepawlhq/crucible` and its command is `crucible-mcp`.
 
 ## The launch command
 
@@ -36,10 +36,12 @@ npx -y --package @codepawlhq/crucible crucible-mcp --backend gpu --memory 192
 | `--browser` | Path to a Chrome or Chromium executable | Use a browser other than the installed Google Chrome. |
 | `--assets` | Absolute path to a folder of GLB files | Lets the agent place those models. |
 | `--jobs` | Absolute path to a private folder | Turns on the render job tools for PNG, image sequences and MP4. |
+| `--gpu-queue` | Absolute path to a queue command, or a JSON array such as `["bash","/path/queue.sh"]` | Looks, reviews, bakes and render jobs wait for your own GPU queue before they use the card. Details in [the MCP guide](../mcp.md). |
+| `--gpu-queue-wait` | Seconds, 1 to 3600 | Longest wait for the queue. The default is 600. |
 | `--ffmpeg` | Absolute path to FFmpeg | Sets the encoder for MP4 jobs. FFmpeg on `PATH` works without it. |
 | `--audio` | Absolute path to a folder of sound files | Lets video jobs add sound. |
 
-`crucible-mcp --help` prints the same list. Add `@0.15.0` after the package name to pin a version, as in `@codepawlhq/crucible@0.15.0`.
+`crucible-mcp --help` prints the same list. Add `@<version>` after the package name to pin a version, as in `@codepawlhq/crucible@0.20.0`.
 
 ### The node form
 

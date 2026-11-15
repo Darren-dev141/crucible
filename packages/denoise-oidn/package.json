@@ -17,7 +17,20 @@
     "fetch": "node fetch-oidn.mjs"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codepawl/crucible.git",
+    "directory": "packages/denoise-oidn"
+  },
   "engines": {
     "node": ">=22"
+  },
+  "peerDependencies": {
+    "@codepawlhq/cook": "*"
+  },
+  "peerDependenciesMeta": {
+    "@codepawlhq/cook": {
+      "optional": true
+    }
   }
 }

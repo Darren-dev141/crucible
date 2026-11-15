@@ -5,7 +5,7 @@ import { createAgentScene, applyCameraFields, needsMeshBooleans, loadMeshBoolean
 import { normalizeBlend } from '../../src/mesh-blend.js';
 import { applyProjection } from '../../src/camera.js';
 import { effectsWithFStop } from '../../src/camera-effects.js';
-import { resolveAgentShadow, agentEnvironmentMap } from '../../src/agent-look.js';
+import { fitAgentShadow, resolveAgentShadow, agentEnvironmentMap } from '../../src/agent-look.js';
 import { agentSceneModule, agentSceneModuleLoaded } from '../../src/agent-scene-modules.js';
 import { createAgentAssetScene } from '../../src/agent-asset.js';
 import { parseGltf } from '../../src/gltf.js';
@@ -14,7 +14,9 @@ import { rasterOptionsFor } from '../../scripts/agent-render-quality.mjs';
 import { assetCopyKey, recipeAssetNeeds } from '../../src/agent-scene-assets.js';
 import { BRANCH_LIMITS, createBranchStore, printableLabel } from '../../src/agent-branches.js';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../../src/agent-errors.js';
-import { AGENT_SCENE_DEFAULT_LIMITS } from '../../src/agent-scene-capabilities.js';
+import { imageLimitProblem } from '../../src/image-header.js';
+import { TEXTURE_SEQUENCE_LIMITS } from '../../src/texture-sequence-limits.js';
+import { AGENT_SCENE_DEFAULT_LIMITS, MAXIMUM_MEMORY_MIB } from '../../src/agent-scene-capabilities.js';
 import { describeApplication } from '../../src/agent-apply-report.js';
 import { framingProblems, placementProblems, textureProblems, exposureProblems, lumaShares } from '../../src/frame-checks.js';
 import { agentAssetDecodeOptions, withCatalogLimitAdvice } from '../../src/agent-asset-limits.js';
@@ -24,7 +26,7 @@ import { describeMarks, validateMarks } from '../../src/agent-annotate.js';
 // Runs the preview page's adapter code in a VM with a fault-injected renderer, the way the MCP preview runs it in a browser.
 const source = (await readFile(new URL('../../scripts/agent-preview-browser.js', import.meta.url), 'utf8')).replace(/^import .+;\r?$/gm, '');
 
-export function previewHarness() {
+export function previewHarness({ createImageBitmap = async () => { throw new Error('createImageBitmap is not stubbed'); } } = {}) {
   let renderError = 0;
   let lost = false;
   let replacementError = false;
@@ -32,6 +34,7 @@ export function previewHarness() {
   let currentRenderer;
   let currentScene;
   const renders = [];
+  const rendererOptions = [];
   const tiles = [];
   const makeCanvas = () => ({ width: 768, height: 512,
     replaceWith() {}, toDataURL: () => 'data:image/png;base64,cG5n',
@@ -42,7 +45,7 @@ export function previewHarness() {
   class FaultInjectedRenderer {
     memoryPlan = { estimatedBytes: 1024 };
     capabilities = { hdr: true, samples: 4 };
-    constructor(canvasElement, parts, options = {}) { currentRenderer = this; this.shadowCascades = options.shadowCascades ?? null; }
+    constructor(canvasElement, parts, options = {}) { currentRenderer = this; rendererOptions.push(options); this.shadowCascades = options.shadowCascades ?? null; }
     context = {
       isContextLost: () => lost,
       getError: () => renderError,
@@ -85,8 +88,8 @@ export function previewHarness() {
     // The harness loads Manifold from node_modules directly, so the preview's served-file loader is ignored.
     setManifoldModuleLoader: () => {},
     needsPhysics, loadPhysicsEngine, physicsEngineLoaded, setPhysicsModuleLoader: () => {},
-    describeMarks, validateMarks, sceneQueryFor, summarizeWalkMap, walkOptionsFor, createQueryOnlyCache, parseGltf, hasPatternTextures, rasterOptionsFor, Uint8Array, atob, sessionProblem, SCENE_STORE_LIMITS, AGENT_SCENE_DEFAULT_LIMITS, describeApplication, framingProblems, placementProblems, textureProblems, exposureProblems, lumaShares, assetCopyKey, recipeAssetNeeds, agentAssetDecodeOptions, withCatalogLimitAdvice,
-    applyProjection, applyCameraFields, mat4, resolveAgentShadow, agentEnvironmentMap, BRANCH_LIMITS,
+    describeMarks, validateMarks, sceneQueryFor, summarizeWalkMap, walkOptionsFor, createQueryOnlyCache, parseGltf, hasPatternTextures, rasterOptionsFor, Uint8Array, atob, sessionProblem, SCENE_STORE_LIMITS, AGENT_SCENE_DEFAULT_LIMITS, MAXIMUM_MEMORY_MIB, imageLimitProblem, TEXTURE_SEQUENCE_LIMITS, Blob, createImageBitmap, describeApplication, framingProblems, placementProblems, textureProblems, exposureProblems, lumaShares, assetCopyKey, recipeAssetNeeds, agentAssetDecodeOptions, withCatalogLimitAdvice,
+    applyProjection, applyCameraFields, mat4, fitAgentShadow, resolveAgentShadow, agentEnvironmentMap, BRANCH_LIMITS,
     // Line art needs a real renderer with render passes, so the fault-injected one gets a no-op install.
     agentSceneModule: name => (name === 'lineArt' ? { installLineArt: renderer => renderer } : name === 'userPass' ? { ...agentSceneModule(name), installUserPasses: renderer => renderer } : agentSceneModule(name)), agentSceneModuleLoaded, createBranchStore, printableLabel,
     CrucibleRenderer: FaultInjectedRenderer, skyOpenness: () => 1, fogSkyVisibility: () => null,
@@ -105,6 +108,6 @@ export function previewHarness() {
     rejectReplacement: value => { replacementError = value; },
     replacementCount: () => replacementCount,
     disableHdr: () => { currentRenderer.capabilities.hdr = false; },
-    scene: () => currentScene, renders, tiles,
+    scene: () => currentScene, renders, tiles, rendererOptions,
   };
 }

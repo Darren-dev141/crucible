@@ -92,7 +92,7 @@ export function uploadScene(gl, program, scene, options = {}) {
   const lights = packLights(scene.lights);
   const environment = packEnvironment(scene.environment);
   const nodes = packNodes(scene.bvh);
-  const triangles = packTriangles(scene);
+  const triangles = packTriangles(scene, { secondUvSet: true });
   const materials = packMaterials(scene.materials, atlas, scene.shadowOnlyParts);
   const floatTables = [['uNodes', nodes], ['uTriangles', triangles], ['uMaterials', materials], ['uLights', lights.table]];
   if (sceneUsesSubsurface(scene.materials)) floatTables.push(['uSubsurface', packSubsurface(scene.materials)]);

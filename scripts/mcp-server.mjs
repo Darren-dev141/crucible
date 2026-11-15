@@ -2,6 +2,7 @@ import { answerCapabilities } from './capabilities-topics.mjs';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
 import { McpServer } from '@modelcontextprotocol/server';
 import { resolveJobRoot } from './agent-job-root.mjs';
+import { createGpuQueueFromFlags } from './agent-gpu-queue.mjs';
 import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod/v4';
 import { describeSchemaInputsWithReceivedValues } from './mcp-input-errors.mjs';
@@ -23,6 +24,7 @@ import { startUpdateCheck, updateNoticeText, describeUpdateCheck } from '../src/
 import { installVolumeGridFiles } from '../src/mcp-volume-grids.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from '../src/light-limits.js';
 import { currentFormatName, warnLegacyOnce } from '../src/legacy-names.js';
+import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
 
 function acceptLegacyFormat(value) {
   const current = currentFormatName(value);
@@ -793,6 +795,14 @@ const sessionFields = { sessionId: z.uuid('sessionId is not a valid UUID. Leave 
 const checkpointFields = { ...sessionFields, checkpointId: z.uuid().describe('Checkpoint UUID returned by scene_checkpoint for this session.') };
 const expectedRevision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).describe('Current revision returned by create, inspect, apply or restore. Stale edits fail atomically.');
 const jobFields = { jobId: z.uuid().describe('Render job UUID returned by scene_render_submit or capabilities jobs.records.') };
+const jobWithFormatFields = { ...jobFields, response_format: responseFormatField };
+// Job tools take jobId alone; an agent that carries sessionId over from the scene tools gets told to drop it.
+function jobKeysHint(toolName, acceptedKeys) {
+  const accepted = acceptedKeys.length > 1 ? `${acceptedKeys[0]} (and ${acceptedKeys.slice(1).join(', ')})` : acceptedKeys[0];
+  return issue => (issue.code === 'unrecognized_keys'
+    ? `${toolName} takes ${accepted} only: remove ${issue.keys.join(', ')}. A render job is addressed by its jobId, not by sessionId; scene_render_submit returned it.`
+    : undefined);
+}
 const renderSettings = z.strictObject({
   kind: z.enum(['image', 'stills', 'video']),
   width: z.number().int().min(64).max(MAXIMUM_JOB_SIDE),
@@ -997,16 +1007,16 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
   register('scene_export_web', 'Write the scene with its game as a static web build in the jobs folder: index.html, game.json and engine/, which any static host serves with no server code. Needs --jobs and a game set with set-game. Procedural scenes only; the newest four builds are kept.', z.strictObject({ ...sessionFields, title: z.string().max(64).optional().describe('Page title.') }), edit, async argumentsValue => jsonResult(await runtime.exportWeb(argumentsValue)));
   register('scene_dispose', 'Dispose the active scene and its checkpoints, releasing renderer resources.', z.strictObject(sessionFields), destroy, async argumentsValue => jsonResult(await runtime.dispose(argumentsValue)));
   register('scene_render_submit', 'Start one asynchronous snapshot job in the configured private job store. Requires the current revision. Temporarily leases the preview renderer; does not change source revision or checkpoints.', z.strictObject({ ...sessionFields, expectedRevision, settings: renderSettings }), { ...edit, destructiveHint: false }, async argumentsValue => jsonResult(await runtime.submitJob(argumentsValue)));
-  register('scene_render_status', 'Read render job state and durable frame progress. Terminal states are completed, cancelled, failed and interrupted.', z.strictObject({ ...jobFields, response_format: responseFormatField }), readOnly, async ({ response_format, ...jobInput }) => {
+  register('scene_render_status', 'Read render job state and durable frame progress. Terminal states are completed, cancelled, failed and interrupted.', z.strictObject(jobWithFormatFields, { error: jobKeysHint('scene_render_status', Object.keys(jobWithFormatFields)) }), readOnly, async ({ response_format, ...jobInput }) => {
     const record = await runtime.jobStatus(jobInput);
     return jsonResult(chosenFormat('scene_render_status', response_format) === 'concise' ? conciseJobStatus(record) : record);
   });
-  register('scene_render_cancel', 'Request cancellation of one job. Poll status until terminal before using the preview again.', z.strictObject(jobFields), { ...edit, idempotentHint: true }, async argumentsValue => jsonResult(await runtime.cancelJob(argumentsValue)));
-  register('scene_render_result', 'Read completed local output paths, MIME types, byte counts, SHA-256 digests and measured render metrics. Returns a PNG inline and a resource link to each file; video stays on disk.', z.strictObject({ ...jobFields, response_format: responseFormatField }), readOnly, async ({ response_format, ...jobInput }) => {
+  register('scene_render_cancel', 'Request cancellation of one job. Poll status until terminal before using the preview again.', z.strictObject(jobFields, { error: jobKeysHint('scene_render_cancel', Object.keys(jobFields)) }), { ...edit, idempotentHint: true }, async argumentsValue => jsonResult(await runtime.cancelJob(argumentsValue)));
+  register('scene_render_result', 'Read completed local output paths, MIME types, byte counts, SHA-256 digests and measured render metrics. Returns a PNG inline and a resource link to each file; video stays on disk.', z.strictObject(jobWithFormatFields, { error: jobKeysHint('scene_render_result', Object.keys(jobWithFormatFields)) }), readOnly, async ({ response_format, ...jobInput }) => {
     const result = await runtime.jobResult(jobInput);
     return renderResultContent(result, chosenFormat('scene_render_result', response_format) === 'concise' ? conciseJobResult(result) : result);
   });
-  register('scene_render_release', 'Delete the owned files and record for a terminal job, freeing store quota. Active jobs must be cancelled first.', z.strictObject(jobFields), destroy, async argumentsValue => jsonResult(await runtime.releaseJob(argumentsValue)));
+  register('scene_render_release', 'Delete the owned files and record for a terminal job, freeing store quota. Active jobs must be cancelled first.', z.strictObject(jobFields, { error: jobKeysHint('scene_render_release', Object.keys(jobFields)) }), destroy, async argumentsValue => jsonResult(await runtime.releaseJob(argumentsValue)));
   return server;
 }
 
@@ -1021,12 +1031,15 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
   for (let index = 0; index < argumentsValue.length; index += 2) {
     const name = argumentsValue[index];
     const value = argumentsValue[index + 1];
-    if (!['--backend', '--browser', '--memory', '--assets', '--packs', '--jobs', '--ffmpeg', '--audio', '--branches', '--relations', '--findings', '--addons', '--allow-addon'].includes(name) || value === undefined) {
-      throw new Error(`Use --addons <absolute folder with node_modules> with one --allow-addon <package name> for each allowed addon (repeatable, chosen only here), --backend cpu|gpu, --browser <local executable path>, --memory <32..${MAXIMUM_MEMORY_MIB} MiB>, --assets <absolute GLB directory>, --packs <absolute folder of data-only packs>, --jobs <absolute private output directory>, --ffmpeg <absolute executable>, --audio <absolute folder of .wav, .mp3, .ogg or .flac files for video jobs>, --branches on|off, --relations on|off and --findings on|off (all default on; off hides the findings in scene_look for benchmark controls).`);
+    if (!MCP_OPTION_NAMES.includes(name) || value === undefined) {
+      throw new Error(`Use ${mcpOptionSummary()}. Run crucible-mcp --help for the same list.`);
     }
     if (name === '--allow-addon') allowedAddonNames.push(value);
     else options[name.slice(2)] = name === '--memory' ? Number(value) : value;
   }
+  options.gpuQueue = createGpuQueueFromFlags({ queue: options['gpu-queue'], wait: options['gpu-queue-wait'] });
+  delete options['gpu-queue'];
+  delete options['gpu-queue-wait'];
   const addonSet = resolveAddons({ folder: options.addons, names: allowedAddonNames, version });
   for (const { name, reason } of addonSet.skipped) console.error(`Crucible addon ${name} skipped: ${reason}`);
   options.addons = addonSet;

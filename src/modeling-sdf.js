@@ -1,10 +1,11 @@
-import { placeCellVertices, quadsAroundEdges } from './surface-nets.js';
+import { placeCellVertices, quadsAroundEdges, splitSaddleVertices } from './surface-nets.js';
 
 // The sdf geometry: a tree of signed-distance primitives and operations, sampled on a bounded grid and meshed by surface
 // nets. Distances are negative inside. Everything is plain arithmetic in a fixed order, so the same recipe gives the same bytes.
 
 export const SDF_LIMITS = Object.freeze({ minResolution: 4, maxResolution: 128, defaultResolution: 32, maxNodes: 64, maxDepth: 8, maxChildren: 16 });
 const PADDING_VOXELS = 2;
+const SADDLE_FIX_HINT = 'Pass a different resolution, or move the parts so they overlap instead of touching at an edge.';
 const PRIMITIVE_FIELDS = {
   sphere: ['radius'],
   box: ['size'],
@@ -285,18 +286,21 @@ export function sdfGeometry(value) {
   const grid = { points: plan.points, edge: plan.edge };
   const distances = sampleGrid(plan);
   const { cellVertex, positions: cellPositions } = placeCellVertices(distances, grid, plan.origin);
-  const quads = quadsAroundEdges(distances, grid, cellVertex);
+  const insidePoints = [];
+  const outsidePoints = [];
+  const builtQuads = quadsAroundEdges(distances, grid, cellVertex, insidePoints, outsidePoints);
+  const { quads, positions: separatedPositions } = splitSaddleVertices(builtQuads, insidePoints, cellPositions, outsidePoints, SADDLE_FIX_HINT);
   if (!quads.length) throw new RangeError('sdf has no surface: the shape is empty or smaller than a cell. Pass a larger resolution or check subtract and intersect children.');
-  const positions = Float32Array.from(cellPositions);
+  const positions = Float32Array.from(separatedPositions);
   const normals = new Float32Array(positions.length);
   const uvs = new Float32Array(positions.length / 3 * 2);
   for (let vertex = 0; vertex < positions.length / 3; vertex++) {
-    const gradient = gradientAt(plan.root.distance, cellPositions[vertex * 3], cellPositions[vertex * 3 + 1], cellPositions[vertex * 3 + 2], plan.edge * 0.5);
+    const gradient = gradientAt(plan.root.distance, separatedPositions[vertex * 3], separatedPositions[vertex * 3 + 1], separatedPositions[vertex * 3 + 2], plan.edge * 0.5);
     normals.set(gradient, vertex * 3);
     const strongest = Math.abs(gradient[0]) >= Math.abs(gradient[1]) && Math.abs(gradient[0]) >= Math.abs(gradient[2]) ? 0 : Math.abs(gradient[1]) >= Math.abs(gradient[2]) ? 1 : 2;
     const [u, v] = [[1, 2], [0, 2], [0, 1]][strongest];
-    uvs[vertex * 2] = cellPositions[vertex * 3 + u];
-    uvs[vertex * 2 + 1] = cellPositions[vertex * 3 + v];
+    uvs[vertex * 2] = separatedPositions[vertex * 3 + u];
+    uvs[vertex * 2 + 1] = separatedPositions[vertex * 3 + v];
   }
   return { positions, normals, uvs, indices: triangulate(quads, positions) };
 }

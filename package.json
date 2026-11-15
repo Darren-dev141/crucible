@@ -162,9 +162,12 @@
     "deploy": "node scripts/deploy.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "llms": "node scripts/generate-llms.mjs",
-    "test": "node --test",
+    "test": "node --test --import ./scripts/test-hang-guard.mjs --test-timeout=300000",
     "test:isolated": "node scripts/test-each-file.mjs",
-    "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude=\"tests/**\" --test-coverage-exclude=\"scripts/**\" --test-coverage-exclude=\"build/**\"",
+    "test:affected": "node scripts/test-affected.mjs",
+    "test:fast": "node scripts/test-fast.mjs",
+    "test:mutation-check": "node scripts/test-mutation-check.mjs",
+    "test:coverage": "node --test --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --experimental-test-coverage --test-coverage-exclude=\"tests/**\" --test-coverage-exclude=\"scripts/**\" --test-coverage-exclude=\"build/**\"",
     "coverage:gate": "node scripts/coverage-gate.mjs",
     "cook:build": "node node_modules/@codepawlhq/cook/build.mjs",
     "preflight": "node scripts/preflight.mjs",
@@ -240,7 +243,10 @@
     "changes": "node scripts/changelog-fragments.mjs",
     "changes:fold": "node scripts/changelog-fragments.mjs fold",
     "check:change-note": "node scripts/check-change-note.mjs",
-    "check:links:package": "node scripts/check-links.mjs --package"
+    "check:release-changelog": "node scripts/check-release-changelog.mjs",
+    "check:site-build": "vite build --outDir artifacts/site-check --emptyOutDir",
+    "check:links:package": "node scripts/check-links.mjs --package",
+    "check:published-site": "node scripts/check-published-site.mjs"
   },
   "peerDependencies": {
     "@dimforge/rapier3d-compat": "0.21.0",
@@ -263,7 +269,7 @@
   },
   "devDependencies": {
     "@codepawlhq/crucible-denoise-oidn": "file:packages/denoise-oidn",
-    "@codepawlhq/cook": "git+https://github.com/codepawl/cook.git#8ea2aafae6f7d547716786bc1665af46118f4dd2",
+    "@codepawlhq/cook": "git+https://github.com/codepawl/cook.git#aec00c809ebbb315f2231933be10c2333af5bc50",
     "@dimforge/rapier3d-compat": "0.21.0",
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",

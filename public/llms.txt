@@ -12,7 +12,8 @@ Scenes are plain data with stable IDs, so an agent can edit by ID and check each
 - Cook is the path tracer. Its backends are cpu (the default), gpu (WebGL2), webgpu (a software BVH in WGSL compute) and native (Vulkan ray queries, from the optional Cook package, `@codepawlhq/cook`).
 - An experimental real-time path tracer runs on WebGPU with a WebGL2 fallback. The MCP server does not expose it. MCP render jobs take the cpu, gpu and native backends of Cook.
 - In the MCP server, `--backend gpu` means hardware WebGL2 in Chrome, and `--backend cpu` means software rendering.
-- Planned, not shipped: a `quality` setting that picks a tier (draft, realtime, realtime-high, final), and Glaze on WebGPU. Do not call either one. The roadmap is [issue 890](https://github.com/codepawl/crucible/issues/890).
+- `scene_render_submit` takes `settings.quality` (draft, realtime, realtime-high, final) and falls back one tier when a tier cannot run; the tiers are in [Render quality](https://crucible.codepawl.com/mcp.md#render-quality).
+- Planned, not shipped: Glaze on WebGPU, the real-time path tracer behind `realtime-high`, and refine at rest. The roadmap is [issue 890](https://github.com/codepawl/crucible/issues/890).
 
 ## Connect
 
@@ -77,7 +78,7 @@ Call `scene_capabilities` for field detail. This list is generated from the serv
 
 ## If you know three.js
 
-Models write three.js from memory. The section "If you know three.js" of the [complete guide](https://crucible.codepawl.com/guide.md) maps each common three.js idiom to the Crucible call. The optional addon `@codepawlhq/crucible-three-compat` (folder `packages/three-compat`) accepts the common three.js shapes (`Scene`, `Mesh`, `MeshStandardMaterial`, `PerspectiveCamera`, the light classes, `GLTFLoader`, `setAnimationLoop`) and builds Crucible parts from them. It throws an error that names the Crucible call when you use a name it does not support.
+Models write three.js from memory. The section "If you know three.js" of the [complete guide](https://crucible.codepawl.com/guide.md) maps each common three.js idiom to the Crucible call. The optional addon `@codepawlhq/crucible-three-compat` (folder `packages/three-compat`, not on npm yet: import it from a source checkout) accepts the common three.js shapes (`Scene`, `Mesh`, `MeshStandardMaterial`, `PerspectiveCamera`, the light classes, `GLTFLoader`, `setAnimationLoop`) and builds Crucible parts from them. It throws an error that names the Crucible call when you use a name it does not support.
 
 ## Docs
 

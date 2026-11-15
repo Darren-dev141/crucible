@@ -108,6 +108,22 @@ test('the annotate session returns timeout when nobody presses Send', async () =
   assert.equal(result.marks, undefined);
 });
 
+test('an aborted annotate session ends at once and stops serving the page (#1246)', async () => {
+  const controller = new AbortController();
+  const { url, session } = await startSession({ waitMs: 60000, signal: controller.signal });
+  const started = performance.now();
+  controller.abort();
+  const result = await session;
+  assert.equal(result.outcome, 'aborted');
+  assert.ok(performance.now() - started < 3000, 'the 60 s wait must not run out');
+  await assert.rejects(fetch(url), /fetch failed/);
+});
+
+test('a session whose signal is already aborted settles without waiting', async () => {
+  const result = await runAnnotateSession({ png: PNG, width: 400, height: 200, waitMs: 60000, signal: AbortSignal.abort(), open: async () => {} });
+  assert.equal(result.outcome, 'aborted');
+});
+
 test('a browser that cannot open rejects with the page address', async () => {
   await assert.rejects(
     runAnnotateSession({ png: PNG, width: 400, height: 200, waitMs: 50, open: async () => { throw new Error('no browser'); } }),

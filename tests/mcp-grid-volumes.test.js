@@ -9,7 +9,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { createAgentRuntime } from '../scripts/agent-runtime.mjs';
 import { createAgentMcpServer } from '../scripts/mcp-server.mjs';
 import { encodeVolumeGrid } from '../src/volume-grid.js';
-import { GRID_DIRECTORY_VARIABLE, readVolumeGridFiles } from '../src/mcp-volume-grids.js';
+import { GRID_DIRECTORY_VARIABLE, readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grids.js';
 import { decodePngPixels, meanBrightness } from './support/png-pixels.mjs';
 
 // Grid volumes through the MCP render path (#1161): the server reads the .67vg files a recipe names and hands their bytes to the preview page, which has
@@ -131,4 +131,20 @@ test('grid bytes are bounded by name: one sequence may not pass its byte budget'
   assert.throws(() => readVolumeGridFiles(gridRecipe({ frames }), gridFolder), /over the 268435456 byte limit for a sequence/);
   await writeFile(join(gridFolder, 'huge.67vg'), Buffer.alloc(64 * 1024 * 1024 + 8192));
   assert.throws(() => readVolumeGridFiles(gridRecipe({ grid: 'huge.67vg' }), gridFolder), /over the 67108864 byte limit; convert it with a lower --max-resolution/);
+});
+
+test('volumeGridFileBytes sums distinct file sizes, stops at the combined limit and skips a list over the frame bound (#1246)', async context => {
+  const folder = await mkdtemp(join(tmpdir(), 'crucible-grid-bytes-'));
+  context.after(() => rm(folder, { recursive: true, force: true }));
+  await writeFile(join(folder, 'a.67vg'), Buffer.alloc(10));
+  await writeFile(join(folder, 'b.67vg'), Buffer.alloc(25));
+  assert.equal(volumeGridFileBytes(gridRecipe({ frames: ['a.67vg', 'b.67vg', 'a.67vg', 'missing.67vg'] }), folder), 35);
+  const overBound = Array.from({ length: 513 }, (unused, index) => `n${index}.67vg`);
+  assert.equal(volumeGridFileBytes(gridRecipe({ frames: overBound }), folder), 0);
+  assert.throws(() => readVolumeGridFiles(gridRecipe({ frames: overBound }), folder), /at most 512/);
+  await writeFile(join(folder, 'big.67vg'), Buffer.alloc(64 * 1024 * 1024 + 1));
+  const copies = Array.from({ length: 4 }, (unused, index) => `copy${index}.67vg`);
+  for (const name of copies) await writeFile(join(folder, name), Buffer.alloc(40 * 1024 * 1024));
+  const total = volumeGridFileBytes(gridRecipe({ frames: ['big.67vg', ...copies] }), folder);
+  assert.equal(total, 64 * 1024 * 1024 + 1, 'counting stops at the first file that passes the limit');
 });

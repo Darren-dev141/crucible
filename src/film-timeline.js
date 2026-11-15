@@ -7,6 +7,8 @@ export const FILM_TIMELINE_LIMITS = Object.freeze({
 });
 
 const SHOT_NAME_PATTERN = /^[A-Za-z0-9_-]{1,24}$/;
+// A running sum of shot lengths can overshoot the motion by float rounding, as agent-motion-bake.js allows.
+const MOTION_END_TOLERANCE = 1e-9;
 const SHOT_FIELDS = ['name', 'duration', 'motionStart', 'camera', 'dip', 'focusDistance', 'blur'];
 const MAX_FOCUS_DISTANCE = 100000;
 
@@ -63,7 +65,7 @@ export function normalizeFilmTimeline(timeline, recipe, { checkCamera } = {}) {
     }
     if (animated && recipe.motion && !recipe.motion.loop) {
       const motionStart = result.motionStart ?? startSeconds;
-      if (motionStart + duration > recipe.motion.duration) {
+      if (motionStart + duration > recipe.motion.duration + MOTION_END_TOLERANCE) {
         throw new RangeError(`Shot ${shot.name} reads motion up to ${motionStart + duration} s but the motion lasts ${recipe.motion.duration} s. Set motionStart, or make the motion loop.`);
       }
     }
@@ -91,6 +93,11 @@ export function normalizeFilmTimeline(timeline, recipe, { checkCamera } = {}) {
     throw new RangeError(`The timeline lasts ${startSeconds} s; the most is ${FILM_TIMELINE_LIMITS.maxTotalSeconds} s.`);
   }
   return { shots: normalized };
+}
+
+/** Frames needed for a duration. A sum such as 0.1 + 0.2 lands a hair above its exact value and must not gain a whole frame. */
+export function videoFrameCount(fps, durationSeconds) {
+  return Math.ceil(fps * durationSeconds - 1e-9);
 }
 
 export function filmTimelineDuration(timeline) {

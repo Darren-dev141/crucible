@@ -171,9 +171,10 @@ function readBody(request) {
 
 /**
  * Serves one annotate page and waits for the person. `open(url)` shows the page (the runtime opens the browser; a test fetches it).
- * Resolves { outcome: 'sent' | 'cancelled' | 'timeout', url, marks?, image? }; a rejected `open` rejects with the page address.
+ * `signal` ends the wait early with outcome 'aborted'; the server and the timer are released at once.
+ * Resolves { outcome: 'sent' | 'cancelled' | 'timeout' | 'aborted', url, marks?, image? }; a rejected `open` rejects with the page address.
  */
-export async function runAnnotateSession({ png, width, height, prompt = '', maxMarks = ANNOTATE_LIMITS.maxMarks, waitMs, open }) {
+export async function runAnnotateSession({ png, width, height, prompt = '', maxMarks = ANNOTATE_LIMITS.maxMarks, waitMs, open, signal }) {
   const token = randomBytes(16).toString('hex');
   const base = `/${token}/`;
   const frameBytes = Buffer.from(png, 'base64');
@@ -224,6 +225,9 @@ export async function runAnnotateSession({ png, width, height, prompt = '', maxM
   });
   const url = `http://127.0.0.1:${server.address().port}${base}`;
   let timer;
+  const onAbort = () => finish({ outcome: 'aborted' });
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener('abort', onAbort, { once: true });
   try {
     try {
       await open(url);
@@ -234,6 +238,7 @@ export async function runAnnotateSession({ png, width, height, prompt = '', maxM
     return { url, ...await Promise.race([finished, timeout]) };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
     // Let the answer to the page finish: close idle connections now and any straggler after a second.
     const straggler = setTimeout(() => server.closeAllConnections?.(), 1000);
     await new Promise(resolve => {

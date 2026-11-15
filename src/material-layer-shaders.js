@@ -95,6 +95,18 @@ registerShaderFeatureCode('emissionFresnel', Object.freeze({
 `,
 }));
 
+// An emission mask (material-layers.js): a smoothstep ramp along one axis of the part's own space in metres, the boxPosition
+// varying that the vertex shader fills for this feature. Axis -1 means this part has no mask.
+registerShaderFeatureCode('emissionMask', Object.freeze({
+  declarations: 'uniform vec3 materialEmissionMask;\n',
+  emissionHook: `  if (materialEmissionMask.x > -0.5) {
+    float maskCoordinate = materialEmissionMask.x < 0.5 ? boxPosition.x : (materialEmissionMask.x < 1.5 ? boxPosition.y : boxPosition.z);
+    float maskRamp = clamp((maskCoordinate - materialEmissionMask.y) / (materialEmissionMask.z - materialEmissionMask.y), 0.0, 1.0);
+    emission *= maskRamp * maskRamp * (3.0 - 2.0 * maskRamp);
+  }
+`,
+}));
+
 registerShaderFeatureCode('anisotropy', Object.freeze({
   declarations: ANISOTROPY_DECLARATIONS,
   illuminateSpecular: ANISOTROPY_ILLUMINATE_SPECULAR,
@@ -226,13 +238,13 @@ uniform float ${name}On;
 
 registerShaderFeatureCode('clearcoatTexture', Object.freeze({
   declarations: textureUniforms('clearcoatTexture') + COAT_STATE_DECLARATIONS,
-  mainSetup: COAT_STATE_SETUP + `  if (clearcoatTextureOn > 0.5) coatState.x *= (BOX_MAPPED ? sampleBox(clearcoatTexture) : texture(clearcoatTexture, textureUV)).r;
+  mainSetup: COAT_STATE_SETUP + `  if (clearcoatTextureOn > 0.5) coatState.x *= (BOX_MAPPED ? sampleBox(clearcoatTexture) : texture(clearcoatTexture, mapUV(clearcoatTextureOn))).r;
 `,
 }));
 
 registerShaderFeatureCode('clearcoatRoughnessTexture', Object.freeze({
   declarations: textureUniforms('clearcoatRoughnessTexture') + COAT_STATE_DECLARATIONS,
-  mainSetup: COAT_STATE_SETUP + `  if (clearcoatRoughnessTextureOn > 0.5) coatState.y *= texture(clearcoatRoughnessTexture, textureUV).g;
+  mainSetup: COAT_STATE_SETUP + `  if (clearcoatRoughnessTextureOn > 0.5) coatState.y *= texture(clearcoatRoughnessTexture, mapUV(clearcoatRoughnessTextureOn)).g;
 `,
 }));
 
@@ -242,8 +254,9 @@ registerShaderFeatureCode('clearcoatNormalTexture', Object.freeze({
   if (doubleSided > 0.5 && !gl_FrontFacing) normal = -normal;
   vec3 positionX = dFdx(worldPosition);
   vec3 positionY = dFdy(worldPosition);
-  vec2 uvX = dFdx(textureUV);
-  vec2 uvY = dFdy(textureUV);
+  vec2 normalCoordinates = mapUV(clearcoatNormalTextureOn);
+  vec2 uvX = dFdx(normalCoordinates);
+  vec2 uvY = dFdy(normalCoordinates);
   float uvScale = max(max(abs(uvX.x), abs(uvX.y)), max(abs(uvY.x), abs(uvY.y)));
   if (uvScale == 0.0) return normal;
   uvX /= uvScale;
@@ -258,7 +271,7 @@ registerShaderFeatureCode('clearcoatNormalTexture', Object.freeze({
   tangent = normalize(tangent / tangentScale);
   float handedness = dot(cross(normal, tangent), bitangent) < 0.0 ? -1.0 : 1.0;
   bitangent = normalize(cross(normal, tangent)) * handedness;
-  vec3 mapped = mat3(tangent, bitangent, normal) * (texture(clearcoatNormalTexture, textureUV).xyz * 2.0 - 1.0);
+  vec3 mapped = mat3(tangent, bitangent, normal) * (texture(clearcoatNormalTexture, normalCoordinates).xyz * 2.0 - 1.0);
   return dot(mapped, mapped) > 1e-12 ? normalize(mapped) : normal;
 }
 `,
@@ -268,20 +281,20 @@ registerShaderFeatureCode('clearcoatNormalTexture', Object.freeze({
 
 registerShaderFeatureCode('sheenColorTexture', Object.freeze({
   declarations: textureUniforms('sheenColorTexture') + SHEEN_STATE_DECLARATIONS,
-  mainSetup: SHEEN_STATE_SETUP + `  if (sheenColorTextureOn > 0.5) sheenState.rgb *= texture(sheenColorTexture, textureUV).rgb;
+  mainSetup: SHEEN_STATE_SETUP + `  if (sheenColorTextureOn > 0.5) sheenState.rgb *= texture(sheenColorTexture, mapUV(sheenColorTextureOn)).rgb;
 `,
 }));
 
 registerShaderFeatureCode('sheenRoughnessTexture', Object.freeze({
   declarations: textureUniforms('sheenRoughnessTexture') + SHEEN_STATE_DECLARATIONS,
-  mainSetup: SHEEN_STATE_SETUP + `  if (sheenRoughnessTextureOn > 0.5) sheenState.w *= texture(sheenRoughnessTexture, textureUV).a;
+  mainSetup: SHEEN_STATE_SETUP + `  if (sheenRoughnessTextureOn > 0.5) sheenState.w *= texture(sheenRoughnessTexture, mapUV(sheenRoughnessTextureOn)).a;
 `,
 }));
 
 registerShaderFeatureCode('anisotropyTexture', Object.freeze({
   declarations: ANISOTROPY_DECLARATIONS + textureUniforms('anisotropyTexture') + `#define ANISOTROPY_TEXTURE
 void applyAnisotropyTexture(vec3 normal) {
-  vec3 sampled = texture(anisotropyTexture, textureUV).rgb;
+  vec3 sampled = texture(anisotropyTexture, mapUV(anisotropyTextureOn)).rgb;
   vec2 direction = sampled.rg * 2.0 - 1.0;
   float cosine = cos(materialAnisotropy.y);
   float sine = sin(materialAnisotropy.y);
@@ -340,11 +353,12 @@ layerTextureSupport.bind = (renderer, mapState, layerState, batch) => {
     const transform = mapState[MAP_STATE_NORMAL_MAP]?.uvTransform ?? IDENTITY_NORMAL_MAP_TRANSFORM;
     context.uniform4f(uniformOf(renderer, 'normalMapTransform'), ...transform);
   }
+  if (renderer.shaderFeatures.has('emissionMask')) context.uniform3f(uniformOf(renderer, 'materialEmissionMask'), layerState[25], layerState[26], layerState[27]);
   layerTextureNamesOf(renderer).forEach((name, index) => {
     const descriptor = layerMaps?.[name];
     context.activeTexture(context.TEXTURE0 + LAYER_TEXTURE_UNIT + index);
     context.bindTexture(context.TEXTURE_2D, descriptor ? renderer.createTexture(descriptor) : renderer.whiteTexture);
     context.uniform1i(uniformOf(renderer, name), LAYER_TEXTURE_UNIT + index);
-    context.uniform1f(uniformOf(renderer, `${name}On`), descriptor ? 1 : 0);
+    context.uniform1f(uniformOf(renderer, `${name}On`), descriptor ? 1 + (descriptor.uvChannel ?? 0) : 0);
   });
 };

@@ -1,6 +1,10 @@
 import './support/load-agent-scene-modules.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { writeWebBuild } from '../scripts/web-export.mjs';
 import { createAgentScene } from '../src/agent-scene.js';
 import { startGame } from '../src/game.js';
 import { GAME_ANIMATION_LIMITS } from '../src/game-animation.js';
@@ -155,6 +159,81 @@ test('an NPC follows a path from the recipe, blends into walk and stops at the e
     assert.equal(game.npcs[0].graph.get('speed'), 0, 'the NPC returns to idle');
   } finally {
     finish();
+  }
+});
+
+test('restart() resets the player animation graph to time 0', async () => {
+  const recipe = setGame(sceneWith(characterNodes()), { player: { node: 'Walker', walkSpeed: WALK_SPEED, runSpeed: RUN_SPEED, animation: locomotionAnimation() } });
+  const { game, finish } = await startRecipe(recipe, { version: 1, samples: 600, events: [[1, 'keyboard/KeyW', 1]] });
+  try {
+    for (let frame = 0; frame < 30; frame++) game.runtime.step(FRAME_MILLISECONDS);
+    assert.ok(game.animation.time > 0, 'the graph advanced while the player walked');
+    await game.restart();
+    assert.equal(game.animation.time, 0);
+  } finally {
+    finish();
+  }
+});
+
+test('restart() puts an NPC back at its start and sends it along its path again', async () => {
+  const nodes = [...characterNodes(), ...characterNodes('Npc').map(node => ({ ...node, ...(node.id === 'NpcWalker' ? { translation: [4, 0, 0] } : {}) }))];
+  const npc = { node: 'NpcWalker', path: [[4, -6], [8, -6]], cruiseSpeed: WALK_SPEED, animation: prefixedAnimation('Npc') };
+  const recipe = setGame(sceneWith(nodes), { player: { node: 'Walker' }, npcs: [npc] });
+  const { game, finish } = await startRecipe(recipe, { version: 1, samples: 1, events: [] });
+  try {
+    const follower = game.npcs[0].follower;
+    for (let frame = 0; frame < 60 * 20 && follower.state.status !== 'arrived'; frame++) game.runtime.step(FRAME_MILLISECONDS);
+    assert.equal(follower.state.status, 'arrived');
+    await game.restart();
+    assert.equal(follower.state.status, 'moving');
+    assert.deepEqual(follower.state.position, [4, 0, 0]);
+    assert.equal(game.npcs[0].graph.time, 0, 'the NPC graph starts from time 0');
+    for (let frame = 0; frame < 60 * 20 && follower.state.status !== 'arrived'; frame++) game.runtime.step(FRAME_MILLISECONDS);
+    assert.equal(follower.state.status, 'arrived', 'the NPC walks the path a second time');
+  } finally {
+    finish();
+  }
+});
+
+test('an NPC under a translated parent is placed relative to it and stays put on the first frame', async () => {
+  const nodes = [{ id: 'Platform', translation: [20, 0, 0] }, ...characterNodes(), ...characterNodes('Npc').map(node => (node.id === 'NpcWalker' ? { ...node, parent: 'Platform', translation: [0, 0, 0] } : node))];
+  const npc = { node: 'NpcWalker', path: [[20, -6]], cruiseSpeed: WALK_SPEED, animation: prefixedAnimation('Npc') };
+  const recipe = setGame(sceneWith(nodes), { player: { node: 'Walker' }, npcs: [npc] });
+  const { game, finish } = await startRecipe(recipe, { version: 1, samples: 1, events: [] });
+  try {
+    game.runtime.step(FRAME_MILLISECONDS);
+    assert.ok(Math.abs(nodeNamed(game.scene, 'NpcWalker').translation[0]) < 0.1, `local x ${nodeNamed(game.scene, 'NpcWalker').translation[0]}`);
+  } finally {
+    finish();
+  }
+});
+
+test('an NPC under a rotated or scaled parent is refused by set-game, startGame and the web export, naming the parent and the fix', async () => {
+  const nodesUnder = parentFields => [{ id: 'Platform', translation: [20, 0, 0], ...parentFields }, ...characterNodes(), ...characterNodes('Npc').map(node => (node.id === 'NpcWalker' ? { ...node, parent: 'Platform' } : node))];
+  const npc = { node: 'NpcWalker', path: [[20, -6]], cruiseSpeed: WALK_SPEED, animation: prefixedAnimation('Npc') };
+  const refusal = /game\.npcs\[\]\.node "NpcWalker" sits under the parent "Platform".*only a translation/;
+  assert.throws(rejection({ player: { node: 'Walker' }, npcs: [npc] }, nodesUnder({ scale: [2, 2, 2] })), refusal);
+  assert.throws(rejection({ player: { node: 'Walker' }, npcs: [npc] }, nodesUnder({ rotation: [0, 0.7071068, 0, 0.7071068] })), refusal);
+
+  const recipe = setGame(sceneWith(nodesUnder({})), { player: { node: 'Walker' }, npcs: [npc] });
+  recipe.nodes.find(node => node.id === 'Platform').scale = [2, 2, 2];
+  const previous = { request: globalThis.requestAnimationFrame, cancel: globalThis.cancelAnimationFrame };
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.cancelAnimationFrame = () => {};
+  try {
+    await assert.rejects(startGame({}, recipe, { replay: { version: 1, samples: 1, events: [] }, showStatus: false, createRenderer: standInRenderer }), refusal);
+  } finally {
+    globalThis.requestAnimationFrame = previous.request;
+    globalThis.cancelAnimationFrame = previous.cancel;
+  }
+  const buildDirectory = await mkdtemp(join(tmpdir(), 'crucible-npc-build-'));
+  const outputDirectory = await mkdtemp(join(tmpdir(), 'crucible-npc-output-'));
+  try {
+    await assert.rejects(writeWebBuild({ recipe, buildDirectory, outputDirectory }), refusal);
+    assert.deepEqual(await readdir(outputDirectory), [], 'a refused export writes nothing');
+  } finally {
+    await rm(buildDirectory, { recursive: true, force: true });
+    await rm(outputDirectory, { recursive: true, force: true });
   }
 });
 

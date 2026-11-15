@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createAgentScene } from '../src/agent-scene.js';
 import { freePort } from './helpers/free-port.js';
+import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
 
 function sceneRecipe(tracks, extra = {}) {
   return {
@@ -99,7 +100,7 @@ test('a sunset changes the sun and sky between two frames of a render', async (c
   try {
     ({ chromium } = await import('playwright'));
   } catch {
-    context.skip('playwright is not installed');
+    skipOrThrow(context, 'playwright is not installed');
     return;
   }
   const port = await freePort();
@@ -112,9 +113,9 @@ test('a sunset changes the sun and sky between two frames of a render', async (c
   let browser;
   try {
     try {
-      browser = await chromium.launch({ headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-webgl', '--ignore-gpu-blocklist'] });
+      browser = await launchChrome(chromium);
     } catch (error) {
-      context.skip(`Chrome did not start: ${error.message.split('\n')[0]}`);
+      skipOrThrow(context, `Chrome did not start: ${error.message.split('\n')[0]}`);
       return;
     }
     const page = await browser.newPage({ viewport: { width: 64, height: 64 } });
@@ -160,5 +161,20 @@ test('a sunset changes the sun and sky between two frames of a render', async (c
   } finally {
     await browser?.close();
     server.kill();
+  }
+});
+
+test('a recipe path such as environment.lightDirection is not a track; the error names the sun track that moves the key light (#1342)', () => {
+  const pathTrack = { target: 'environment.lightDirection', keyframes: keys([0.3, 0.9, 0.2], [-0.6, 0.5, 0.1]) };
+  assert.throws(() => createAgentScene(sceneRecipe([pathTrack])), /motion\.tracks\[0\]\.target.*not a path.*use \{ "kind": "sun", "property": "direction" \}.*an HDRI included/);
+  assert.throws(() => createAgentScene(sceneRecipe([{ ...pathTrack, target: 'environment.keyIntensity' }])), /"property": "intensity"/);
+  assert.throws(() => createAgentScene(sceneRecipe([{ ...pathTrack, target: 'effects.exposure' }])), /kinds: node, material, camera/);
+});
+
+test('a sun direction track sweeps the key light under a world sky as it does without one (#1342)', () => {
+  for (const environment of [{}, { world: true }]) {
+    const scene = createAgentScene(sceneRecipe([{ kind: 'sun', property: 'direction', keyframes: keys([0.3, 0.9, 0.2], [-0.6, 0.5, 0.1]) }], { environment }));
+    scene.sampleMotion(2);
+    assert.deepEqual(scene.environment.lightDirection.map(value => Number(value.toFixed(3))), [-0.6, 0.5, 0.1]);
   }
 });

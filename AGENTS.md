@@ -37,11 +37,18 @@ It runs the gates of the `Test` workflow that apply to the files your branch cha
 tool schemas, size, tool cost, the build, the unit tests with coverage and the coverage gate. It keeps going after a failure,
 writes each log to `artifacts/preflight/`, prints only the tail of a failing log and ends with one line per check and its fix.
 `--skip-tests` skips the slow test pass while you iterate, and `--json` adds a machine-readable summary.
-Run the full preflight once before you push. A green preflight means the `test` check should pass.
+Run the full preflight once before you push. A green preflight covers the PR gates, the site build, size and tool cost; the `test` workflow also runs `npm audit`, the `package` job (`prepare:release`, `check:links:package`, `check:published-site`, `smoke:package`, `smoke:mcp-package`), the bun smoke and the `COOK_DISABLE=1` leg, which only CI runs.
 `npm ci` installs a pre-push hook that runs `npm run preflight -- --skip-tests` and stops a push that would fail those gates.
 `SKIP_PREFLIGHT=1 git push` skips it once; use that only for a push you know the gates do not cover.
 
 For one test file: `node --test tests/<area>.test.js`.
+
+Between one file and the full pass, while you iterate (each prints at most about 20 lines for 10 failures and writes the full TAP to `artifacts/test-logs/`):
+
+- `npm run test:affected -- src/foo.js`: every test file that mentions the file, or a module that re-exports it. With no files it uses what your branch changed.
+- `npm run test:fast`: a deterministic 10 percent of the test files, seeded by the branch name (`-- --seed <text> --percent <n>`).
+- `npm run test:mutation-check -- tests/foo.test.js`: reverts your `src/`, `bin/` and `packages/` changes, runs the tests, lists the ones that fail and restores the tree. It exits 1 when every test still passes, which means the test does not pin your fix. Stage unstaged edits outside those folders first, and `git add -N` new files under them.
+- `npm test -- --test-reporter=./scripts/test-compact-reporter.mjs` gives the full pass the same short output.
 
 ## Rules that fail a pull request
 

@@ -131,6 +131,9 @@ function createSplatPacker(data) {
 }
 
 function checkSplatInput(data, matrix, maximumCount, caller) {
+  if (!(typeof maximumCount === 'number' && maximumCount > 0)) {
+    throw new RangeError(`maximumCount must be a positive number (it is capped at ${MAXIMUM_SPLAT_COUNT}), got ${String(maximumCount)}`);
+  }
   const limit = Math.min(maximumCount, MAXIMUM_SPLAT_COUNT);
   if (!(data?.count > 0)) throw new Error(`${caller} needs parsed splat data with at least one splat`);
   if (data.count > limit) throw new RangeError(`Gaussian splat scene holds ${data.count} splats, over the limit of ${limit}`);

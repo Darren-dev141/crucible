@@ -132,7 +132,7 @@ Every keyframe needs the same nonzero count of finite weights, and the target is
 
 `scene_export_glb` exports the active MCP scene, recipe or imported asset, with `--jobs` configured.
 The file goes to `<jobs>/exports/<uuid>.glb`; the call takes no path and the result has the path, `bytes`, `sha256`, `parts` and `clips`.
-The newest eight files stay, the GLB is at most 32 MiB, and `maxTextureSize` goes up to 4096.
+The newest eight files stay, counting the ones an earlier server run left in the folder, the GLB is at most 32 MiB, and `maxTextureSize` goes up to 4096.
 Without `clip` it writes the current pose: pattern and imported textures, skins, morph weights and IK as posed.
 `motionTime` seeks authored motion first and leaves the preview there, like `scene_look`.
 With `clip` (imported assets) it writes that source clip, translation, rotation, scale and weights, on the source skeleton, so the scene must carry no animation, node overrides or motion.

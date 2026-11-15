@@ -56,6 +56,28 @@ function boxPart(material, { secondUvSet = false } = {}) {
   return { name: 'Box', geometry, matrix: mat4.create(), material };
 }
 
+// exportGlb refuses a second UV map without lightUvs, so the invalid file is made by dropping the attribute from a valid one.
+function withoutAttribute(glb, attributeName) {
+  const view = new DataView(glb);
+  const jsonLength = view.getUint32(12, true);
+  const document = JSON.parse(new TextDecoder().decode(new Uint8Array(glb, 20, jsonLength)));
+  for (const mesh of document.meshes) {
+    for (const primitive of mesh.primitives) delete primitive.attributes[attributeName];
+  }
+  const jsonBytes = new TextEncoder().encode(JSON.stringify(document));
+  const paddedLength = Math.ceil(jsonBytes.length / 4) * 4;
+  const rest = new Uint8Array(glb, 20 + jsonLength);
+  const output = new Uint8Array(20 + paddedLength + rest.length);
+  output.set(new Uint8Array(glb, 0, 20));
+  output.fill(0x20, 20, 20 + paddedLength);
+  output.set(jsonBytes, 20);
+  output.set(rest, 20 + paddedLength);
+  const outputView = new DataView(output.buffer);
+  outputView.setUint32(8, output.length, true);
+  outputView.setUint32(12, paddedLength, true);
+  return output.buffer;
+}
+
 function layeredMaterial() {
   const layerMaps = {};
   LAYER_TEXTURE_SLOTS.forEach(([, property, colorSpace], index) => {
@@ -108,7 +130,8 @@ test('an occlusion texture on TEXCOORD_1 round trips with the second UV set', as
 
 test('a texture that needs a second UV set the mesh lacks is dropped with a warning and the mesh loads', async () => {
   const material = { name: 'Painted', color: [1, 1, 1], metallic: 0, roughness: 0.5, occlusionMap: descriptorFor(9, 'linear', 1) };
-  const imported = await parseGltf(exportGlb([boxPart(material)]));
+  const valid = exportGlb([boxPart(material, { secondUvSet: true })]);
+  const imported = await parseGltf(withoutAttribute(valid, 'TEXCOORD_1'));
   assert.equal(imported.parts.length, 1);
   assert.equal(imported.parts[0].material.occlusionMap, undefined);
   assert.ok(imported.warnings.some(warning => /Dropped occlusionTexture from primitives without TEXCOORD_1.*material 0/.test(warning)));
@@ -132,12 +155,12 @@ test('a base color map alone on the second UV set is promoted to the first set',
   assert.ok(imported.warnings.some(warning => /material 0.*TEXCOORD_1/.test(warning)));
 });
 
-test('a base color map on the second UV set beside a first-set map is dropped with the material named', async () => {
+test('a base color map on the second UV set beside a first-set map keeps both maps', async () => {
   const material = { name: 'Mixed', color: [1, 1, 1], metallic: 0, roughness: 0.5, map: descriptorFor(6, 'srgb', 1), emissiveMap: descriptorFor(2, 'srgb', 0) };
   const imported = await parseGltf(exportGlb([boxPart(material, { secondUvSet: true })]));
-  assert.equal(imported.parts[0].material.map, undefined);
-  assert.ok(imported.parts[0].material.emissiveMap);
-  assert.ok(imported.warnings.some(warning => /Dropped baseColorTexture of material 0/.test(warning)));
+  assert.equal(imported.parts[0].material.map.uvChannel, 1);
+  assert.equal(imported.parts[0].material.emissiveMap.uvChannel, 0);
+  assert.deepEqual(imported.warnings, []);
 });
 
 test('layer texture features splice their sampler once and guard shared code, whatever order they come in', () => {

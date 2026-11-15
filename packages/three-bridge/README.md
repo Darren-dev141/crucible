@@ -1,6 +1,6 @@
 # @codepawlhq/crucible-three-bridge
 
-Optional addon that imports a three.js object tree as Crucible parts and builds three.js meshes from Crucible parts. It imports neither `three` nor Crucible. `three` is a peer dependency of this package only; the core gains none. Not part of the core `crucible` archive.
+Optional addon that imports a three.js object tree as Crucible parts and builds three.js meshes from Crucible parts. It imports neither `three` nor Crucible. `three` is a peer dependency of this package only; the core gains none. Not part of the core `crucible` archive and not on npm yet: import it from this folder in a source checkout.
 
 ```js
 import * as THREE from 'three';

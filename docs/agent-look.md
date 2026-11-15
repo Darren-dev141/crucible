@@ -70,9 +70,9 @@ A recipe names a file; it never carries a path or a URL, and nothing is download
 | `sky-clouds` | `environment.hdri` | Poly Haven `kloofendal_48d_partly_cloudy_puresky`, CC0, shrunk to 128 x 64 |
 | `studio-softbox` | `environment.hdri` | Poly Haven `studio_small_03`, CC0, shrunk to 128 x 64 |
 | `teal-orange`, `noir` | `environment.look` | made for Crucible, CC0, 9 points per side |
-| 64-character ID | either | a `.hdr` or `.cube` file (4 MiB at most) in the MCP `--assets` directory, listed by `scene_asset_catalog` as kind `environment` or `look` |
+| 64-character ID | either | a `.hdr` or `.cube` file (an `.hdr` up to 8 MiB, which fits the 2k files from Poly Haven, and a `.cube` up to 4 MiB; a larger file is skipped and listed with a reason, it does not fail the catalog) in the MCP `--assets` directory, listed by `scene_asset_catalog` as kind `environment` or `look` |
 
-The four shipped files total about 100 KB. For a bigger HDRI, put a 1k or 2k `.hdr` (for example from Poly Haven) in the assets directory and use its ID. Outside MCP, decode with `parseRadianceHdr` or `parseCube` and register with `registerCatalogEnvironment(name, data)` or `registerCatalogLook(name, look)` from `src/look-catalog.js` before building the scene. The look needs the `view-transform-shader` module (`loadAgentSceneModules` loads it). Render jobs light the scene with the same entries.
+The four shipped files total about 100 KB. For a bigger HDRI, put a 2k or smaller `.hdr` (for example from Poly Haven; the 2k files are about 5 to 7 MiB) in the assets directory and use its ID. Outside MCP, decode with `parseRadianceHdr` or `parseCube` and register with `registerCatalogEnvironment(name, data)` or `registerCatalogLook(name, look)` from `src/look-catalog.js` before building the scene. The look needs the `view-transform-shader` module (`loadAgentSceneModules` loads it). Render jobs light the scene with the same entries.
 
 ## Atomic look commands
 
@@ -241,7 +241,7 @@ See [volume fog](https://crucible.codepawl.com/volumetric.md) for renderer requi
 The controls reuse `resolveEffects` with a preview bloom strength of `0.12`.
 Exposure remains independent and maps to `frame.exposure`.
 Bloom strength zero disables bloom.
-Ambient occlusion reads the depth texture, so it needs the HDR depth target that previews use. A renderer built without `depth: true` skips the pass and lists an `ambient-occlusion-without-depth` warning in `renderer.diagnostics` (the preview's render info carries it too). The program compiles and its half-resolution target allocates on first use. On SwiftShader at 960 by 540 it adds about 16 ms to a 190 ms frame (measured, 8 percent). It is off by default: against Cycles on 10 reference scenes it improved no score by more than 0.002 and made most slightly worse, because the largest gaps are cast shadow shape and reflections, not contact darkening. Pixels that direct light already brightens keep less of it, because occlusion belongs to indirect light.
+Ambient occlusion reads the depth texture, so it needs the HDR depth target that previews use. A renderer built without `depth: true` skips the pass and lists an `ambient-occlusion-without-depth` warning in `renderer.diagnostics` (the preview's render info carries it too). The program compiles and its half-resolution target allocates on first use. On SwiftShader at 960 by 540 it adds about 16 ms to a 190 ms frame (measured, 8 percent). It is off by default: against Cycles on 10 reference scenes it improved no score by more than 0.002 and made most slightly worse, because the largest gaps are cast shadow shape and reflections, not contact darkening. Pixels that direct light already brightens keep less of it, because occlusion belongs to indirect light. Each depth sample is rebuilt at the centre of the texel it was read from, so a flat wall at a slant stays unchanged instead of drawing vertical bands (the `corner` bench scene, FLIP against Cycles 0.1253 before, 0.1085 after, 0.1064 without the pass).
 
 | Field | Default | Range |
 | --- | --- | --- |

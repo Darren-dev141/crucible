@@ -49,3 +49,24 @@ test('an edit that changes nothing the probe sees keeps the traced probe', () =>
   scene.apply([{ type: 'set-environment', environment: { objectReflections: true } }], { expectedRevision: scene.inspect().revision });
   assert.equal(scene.parts.find(part => part.name === 'ball').material.environmentProbe, before);
 });
+
+function plainMaterial(material) {
+  const { environmentProbe, ...fields } = material;
+  return fields;
+}
+
+test('the object reflection cache is kept for an unchanged stage and replaced when a part moves', async () => {
+  const { stageObjectReflections } = await import('../src/agent-reflections.js');
+  const scene = createAgentScene(stillLife());
+  const recipe = scene.exportRecipe();
+  const sourceParts = scene.parts.map(part => ({ name: part.name, geometry: part.geometry, material: plainMaterial(part.material), matrix: Float32Array.from(part.matrix) }));
+  const worldMatrices = new Map(sourceParts.map(part => [part.name, part.matrix]));
+  const graph = { getNode: name => ({ worldMatrix: worldMatrices.get(name) }) };
+  const staged = { ...recipe, environment: { keyColor: [1, 1, 1], pointLights: [], spotLights: [], areaLights: [], ...recipe.environment } };
+  const first = stageObjectReflections(null, staged, sourceParts, sourceParts, graph, null);
+  assert.equal(stageObjectReflections(first, staged, sourceParts, sourceParts, graph, null), first);
+  worldMatrices.get('ball')[13] += 1;
+  const moved = stageObjectReflections(first, staged, sourceParts, sourceParts, graph, null);
+  assert.notEqual(moved, first);
+  assert.equal(stageObjectReflections(moved, staged, sourceParts, sourceParts, graph, null), moved);
+});

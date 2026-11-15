@@ -9,6 +9,8 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { startNetcodeRelay } from '../scripts/netcode-relay.mjs';
+import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { STEP_DEADLINE_MILLISECONDS, watchPage, withDeadline } from './helpers/with-deadline.js';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SERVED_FOLDERS = ['/src/', '/scripts/netcode-sample.'];
@@ -62,11 +64,11 @@ async function waitUntil(condition, description, timeoutMilliseconds = 5000) {
 }
 
 async function measureLag(sender, receiver, movingId, input) {
-  const watching = receiver.evaluateHandle(([id, distance]) => window.sample.whenEntityMoves(id, distance), [movingId, MOVE_DISTANCE]);
+  const watching = watchPage(receiver, `the move of ${movingId} to show on the other page`, ([id, distance]) => window.sample.whenEntityMoves(id, distance), [movingId, MOVE_DISTANCE]);
   await pause(50);
-  const sentAt = await sender.evaluate(value => window.sample.setInput(value), input);
-  const seenAt = await (await watching).jsonValue();
-  await sender.evaluate(() => window.sample.setInput({ moveX: 0, moveZ: 0 }));
+  const sentAt = await withDeadline(sender.evaluate(value => window.sample.setInput(value), input), 'the sending page to take its input');
+  const seenAt = await watching;
+  await withDeadline(sender.evaluate(() => window.sample.setInput({ moveX: 0, moveZ: 0 })), 'the sending page to stop');
   await pause(700);
   return seenAt - sentAt;
 }
@@ -76,7 +78,7 @@ async function measureLag(sender, receiver, movingId, input) {
 async function measureBaseline(sender, receiver) {
   const samples = [];
   for (let ping = 0; ping < BASELINE_PINGS; ping += 1) {
-    const arriving = receiver.evaluateHandle(() => new Promise(resolve => {
+    const arriving = watchPage(receiver, 'a baseline message to reach the other page', () => new Promise(resolve => {
       const channel = new BroadcastChannel('crucible-netcode-baseline');
       channel.onmessage = event => requestAnimationFrame(() => {
         channel.close();
@@ -84,12 +86,12 @@ async function measureBaseline(sender, receiver) {
       });
     }));
     await pause(30);
-    await sender.evaluate(() => {
+    await withDeadline(sender.evaluate(() => {
       const channel = new BroadcastChannel('crucible-netcode-baseline');
       channel.postMessage(Date.now());
       setTimeout(() => channel.close(), 100);
-    });
-    samples.push(await (await arriving).jsonValue());
+    }), 'the sending page to post a baseline message');
+    samples.push(await arriving);
   }
   samples.sort((first, second) => first - second);
   return samples[Math.floor(samples.length / 2)];
@@ -114,11 +116,11 @@ async function playTogether(context, transport, relayUrl) {
   const hostPage = await context.newPage();
   const clientPage = await context.newPage();
   const base = context.baseUrl;
-  await hostPage.goto(`${base}/scripts/netcode-sample.html?role=host&${query}`);
-  await clientPage.goto(`${base}/scripts/netcode-sample.html?role=client&${query}`);
-  await hostPage.evaluate(() => window.sampleReady);
-  await clientPage.evaluate(() => window.sampleReady);
-  await clientPage.waitForFunction(() => window.sample.netcode.stats.snapshotsReceived > 5, null, { timeout: 10000 });
+  await hostPage.goto(`${base}/scripts/netcode-sample.html?role=host&${query}`, { timeout: STEP_DEADLINE_MILLISECONDS });
+  await clientPage.goto(`${base}/scripts/netcode-sample.html?role=client&${query}`, { timeout: STEP_DEADLINE_MILLISECONDS });
+  await withDeadline(hostPage.evaluate(() => window.sampleReady), 'the host page to be ready');
+  await withDeadline(clientPage.evaluate(() => window.sampleReady), 'the client page to be ready');
+  await clientPage.waitForFunction(() => window.sample.netcode.stats.snapshotsReceived > 5, null, { timeout: STEP_DEADLINE_MILLISECONDS });
   await pause(500);
 
   const hostToClientLag = await measureNetcodeLag(hostPage, clientPage, 'alice', { moveX: 1, moveZ: 0 });
@@ -127,28 +129,19 @@ async function playTogether(context, transport, relayUrl) {
   // Both players steer at once, then stop and let the last packets land.
   const turns = [{ moveX: 1, moveZ: 0.5 }, { moveX: -1, moveZ: 1 }, { moveX: 0, moveZ: -1 }];
   for (const turn of turns) {
-    await hostPage.evaluate(value => window.sample.setInput(value), turn);
-    await clientPage.evaluate(value => window.sample.setInput({ moveX: -value.moveX, moveZ: value.moveZ }), turn);
+    await withDeadline(hostPage.evaluate(value => window.sample.setInput(value), turn), 'the host page to steer');
+    await withDeadline(clientPage.evaluate(value => window.sample.setInput({ moveX: -value.moveX, moveZ: value.moveZ }), turn), 'the client page to steer');
     await pause(400);
   }
-  await hostPage.evaluate(() => window.sample.setInput({ moveX: 0, moveZ: 0 }));
-  await clientPage.evaluate(() => window.sample.setInput({ moveX: 0, moveZ: 0 }));
+  await withDeadline(hostPage.evaluate(() => window.sample.setInput({ moveX: 0, moveZ: 0 })), 'the host page to stop');
+  await withDeadline(clientPage.evaluate(() => window.sample.setInput({ moveX: 0, moveZ: 0 })), 'the client page to stop');
   await pause(1200);
 
   const positions = {};
   for (const [name, page] of [['host', hostPage], ['client', clientPage]]) {
-    positions[name] = await page.evaluate(() => ({ alice: window.sample.position('alice'), bob: window.sample.position('bob'), stats: window.sample.netcode.stats }));
+    positions[name] = await withDeadline(page.evaluate(() => ({ alice: window.sample.position('alice'), bob: window.sample.position('bob'), stats: window.sample.netcode.stats })), `the ${name} page to report its positions`);
   }
   return { hostToClientLag, clientToHostLag, positions };
-}
-
-// Playwright's own browser download is not installed on CI, so fall back to the Google Chrome the runner already has.
-async function launchChrome(chromium) {
-  try {
-    return await chromium.launch({ headless: true });
-  } catch {
-    return chromium.launch({ headless: true, channel: 'chrome' });
-  }
 }
 
 for (const transport of ['broadcast', 'websocket']) {
@@ -156,11 +149,8 @@ for (const transport of ['broadcast', 'websocket']) {
     let chromium;
     try {
       ({ chromium } = await import('playwright'));
-    } catch (error) {
-      if (process.env.CI) {
-        throw error;
-      }
-      testContext.skip('playwright is not installed');
+    } catch {
+      skipOrThrow(testContext, 'playwright is not installed');
       return;
     }
     const server = await startStaticServer();
@@ -170,14 +160,10 @@ for (const transport of ['broadcast', 'websocket']) {
       try {
         browser = await launchChrome(chromium);
       } catch (error) {
-        // On CI the runner ships Chrome, so a launch failure there is a real failure, not a reason to skip.
-        if (process.env.CI) {
-          throw error;
-        }
-        testContext.skip(`Chrome did not start: ${error.message.split('\n')[0]}`);
+        skipOrThrow(testContext, `Chrome did not start: ${error.message.split('\n')[0]}`);
         return;
       }
-      const context = await browser.newContext();
+      const context = await withDeadline(browser.newContext(), 'the browser to open a context');
       context.baseUrl = `http://127.0.0.1:${server.address().port}`;
       const result = await playTogether(context, transport, relay ? `ws://127.0.0.1:${relay.port}/` : null);
       const { positions } = result;

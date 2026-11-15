@@ -47,7 +47,7 @@ const LOOK_RANGES = {
   light: { position: [-1e6, 1e6], direction: [-1e6, 1e6], color: [0, 1], intensity: [0, 1e5] },
   sun: { direction: [-1e6, 1e6], color: [0, 1000], intensity: [0, 100] },
   environment: {
-    skyTop: [0, 1], skyBottom: [0, 1], fogColor: [0, 1], fogDensity: [0, 10], volumeFogDensity: [0, 1000],
+    skyTop: [0, 1], skyBottom: [0, 1], fogColor: [0, 1], fogDensity: [0, 10], volumeFogDensity: [0, 10],
     ambientIntensity: [0, 100], fillIntensity: [0, 100], environmentIntensity: [0, 100], environmentRotation: [-100, 100],
     sunElevation: [-90, 90], sunRotation: [-360, 360], turbidity: [1, 10], groundAlbedo: [0, 1], aerialPerspective: [0, 4], ozone: [0, 10],
   },
@@ -55,8 +55,15 @@ const LOOK_RANGES = {
   geometry: { oceanTime: [-1e6, 1e6] },
 };
 const INTERPOLATIONS = ['LINEAR', 'STEP', 'SMOOTH', 'CUBICSPLINE'];
+// A recipe path such as environment.lightDirection is not a track field; the key light of the environment is the sun kind, under any sky (#1342).
+const TRACK_PATH_HINTS = {
+  'environment.lightDirection': '{ "kind": "sun", "property": "direction" }',
+  'environment.keyColor': '{ "kind": "sun", "property": "color" }',
+  'environment.keyIntensity': '{ "kind": "sun", "property": "intensity" }',
+};
 const MAX_IK_SOLVERS = 16;
 const IK_SWEEP_SAMPLES = 33;
+const TRACK_SWEEP_SAMPLES = 33;
 const CAMERA_DEFAULTS = { eye: [4, 3, 5], target: [0, 0, 0], up: [0, 1, 0], fov: 45, near: 0.1, far: 1000 };
 
 function validateValue(kind, property, value, valuePath = `${kind}.${property}`) {
@@ -521,6 +528,10 @@ export function normalizeAgentMotion(input, recipe) {
   const identities = new Set();
   let keyframeCount = 0;
   const tracks = inputTracks.map((track, index) => {
+    if (typeof track?.target === 'string' && !Object.hasOwn(track, 'kind')) {
+      const hint = TRACK_PATH_HINTS[track.target] ? `; for ${track.target} use ${TRACK_PATH_HINTS[track.target]}, which moves the sun under any sky, an HDRI included` : `; kinds: ${Object.keys(PROPERTIES).join(', ')}`;
+      throw invalidField(`motion.tracks[${index}].target`, track.target, `a field left out: a track names a "kind" and a "property", not a path, and its keys are "keyframes"${hint}`, TypeError);
+    }
     knownKeys(track, ['kind', 'id', 'property', 'interpolation', 'keyframes', 'extrapolation', 'modifiers'], 'motion track');
     if (!Object.hasOwn(PROPERTIES, track.kind) || !Object.hasOwn(PROPERTIES[track.kind], track.property)) {
       const known = Object.hasOwn(PROPERTIES, track.kind) ? ` ${track.kind} properties: ${Object.keys(PROPERTIES[track.kind]).join(', ')}.` : ` Kinds: ${Object.keys(PROPERTIES).join(', ')}.`;
@@ -550,6 +561,9 @@ export function normalizeAgentMotion(input, recipe) {
     const interpolation = track.interpolation ?? (track.property === 'visible' ? 'STEP' : 'LINEAR');
     if (!INTERPOLATIONS.includes(interpolation)) {
       throw invalidField(`motion.tracks[${index}].interpolation`, interpolation, `one of ${INTERPOLATIONS.join(', ')}`);
+    }
+    if (track.property === 'visible' && interpolation !== 'STEP') {
+      throw invalidField(`motion.tracks[${index}].interpolation`, interpolation, 'STEP, or the field left out, since a visible track is 1 (shown) or 0 (hidden) and cannot blend between them');
     }
     denseArray(track.keyframes, 64, 'Motion keyframes');
     keyframeCount += track.keyframes.length;
@@ -835,6 +849,41 @@ function copiedPatch(patch) {
 }
 
 /** Retains published maps and vectors. A failed sample leaves them unchanged. */
+function checkCameraLens(camera) {
+  for (const field of ['fov', 'near', 'far']) {
+    finite(camera[field], `Camera ${field}`);
+  }
+  if (Math.fround(camera.fov) <= 0 || Math.fround(camera.fov) >= 180 ||
+      Math.fround(camera.near) <= 0 || Math.fround(camera.far) <= Math.fround(camera.near)) {
+    throw invalidField('motion.tracks.camera', { fov: camera.fov, near: camera.near, far: camera.far }, 'a lens with fov above 0 and below 180, near above 0 and far above near, such as fov 50, near 0.1, far 100; check the fov, near and far tracks');
+  }
+}
+
+/**
+ * Samples every track at evenly spaced times across the clip, so interpolation, modifiers and extrapolation that leave a
+ * property's range are refused when the motion is set, not in the middle of a render. The error names the time.
+ */
+function sweepTrackValues(sampler, bindings, cameraPath, stagedCamera, duration) {
+  for (let sample = 0; sample < TRACK_SWEEP_SAMPLES; sample++) {
+    const time = duration * sample / (TRACK_SWEEP_SAMPLES - 1);
+    sampler.sample(time);
+    try {
+      for (const { track, staged } of bindings) {
+        validateValue(track.kind, track.property, staged.length === 1 ? staged[0] : staged);
+      }
+      if (cameraPath) {
+        cameraPath.sample(time, stagedCamera);
+        checkCameraLens(stagedCamera);
+      }
+    } catch (error) {
+      if (error instanceof RangeError) {
+        error.message = `${error.message.replace(/\.$/, '')}, reached at motion time ${Number(time.toFixed(3))} s by interpolation, modifiers or extrapolation (the keyframes alone may be in range).`;
+      }
+      throw error;
+    }
+  }
+}
+
 export function compileAgentMotion(input, recipe) {
   const motion = normalizeAgentMotion(input, recipe);
   if (motion === null) {
@@ -962,6 +1011,7 @@ export function compileAgentMotion(input, recipe) {
     for (const [id, translation] of ikEvaluator?.stagedTranslations ?? []) bases.set(id, { ...bases.get(id), translation });
     return bases;
   }
+  sweepTrackValues(sampler, bindings, cameraPath, stagedCamera, motion.duration);
   return Object.freeze({
     ikUsesStagedPose,
     driveSampler,
@@ -1045,13 +1095,7 @@ export function compileAgentMotion(input, recipe) {
       }
       if (cameraPath) {
         cameraPath.sample(time, stagedCamera, { overrides: cameraOverrides(evaluated?.looks) });
-        for (const field of ['fov', 'near', 'far']) {
-          finite(stagedCamera[field], `Camera ${field}`);
-        }
-        if (Math.fround(stagedCamera.fov) <= 0 || Math.fround(stagedCamera.fov) >= 180 ||
-            Math.fround(stagedCamera.near) <= 0 || Math.fround(stagedCamera.far) <= Math.fround(stagedCamera.near)) {
-          throw invalidField('motion.tracks.camera', { fov: stagedCamera.fov, near: stagedCamera.near, far: stagedCamera.far }, 'a lens with fov above 0 and below 180, near above 0 and far above near, such as fov 50, near 0.1, far 100; check the fov, near and far tracks');
-        }
+        checkCameraLens(stagedCamera);
       }
       // Publish only after every track, material product, camera pose, IK solve and constraint passes.
       for (const { track, patch, staged } of bindings) {

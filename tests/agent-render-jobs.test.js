@@ -182,7 +182,8 @@ test('cancel acknowledges immediately and blocks output publication after runner
 
 test('deadline aborts a cooperative callback and close detects an uncooperative callback without releasing its lock', async context => {
   const root = await temporary(context);
-  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 10 }, async run({ signal }) {
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 10 }, async run({ signal, startRenderClock }) {
+    startRenderClock();
     await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
     throw signal.reason;
   } });
@@ -190,6 +191,7 @@ test('deadline aborts a cooperative callback and close detects an uncooperative 
   const failed = await terminal(controller, jobId);
   assert.equal(failed.state, 'failed');
   assert.match(failed.reason, /deadline/);
+  assert.match(failed.reason, /submit the job again/);
   await controller.close();
   const started = deferred();
   const finish = deferred();
@@ -201,7 +203,7 @@ test('deadline aborts a cooperative callback and close detects an uncooperative 
   const hungJob = await hung.submit(request());
   await started.promise;
   await assert.rejects(hung.close(), /did not settle/);
-  await assert.rejects(createAgentRenderJobs({ root, limits, run: writeImage }), /live process/);
+  await assert.rejects(createAgentRenderJobs({ root, limits, run: writeImage }), /live process.*own --jobs folder/);
   finish.resolve();
   assert.equal((await terminal(hung, hungJob.jobId)).state, 'cancelled');
   await hung.close();
@@ -636,6 +638,62 @@ test('a path tracer job runs on the cpu unless it asks for the gpu, and film job
   await controller.close();
 });
 
+test('the elapsed deadline starts when rendering starts, so queue wait does not count against it (#1256)', async context => {
+  const root = await temporary(context);
+  // Mocked timers make the clocks deterministic: no wall-clock stall on a shared runner can expire the deadline.
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const queueWaitedPastDeadline = deferred();
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 100, queueWaitMs: 2000 }, async run(argumentsValue) {
+    await queueWaitedPastDeadline.promise;
+    argumentsValue.startRenderClock();
+    return writeImage(argumentsValue);
+  } });
+  const { jobId } = await controller.submit(request());
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  while (controller.status(jobId).state !== 'running') await settle();
+  context.mock.timers.tick(300);
+  assert.equal(controller.status(jobId).state, 'running', 'queue wait past the deadline must not fail the job');
+  queueWaitedPastDeadline.resolve();
+  while (!['completed', 'failed'].includes(controller.status(jobId).state)) await settle();
+  assert.equal(controller.status(jobId).state, 'completed');
+  context.mock.timers.reset();
+  await controller.close();
+});
+
+test('the queue wait must be a finite whole number of milliseconds within the bound (#1256)', async context => {
+  const root = await temporary(context);
+  for (const queueWaitMs of [Number.NaN, -1, 0, 1.5, 5 * 60 * 1000 + 1]) {
+    await assert.rejects(createAgentRenderJobs({ root, limits: { ...limits, queueWaitMs }, async run() {} }), /queueWaitMs must be within 1 and 300000/);
+  }
+});
+
+test('a job that waits past the queue bound fails with its own message (#1256)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 5000, queueWaitMs: 30 }, async run({ signal }) {
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    throw signal.reason;
+  } });
+  const { jobId } = await controller.submit(request());
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.reason, /queue wait deadline/);
+  await controller.close();
+});
+
+test('rendering that outlasts the elapsed deadline after the clock started still fails (#1256)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 40, queueWaitMs: 2000 }, async run({ signal, startRenderClock }) {
+    startRenderClock();
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    throw signal.reason;
+  } });
+  const { jobId } = await controller.submit(request());
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.reason, /elapsed deadline/);
+  await controller.close();
+});
+
 test('the deadline of a traced film covers every frame', () => {
   const renderer = { type: 'pathTracer', maxSeconds: 10 };
   const single = jobDeadlineMs({ frameCount: 1, width: 64, height: 64, renderer });
@@ -653,5 +711,212 @@ test('a job runs against the scene it was submitted for', async context => {
   const submitted = await controller.submit({ ...request(), sessionId: 'scene-a' });
   await terminal(controller, submitted.jobId);
   assert.deepEqual(scenesSeen, ['scene-a']);
+  await controller.close();
+});
+
+async function completedJob(controller) {
+  const { jobId } = await controller.submit(request());
+  assert.equal((await terminal(controller, jobId)).state, 'completed');
+  return jobId;
+}
+
+test('a release that stopped halfway is finished by a retry, and a new submit and a restart still work (#1246)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage });
+  const jobId = await completedJob(controller);
+  // The state a failed release leaves when every file is gone but the folder could not be removed: an empty folder with no owner file.
+  for (const filename of await readdir(join(root, jobId))) await unlink(join(root, jobId, filename));
+  const next = await controller.submit(request());
+  assert.equal((await terminal(controller, next.jobId)).state, 'completed');
+  assert.deepEqual(await controller.release(jobId), { jobId, released: true });
+  assert.equal((await readdir(root)).includes(jobId), false);
+  await controller.close();
+  const reopened = await createAgentRenderJobs({ root, limits, run: writeImage });
+  assert.deepEqual(reopened.list().map(record => record.jobId), [next.jobId]);
+  await reopened.close();
+});
+
+test('a half-deleted job folder is cleaned on restart instead of failing the store (#1246)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage });
+  const keptId = await completedJob(controller);
+  const halfId = await completedJob(controller);
+  const emptyId = await completedJob(controller);
+  await controller.close();
+  await unlink(join(root, halfId, 'status.json'));
+  for (const filename of await readdir(join(root, emptyId))) await unlink(join(root, emptyId, filename));
+  const reopened = await createAgentRenderJobs({ root, limits, run: writeImage });
+  assert.deepEqual(reopened.list().map(record => record.jobId), [keptId]);
+  const names = await readdir(root);
+  assert.equal(names.includes(halfId), false);
+  assert.equal(names.includes(emptyId), false);
+  await reopened.close();
+});
+
+test('a failed status write does not poison later writes, release or close, and the lock is given back (#1246)', async context => {
+  const root = await temporary(context);
+  let failedProgress;
+  const controller = await createAgentRenderJobs({ root, limits, async run({ directory, progress, ...rest }) {
+    const obstruction = join(directory, 'status.json.pending');
+    await mkdir(obstruction);
+    failedProgress = await progress({ frames: 1, maximumPendingFrames: 0 }).then(() => undefined, error => error);
+    await rm(obstruction, { recursive: true });
+    return writeImage({ directory, progress, ...rest });
+  } });
+  const jobId = await completedJob(controller);
+  assert.ok(failedProgress, 'the injected write failure must reach the runner');
+  assert.deepEqual(await controller.release(jobId), { jobId, released: true });
+  await controller.close();
+  assert.equal((await readdir(root)).includes('store.lock'), false);
+});
+
+test('close gives the lock back even when the last status write of an active job failed (#1246)', async context => {
+  const root = await temporary(context);
+  const started = deferred();
+  const controller = await createAgentRenderJobs({ root, limits, async run({ directory, signal }) {
+    await mkdir(join(directory, 'status.json.pending'));
+    started.resolve();
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    throw signal.reason;
+  } });
+  await controller.submit(request());
+  await started.promise;
+  await controller.close();
+  assert.equal((await readdir(root)).includes('store.lock'), false);
+});
+
+function fileInUse(path) {
+  return Object.assign(new Error(`EBUSY: resource busy or locked, unlink '${path}'`), { code: 'EBUSY' });
+}
+
+test('a release that fails midway keeps the owner file, and the store keeps working while a file stays held (#1246)', async context => {
+  const root = await temporary(context);
+  let heldFilename = 'render.png';
+  const removeJobFile = async path => {
+    if (heldFilename && path.endsWith(heldFilename)) throw fileInUse(path);
+    await unlink(path);
+  };
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { removeJobFile } });
+  const jobId = await completedJob(controller);
+  await assert.rejects(controller.release(jobId), error => {
+    assert.match(error.message, new RegExp(jobId));
+    assert.match(error.message, /open in another program/);
+    return true;
+  });
+  // The folder lost its status first and keeps owner.json last, so it still proves it is ours.
+  const leftover = await readdir(join(root, jobId));
+  assert.ok(leftover.includes('owner.json'));
+  assert.equal(leftover.includes('status.json'), false);
+  // The file is still held: a new job and a second release attempt must not fail with the raw filesystem error.
+  const next = await controller.submit(request());
+  assert.equal((await terminal(controller, next.jobId)).state, 'completed');
+  await assert.rejects(controller.release(jobId), /open in another program/);
+  await controller.close();
+  const whileHeld = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { removeJobFile } });
+  assert.deepEqual(whileHeld.list().map(record => record.jobId), [next.jobId]);
+  await whileHeld.close();
+  // The other program lets go: the next start finishes the release.
+  heldFilename = undefined;
+  const reopened = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { removeJobFile } });
+  assert.equal((await readdir(root)).includes(jobId), false);
+  assert.deepEqual(reopened.list().map(record => record.jobId), [next.jobId]);
+  await reopened.close();
+});
+
+test('a failed release can be retried to completion once the file is free (#1246)', async context => {
+  const root = await temporary(context);
+  let failuresLeft = 1;
+  const removeJobFile = async path => {
+    if (failuresLeft && path.endsWith('snapshot.json')) {
+      failuresLeft -= 1;
+      throw fileInUse(path);
+    }
+    await unlink(path);
+  };
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { removeJobFile } });
+  const jobId = await completedJob(controller);
+  await assert.rejects(controller.release(jobId), /open in another program/);
+  assert.ok((await readdir(join(root, jobId))).includes('owner.json'));
+  assert.deepEqual(await controller.release(jobId), { jobId, released: true });
+  assert.equal((await readdir(root)).includes(jobId), false);
+  await controller.close();
+  const reopened = await createAgentRenderJobs({ root, limits, run: writeImage });
+  assert.deepEqual(reopened.list(), []);
+  await reopened.close();
+});
+
+test('a job folder that lost only its owner file is healed on restart, and an unproven one is named in the error (#1246)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage });
+  const keptId = await completedJob(controller);
+  const brokenId = await completedJob(controller);
+  await controller.close();
+  // The state the 0.20.0 release left behind.
+  await unlink(join(root, brokenId, 'owner.json'));
+  const reopened = await createAgentRenderJobs({ root, limits, run: writeImage });
+  assert.deepEqual(reopened.list().map(record => record.jobId), [keptId]);
+  assert.equal((await readdir(root)).includes(brokenId), false);
+  await reopened.close();
+
+  const strayId = randomUUID();
+  await mkdir(join(root, strayId));
+  await writeFile(join(root, strayId, 'render.png'), 'not ours');
+  await assert.rejects(createAgentRenderJobs({ root, limits, run: writeImage }), error => {
+    assert.ok(error.message.includes(join(root, strayId)));
+    assert.match(error.message, /Delete that folder by hand/);
+    return true;
+  });
+});
+
+test('a job waits for the GPU queue as queued, and the elapsed deadline starts only once the card is granted', async context => {
+  const root = await temporary(context);
+  const events = [];
+  const granted = deferred();
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 150 },
+    async acquireGpu() {
+      events.push('wait');
+      await granted.promise;
+      events.push('granted');
+      return () => events.push('released');
+    },
+    async run(argumentsValue) {
+      events.push('run');
+      return writeImage(argumentsValue);
+    } });
+  const { jobId } = await controller.submit(request());
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.equal(controller.status(jobId).state, 'queued');
+  assert.deepEqual(events, ['wait']);
+  granted.resolve();
+  assert.equal((await terminal(controller, jobId)).state, 'completed');
+  assert.deepEqual(events, ['wait', 'granted', 'run', 'released']);
+  await controller.close();
+});
+
+test('cancelling a job that waits for the GPU queue ends it cancelled without running it', async context => {
+  const root = await temporary(context);
+  const events = [];
+  const controller = await createAgentRenderJobs({ root, limits,
+    acquireGpu: signal => new Promise((resolve, reject) => {
+      events.push('wait');
+      signal.addEventListener('abort', () => reject(new Error('The GPU queue wait was cancelled.')), { once: true });
+    }),
+    async run() { events.push('run'); } });
+  const { jobId } = await controller.submit(request());
+  assert.equal(controller.cancel(jobId).state, 'cancelling');
+  assert.equal((await terminal(controller, jobId)).state, 'cancelled');
+  assert.deepEqual(events, ['wait']);
+  await controller.close();
+});
+
+test('a GPU queue that fails the wait fails the job with the queue message', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits,
+    acquireGpu: async () => { throw new Error('The GPU queue command did not grant the card within 1 seconds.'); },
+    async run() { throw new Error('must not run'); } });
+  const { jobId } = await controller.submit(request());
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.reason, /GPU queue command did not grant/);
   await controller.close();
 });

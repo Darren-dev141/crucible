@@ -1,0 +1,35 @@
+// Guides under docs/ that the site serves as /<name>. prepare-release.mjs copies each one into public/.
+// A guide that a published page or llms.txt links to belongs here, or check-published-site.mjs fails the build.
+export const publishedDocuments = [
+  'scene-graph.md', 'modeling.md', 'animation-curves.md', 'animation-mixer.md',
+  'gltf-morph.md', 'morph-targets.md', 'skinning.md', 'physics.md',
+  'export-glb.md', 'sculpt.md', 'surface.md', 'mesh-query.md', 'mesh.md','primitives.md', 'shrinkwrap.md', 'spume.md',
+  'retarget.md',
+  'skeleton-pose.md',
+  'vehicle.md',
+  'vegetation.md', 'terrain.md', 'grass.md', 'clutter.md', 'light-bake.md', 'path-tracer.md', 'gaussian-splats.md',
+  'camera-path.md', 'lighting.md', 'volumetric.md', 'film-physics.md',
+  'runtime.md',
+  'streaming.md',
+  'game-rules.md',
+  'netcode.md',
+  'input.md',
+  'physics-runtime.md',
+  'player.md',
+  'audio.md',
+  'animation-graph.md',
+  'surface-attachment.md',
+  'agent-scene.md',
+  'mcp.md',
+  'agent-look.md',
+  'agent-asset.md',
+  'agent-render-jobs.md',
+  'agent-motion.md',
+  'agent-character-motion.md',
+  'agent-review.md',
+  // Guides that other published guides and llms.txt link to (#1249).
+  'game.md', 'addons.md', 'scene-query.md', 'line-art.md', 'mesh-blend.md', 'material-maps.md', 'user-passes.md',
+  'webgpu-decision.md', 'render-engines.md', 'packs.md',
+  // Pictures that a published guide shows.
+  'cook-light-portals.jpg', 'cook-camera-environment.jpg',
+];

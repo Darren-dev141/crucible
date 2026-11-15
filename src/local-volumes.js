@@ -1,4 +1,4 @@
-import { MAX_LOCAL_VOLUMES, LOCAL_VOLUME_MAXIMUM_STEPS, resolveLocalVolumesWith } from './local-volume-resolve.js';
+import { MAX_LOCAL_VOLUMES, LOCAL_VOLUME_MAXIMUM_STEPS, ONE_GRID_VOLUME_MESSAGE, resolveLocalVolumesWith } from './local-volume-resolve.js';
 import { localVolumeNoise } from './local-volume-noise.js';
 import { sampleVolumeGrid, volumeGridFloats } from './volume-grid.js';
 import { resolveGridVolume, LOCAL_VOLUME_GRID_MAXIMUM_STEPS } from './local-volume-grid.js';
@@ -43,7 +43,7 @@ export function packLocalVolumes(volumes, buffers) {
     buffers.steps.set([volume.steps, packedShape === PACKED_SHAPE_MESH ? buffers.meshParts.length : 0, volume.scatter ?? 0, volume.blur ?? 0], at);
     if (packedShape === PACKED_SHAPE_MESH) buffers.meshParts.push({ part: volume.part, label: `environment.localVolumes[${index}]` });
     if (volume.shape === 'grid') {
-      if (buffers.gridVolume) throw new RangeError('At most one volume in a scene takes shape "grid" for now; merge the grids into one file');
+      if (buffers.gridVolume) throw new RangeError(ONE_GRID_VOLUME_MESSAGE);
       buffers.gridVolume = volume;
       buffers.grid.set([1, volume.temperatureScale, volume.blackbodyIntensity * volume.emissionStrength, volume.anisotropy], at);
     }

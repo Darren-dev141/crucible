@@ -11,6 +11,27 @@ await loadAllAgentSceneModules();
 
 const FRAME_IDS = ['a', 'b', 'c', 'd'].map(letter => letter.repeat(64));
 
+// Minimal headers that declare a 2x2 size, which is all the catalog reads before the preview decodes a frame.
+function readableImages() {
+  const png = Buffer.alloc(33, 1);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]).copy(png, 0);
+  png.write('IHDR', 12, 'latin1');
+  png.writeUInt32BE(2, 16);
+  png.writeUInt32BE(2, 20);
+  const jpeg = Buffer.alloc(32, 2);
+  Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x02, 0x00, 0x02, 0x01, 0x11, 0x00]).copy(jpeg, 0);
+  const webp = Buffer.alloc(32, 3);
+  webp.write('RIFF', 0, 'latin1');
+  webp.writeUInt32LE(webp.length - 8, 4);
+  webp.write('WEBP', 8, 'latin1');
+  webp.write('VP8X', 12, 'latin1');
+  webp.writeUInt32LE(10, 16);
+  webp.fill(0, 20, 30);
+  webp[24] = 1;
+  webp[27] = 1;
+  return { png, jpeg, webp };
+}
+
 function solidFrame(red) {
   const data = new Uint8ClampedArray(2 * 2 * 4);
   for (let offset = 0; offset < data.length; offset += 4) data.set([red, 0, 0, 255], offset);
@@ -96,12 +117,7 @@ test('an edit can set a sequence and the frame IDs of a recipe are collected for
 test('the catalog lists PNG, JPEG and WebP images by content and rejects a mismatched extension', async context => {
   const directory = await mkdtemp(join(tmpdir(), 'crucible-sequence-'));
   context.after(() => rm(directory, { recursive: true, force: true }));
-  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 1)]);
-  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(32, 2)]);
-  const webp = Buffer.alloc(32, 3);
-  webp.write('RIFF', 0, 'latin1');
-  webp.writeUInt32LE(webp.length - 8, 4);
-  webp.write('WEBP', 8, 'latin1');
+  const { png, jpeg, webp } = readableImages();
   await writeFile(join(directory, 'frame-0.png'), png);
   await writeFile(join(directory, 'frame-1.jpg'), jpeg);
   await writeFile(join(directory, 'frame-2.webp'), webp);
@@ -112,4 +128,23 @@ test('the catalog lists PNG, JPEG and WebP images by content and rejects a misma
   assert.deepEqual(await catalog.read(images[0].assetId), png);
   await writeFile(join(directory, 'wrong.png'), jpeg);
   await assert.rejects(createAgentAssetCatalog(directory), /extension must match/);
+});
+
+test('the catalog skips an image whose header gives no readable size and keeps a readable one', async context => {
+  const directory = await mkdtemp(join(tmpdir(), 'crucible-sequence-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const { png, jpeg, webp } = readableImages();
+  const unreadableWebp = Buffer.from(webp);
+  unreadableWebp.write('JUNK', 12, 'latin1');
+  await writeFile(join(directory, 'good.png'), png);
+  await writeFile(join(directory, 'stub.png'), Buffer.concat([png.subarray(0, 8), Buffer.alloc(32, 1)]));
+  await writeFile(join(directory, 'stub.jpg'), Buffer.concat([jpeg.subarray(0, 4), Buffer.alloc(32, 2)]));
+  await writeFile(join(directory, 'stub.webp'), unreadableWebp);
+  const listing = (await createAgentAssetCatalog(directory)).list();
+  assert.deepEqual(listing.assets.map(asset => asset.name), ['good.png']);
+  assert.deepEqual(listing.skipped.map(entry => entry.name).sort(), ['stub.jpg', 'stub.png', 'stub.webp']);
+  for (const entry of listing.skipped) {
+    assert.match(entry.reason, /has no readable size in its header/);
+    assert.doesNotMatch(entry.reason, /Resize it/);
+  }
 });
