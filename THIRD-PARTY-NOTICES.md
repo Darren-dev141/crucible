@@ -166,4 +166,4 @@ Source: https://dejavu-fonts.github.io/ (version 2.37).
 
 ## Website fonts in public/fonts
 
-The site serves Fredoka, Plus Jakarta Sans, Inter and JetBrains Mono, subset by Google Fonts (latin, latin-ext and vietnamese). All four are under the SIL Open Font License 1.1 (https://openfontlicense.org): Fredoka by Milena Brandao and Hafontia, Plus Jakarta Sans by Tokotype, Inter by Rasmus Andersson, JetBrains Mono by JetBrains. Sources: https://fonts.google.com/specimen/Fredoka, https://fonts.google.com/specimen/Plus+Jakarta+Sans, https://fonts.google.com/specimen/Inter, https://fonts.google.com/specimen/JetBrains+Mono.
+The site serves Plus Jakarta Sans, Inter and JetBrains Mono, subset by Google Fonts (latin, latin-ext and vietnamese). All three are under the SIL Open Font License 1.1 (https://openfontlicense.org): Plus Jakarta Sans by Tokotype, Inter by Rasmus Andersson, JetBrains Mono by JetBrains. Sources: https://fonts.google.com/specimen/Plus+Jakarta+Sans, https://fonts.google.com/specimen/Inter, https://fonts.google.com/specimen/JetBrains+Mono.
