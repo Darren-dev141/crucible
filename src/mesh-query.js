@@ -4,6 +4,7 @@ import { barycentricWeights, closestPointOnTriangle, intersectRayTriangle, readT
 
 const records = new WeakMap();
 const EPSILON = 1e-9;
+const MINIMUM_ALTITUDE = 1e-8;
 const INDEX_OPTIONS = new Set(['maxTriangles', 'maxVertices', 'memoryBudgetMiB', 'solid', 'maxValidationPairs']);
 const PAIR_OPTIONS = new Set(['mode', 'maxTriangleTests']);
 const NEAREST_OPTIONS = new Set(['maxDistance', 'maxTriangleTests']);
@@ -146,26 +147,53 @@ function validateGeometry(geometry, maxVertices, maxTriangles) {
   return { center, scale, minimumAltitude: minimumNormalizedAltitude(positions, indices, scale), vertexCount: positions.length / 3, triangleCount: indices.length / 3 };
 }
 
-function minimumNormalizedAltitude(positions, indices, scale) {
+// Shortest altitude of the triangle at indices[offset..offset + 3), in units of the geometry scale.
+function normalizedAltitude(positions, indices, offset, scale) {
   const second = createVector();
   const third = createVector();
   const between = createVector();
   const cross = createVector();
+  const firstOffset = indices[offset] * 3;
+  for (let axis = 0; axis < 3; axis++) {
+    second[axis] = (positions[indices[offset + 1] * 3 + axis] - positions[firstOffset + axis]) / scale;
+    third[axis] = (positions[indices[offset + 2] * 3 + axis] - positions[firstOffset + axis]) / scale;
+  }
+  vec3.subtract(between, second, third);
+  const longest = Math.max(vec3.length(second), vec3.length(third), vec3.length(between));
+  vec3.cross(cross, second, third);
+  return vec3.length(cross) / longest;
+}
+
+function minimumNormalizedAltitude(positions, indices, scale) {
   let minimumAltitude = Infinity;
   for (let offset = 0; offset < indices.length; offset += 3) {
-    const firstOffset = indices[offset] * 3;
-    for (let axis = 0; axis < 3; axis++) {
-      second[axis] = (positions[indices[offset + 1] * 3 + axis] - positions[firstOffset + axis]) / scale;
-      third[axis] = (positions[indices[offset + 2] * 3 + axis] - positions[firstOffset + axis]) / scale;
-    }
-    vec3.subtract(between, second, third);
-    const longest = Math.max(vec3.length(second), vec3.length(third), vec3.length(between));
-    vec3.cross(cross, second, third);
-    const altitude = vec3.length(cross) / longest;
-    if (!Number.isFinite(altitude) || altitude <= 1e-8) throw new RangeError('Query triangle is degenerate or below the normalized precision domain.');
+    const altitude = normalizedAltitude(positions, indices, offset, scale);
+    if (!Number.isFinite(altitude) || altitude <= MINIMUM_ALTITUDE) throw new RangeError('Query triangle is degenerate or below the normalized precision domain.');
     minimumAltitude = Math.min(minimumAltitude, altitude);
   }
   return minimumAltitude;
+}
+
+/**
+ * The triangles a query index accepts: zero-area and sliver triangles make createMeshQueryIndex throw, and they cannot
+ * be hit by a ray anyway. Returns the geometry unchanged when every triangle is usable.
+ */
+export function withoutDegenerateTriangles({ positions, indices }) {
+  const low = [Infinity, Infinity, Infinity];
+  const high = [-Infinity, -Infinity, -Infinity];
+  for (let offset = 0; offset < positions.length; offset += 3) {
+    for (let axis = 0; axis < 3; axis++) {
+      low[axis] = Math.min(low[axis], positions[offset + axis]);
+      high[axis] = Math.max(high[axis], positions[offset + axis]);
+    }
+  }
+  const scale = Math.max(...high.map((value, axis) => value - low[axis]));
+  const kept = [];
+  for (let offset = 0; offset < indices.length; offset += 3) {
+    const altitude = normalizedAltitude(positions, indices, offset, scale);
+    if (Number.isFinite(altitude) && altitude > MINIMUM_ALTITUDE) kept.push(indices[offset], indices[offset + 1], indices[offset + 2]);
+  }
+  return { positions, indices: kept.length === indices.length ? indices : Uint32Array.from(kept) };
 }
 
 function topology(geometry) {

@@ -3,6 +3,7 @@ import test from 'node:test';
 import { box, cylinder, sphere } from '../src/geometry.js';
 import { meshFromGeometry, lintMesh } from '../src/mesh.js';
 import { GEOMETRY_LINT_BUDGET } from '../src/mesh-lint-geometry.js';
+import { createMeshData } from '../src/mesh-data.js';
 
 function placedBox({ scale = [1, 1, 1], translation = [0, 0, 0] }) {
   const source = box(0, 1);
@@ -72,4 +73,36 @@ test('plain lintMesh stays free of spatial checks and a clean mesh skips none', 
   assert.deepEqual(lintMesh(mesh).problems.map(problem => problem.kind), []);
   assert.equal(lintMesh(mesh, { geometry: true }).skippedChecks, undefined);
   assert.ok(GEOMETRY_LINT_BUDGET.maxTotalTriangles >= GEOMETRY_LINT_BUDGET.maxTrianglesPerPart);
+});
+
+// A prism over a concave outline: its caps are concave polygons, which a fan from one corner would triangulate across.
+function concavePrism(outline) {
+  const count = outline.length;
+  const positions = [];
+  for (const height of [0, 1]) for (const [x, z] of outline) positions.push(x, height, z);
+  const faces = [
+    Array.from({ length: count }, (_, index) => index),
+    Array.from({ length: count }, (_, index) => count + count - 1 - index),
+  ];
+  for (let index = 0; index < count; index++) {
+    const next = (index + 1) % count;
+    faces.push([index, count + index, count + next, next]);
+  }
+  const faceOffsets = [0];
+  const cornerVertices = [];
+  for (const face of faces) {
+    cornerVertices.push(...face);
+    faceOffsets.push(cornerVertices.length);
+  }
+  return createMeshData({ positions: Float32Array.from(positions), faceOffsets: Uint32Array.from(faceOffsets), cornerVertices: Uint32Array.from(cornerVertices) });
+}
+
+test('a prism over a concave outline raises no spatial warning at any starting corner', () => {
+  const outline = [[0, 0], [3, 0], [3, 2], [2, 2], [2, 1], [1, 1], [1, 2], [0, 2]];
+  for (let shift = 0; shift < outline.length; shift++) {
+    const rotated = outline.map((_, index) => outline[(index + shift) % outline.length]);
+    const result = lintMesh(concavePrism(rotated), { geometry: true });
+    assert.deepEqual(result.problems.map(problem => problem.kind), [], `shift ${shift}`);
+    assert.equal(result.skippedChecks, undefined, `shift ${shift}`);
+  }
 });
