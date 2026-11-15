@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createGpuQueue, parseGpuQueueCommand, parseGpuQueueWaitSeconds } from '../scripts/agent-gpu-queue.mjs';
+import { createGpuQueue, createGpuQueueFromFlags, createSharedGpuCard, parseGpuQueueCommand, parseGpuQueueWaitSeconds } from '../scripts/agent-gpu-queue.mjs';
+import { runMcpCli } from '../scripts/mcp-server.mjs';
 import { mcpHelpText } from '../bin/crucible-mcp-flags.mjs';
 
 // A stand-in for a person's queue wrapper: it logs the weight, waits `delayMilliseconds`, runs the program it is given and
@@ -119,4 +120,68 @@ test('--help lists the queue flags', () => {
   const help = mcpHelpText('0.0.0');
   assert.match(help, /--gpu-queue /);
   assert.match(help, /--gpu-queue-wait /);
+});
+
+// An in-process queue that grants one unit at a time, like a wrapper that does not run light beside heavy.
+function serialFakeQueue() {
+  const log = [];
+  let tail = Promise.resolve();
+  return {
+    log,
+    run(weight, work, { signal } = {}) {
+      log.push(`request:${weight}`);
+      const result = tail.then(async () => {
+        signal?.throwIfAborted();
+        log.push(`grant:${weight}`);
+        try { return await work(); } finally { log.push(`release:${weight}`); }
+      });
+      tail = result.catch(() => {});
+      return result;
+    },
+  };
+}
+
+test('the shared card asks the queue once while the server already holds it, and gives it back with the last user', async () => {
+  const queue = serialFakeQueue();
+  const card = createSharedGpuCard(queue);
+  const releaseJob = await card.take('heavy');
+  await card.run('light', async () => {});
+  await card.run('heavy', async () => {});
+  assert.deepEqual(queue.log, ['request:heavy', 'grant:heavy']);
+  releaseJob();
+  releaseJob();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(queue.log, ['request:heavy', 'grant:heavy', 'release:heavy']);
+});
+
+test('a heavy request while only a light hold exists asks the queue again, and a cancelled wait never takes the card', async () => {
+  const queue = serialFakeQueue();
+  const card = createSharedGpuCard(queue);
+  const releaseLight = await card.take('light');
+  const abortController = new AbortController();
+  const waiting = card.take('heavy', abortController.signal);
+  abortController.abort();
+  await assert.rejects(waiting, /cancelled/);
+  const heavy = card.take('heavy');
+  releaseLight();
+  (await heavy)();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(queue.log.filter(line => line.startsWith('grant')), ['grant:light', 'grant:heavy']);
+  assert.equal(queue.log.at(-1), 'release:heavy');
+});
+
+test('a queue failure reaches every caller waiting on the shared card', async () => {
+  const card = createSharedGpuCard({ run: async () => { throw new Error('queue is down'); } });
+  await assert.rejects(card.take('light'), /queue is down/);
+  await assert.rejects(card.run('light', async () => {}), /queue is down/);
+});
+
+test('the queue flags build a queue only with --gpu-queue and refuse a wait without it', async () => {
+  assert.equal(createGpuQueueFromFlags({}), undefined);
+  assert.throws(() => createGpuQueueFromFlags({ wait: '5' }), /--gpu-queue-wait needs --gpu-queue/);
+  assert.throws(() => createGpuQueueFromFlags({ queue: '/no/such/queue.sh' }), /existing absolute path/);
+  assert.throws(() => createGpuQueueFromFlags({ queue: process.execPath, wait: '0' }), /--gpu-queue-wait must be/);
+  assert.equal(typeof createGpuQueueFromFlags({ queue: process.execPath, wait: '5' }).run, 'function');
+  await assert.rejects(runMcpCli({ argumentsValue: ['--gpu-queue-wait', '5'] }), /--gpu-queue-wait needs --gpu-queue/);
+  await assert.rejects(runMcpCli({ argumentsValue: ['--gpu-queue', '/no/such/queue.sh'] }), /--gpu-queue executable/);
 });

@@ -2,7 +2,7 @@ import { answerCapabilities } from './capabilities-topics.mjs';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
 import { McpServer } from '@modelcontextprotocol/server';
 import { resolveJobRoot } from './agent-job-root.mjs';
-import { createGpuQueue, parseGpuQueueCommand, parseGpuQueueWaitSeconds } from './agent-gpu-queue.mjs';
+import { createGpuQueueFromFlags } from './agent-gpu-queue.mjs';
 import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod/v4';
 import { describeSchemaInputsWithReceivedValues } from './mcp-input-errors.mjs';
@@ -1026,12 +1026,7 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
     if (name === '--allow-addon') allowedAddonNames.push(value);
     else options[name.slice(2)] = name === '--memory' ? Number(value) : value;
   }
-  if (options['gpu-queue-wait'] !== undefined && options['gpu-queue'] === undefined) {
-    throw new Error('--gpu-queue-wait needs --gpu-queue. Pass both, or remove --gpu-queue-wait.');
-  }
-  if (options['gpu-queue'] !== undefined) {
-    options.gpuQueue = createGpuQueue({ command: parseGpuQueueCommand(options['gpu-queue']), waitSeconds: parseGpuQueueWaitSeconds(options['gpu-queue-wait']) });
-  }
+  options.gpuQueue = createGpuQueueFromFlags({ queue: options['gpu-queue'], wait: options['gpu-queue-wait'] });
   delete options['gpu-queue'];
   delete options['gpu-queue-wait'];
   const addonSet = resolveAddons({ folder: options.addons, names: allowedAddonNames, version });

@@ -50,6 +50,7 @@ import { ANNOTATE_LIMITS } from '../src/agent-annotate.js';
 import { normalizeReview, REVIEW_LIMITS } from './agent-review.mjs';
 import { mergeFrameDiagnostics, pathTracerFindingsLimit } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
+import { createSharedGpuCard } from './agent-gpu-queue.mjs';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
@@ -132,8 +133,11 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     throw new TypeError('FFmpeg must be on PATH or configured with an existing absolute executable path.');
   }
   // One unit of GPU work (a look, a review, a bake, a render job) waits for the person's own GPU queue when --gpu-queue is set.
+  // The server takes the card before it enters its own call queue, so a long wait never blocks other calls, and a unit that
+  // runs while the server already holds the card (a look during a render job) joins that hold instead of queueing against itself.
+  const gpuCard = gpuQueue ? createSharedGpuCard(gpuQueue) : undefined;
   function gpuUnit(weight, work, options) {
-    return gpuQueue ? gpuQueue.run(weight, work, options) : work();
+    return gpuCard ? gpuCard.run(weight, work, options) : work();
   }
   let phase = 'idle';
   let browserInstance;
@@ -193,7 +197,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (!jobRoot) throw new Error('Configure --jobs with an absolute output directory before submitting render jobs.');
     if (!jobsPromise && closing) throw new Error('The agent runtime is closing or closed.');
     // A failed creation is not kept: the next call tries again instead of repeating the first error until restart.
-    jobsPromise ??= createAgentRenderJobs({ root: jobRoot, run: job => gpuUnit('heavy', () => runJob(job), { signal: job.signal }) }).catch(error => {
+    jobsPromise ??= createAgentRenderJobs({ root: jobRoot, run: runJob, acquireGpu: gpuCard ? signal => gpuCard.take('heavy', signal) : undefined }).catch(error => {
       jobsPromise = undefined;
       throw error;
     });
@@ -1008,17 +1012,16 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       };
     },
     create({ recipe }) {
-      return enqueue(async () => {
+      const createScene = () => enqueue(async () => {
         await requirePreviewRenderer();
         await boot();
         const sessionId = randomUUID();
         const createInput = { recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) };
-        const result = recipe?.bake
-          ? await gpuUnit('heavy', () => evaluate('create', createInput, page, BAKE_EVALUATION_TIMEOUT_MS))
-          : await evaluate('create', createInput, page, EVALUATION_TIMEOUT_MS);
+        const result = await evaluate('create', createInput, page, recipe?.bake ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
         registerCreatedScene(sessionId, result, Boolean(recipe?.bake));
         return result;
       });
+      return recipe?.bake ? gpuUnit('heavy', createScene) : createScene();
     },
     /** The catalog with the installed packs; `{ pack, recipe }` or `{ pack, material }` reads one pack item's JSON instead. */
     assetCatalog({ pack, recipe, material } = {}) {
@@ -1079,7 +1082,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       });
     },
     apply(input) {
-      return enqueue(async () => {
+      const applyOperations = () => enqueue(async () => {
         await requirePreviewRenderer();
         if (input.branch !== undefined) {
           const { branch, ...rest } = input;
@@ -1092,16 +1095,17 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         const gameAssets = await gameAssetNeeds(input);
         const placedValue = gameAssets?.recipe ?? input.operations;
         const applyInput = { ...input, ...(await motionSources(motions, placedValue)), ...(await placedAssetData(placedValue)), ...(gameAssets ? { assetNeeds: gameAssets.recipe } : {}) };
-        const applied = rebakes
-          ? await gpuUnit('heavy', () => invoke('apply', applyInput, BAKE_EVALUATION_TIMEOUT_MS))
-          : await invoke('apply', applyInput, EVALUATION_TIMEOUT_MS);
+        const applied = await invoke('apply', applyInput, rebakes ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
         if (bakeAfter ?? hadBake) bakedSessionIds.add(input.sessionId);
         else bakedSessionIds.delete(input.sessionId);
         return applied;
       });
+      // Whether the edit rebakes light is read when the call arrives, so the card is taken before the call queue is entered.
+      const rebakesLight = input.branch === undefined && (bakedSessionIds.has(input.sessionId) || bakeAfterOperations(input.operations) === true);
+      return rebakesLight ? gpuUnit('heavy', applyOperations) : applyOperations();
     },
     look(input) {
-      return enqueue(async () => {
+      return gpuUnit('light', () => enqueue(async () => {
         await requirePreviewRenderer();
         requireSession(input.sessionId);
         const width = input.width ?? 768;
@@ -1118,7 +1122,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         let stepHeight = height;
         for (let step = 0; ; step++) {
           await page.setViewportSize({ width: stepWidth, height: stepHeight });
-          result = await gpuUnit('light', () => invoke('look', lookRequest));
+          result = await invoke('look', lookRequest);
           if (Buffer.byteLength(result.data, 'base64') <= MAXIMUM_IMAGE_BYTES) break;
           if (step === LOOK_MAXIMUM_STEP_DOWNS) {
             throw new Error(`The PNG exceeds the 1 MiB image response budget even at ${stepWidth}x${stepHeight}. Simplify the scene's high-frequency textures or request a smaller preview.`);
@@ -1135,7 +1139,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           result.metadata.note = `The ${width}x${height} PNG was over the 1 MiB image response budget, so this is the ${stepWidth}x${stepHeight} render. Request that size or smaller to skip the retry.`;
         }
         return result;
-      });
+      }));
     },
     // Shows the current view in the person's own browser, waits for their pins and notes, and resolves each pin to a part and a
     // world point. The wait holds no preview queue slot, so other tools keep working while the person marks.
@@ -1188,7 +1192,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       let settings;
       try { settings = normalizeReview(input); }
       catch (error) { return Promise.reject(error); }
-      return enqueue(() => gpuUnit('light', async () => {
+      return gpuUnit('light', () => enqueue(async () => {
         await requirePreviewRenderer();
         requireSession(settings.sessionId);
         const snapshot = await invoke('snapshot', settings);

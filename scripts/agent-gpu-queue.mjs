@@ -6,6 +6,7 @@ export const GPU_QUEUE_WEIGHTS = Object.freeze(['light', 'heavy']);
 export const DEFAULT_GPU_QUEUE_WAIT_SECONDS = 600;
 export const MAXIMUM_GPU_QUEUE_WAIT_SECONDS = 3600;
 const RELEASE_GRACE_MS = 2000;
+const OUTPUT_TAIL_CHARACTERS = 200;
 const GRANTED_LINE = 'crucible-gpu-granted';
 
 // The program the queue command runs once it has room. It tells the server the card is granted, then holds it until the
@@ -81,8 +82,10 @@ export function createGpuQueue({ command, waitSeconds = DEFAULT_GPU_QUEUE_WAIT_S
       const onAbort = () => fail('The GPU queue wait was cancelled.');
       signal?.addEventListener('abort', onAbort, { once: true });
       holder.stdout.on('data', chunk => {
-        output += chunk;
-        if (!settled && output.includes(GRANTED_LINE)) {
+        if (settled) return;
+        // Only a short tail is kept: the grant line is tiny, and a chatty queue wrapper must not grow the string.
+        output = (output + chunk).slice(-OUTPUT_TAIL_CHARACTERS);
+        if (output.includes(GRANTED_LINE)) {
           settled = true;
           clearTimeout(timer);
           signal?.removeEventListener('abort', onAbort);
@@ -92,6 +95,10 @@ export function createGpuQueue({ command, waitSeconds = DEFAULT_GPU_QUEUE_WAIT_S
       holder.stderr.on('data', chunk => { errorOutput = (errorOutput + chunk).slice(-400); });
       holder.on('error', error => fail(`The GPU queue command could not start (${error.message}). Pass --gpu-queue an executable that exists.`));
       holder.on('exit', code => {
+        if (settled && !releasing.has(holder)) {
+          console.error(`The GPU queue command exited with code ${code} while the server still holds the card, so the queue has freed it early. Check that the command passes its standard input through to the program it runs.`);
+          return;
+        }
         const detail = errorOutput.trim() ? ` It printed: ${errorOutput.trim()}` : '';
         fail(`The GPU queue command exited with code ${code} before it granted the card.${detail}`);
       });
@@ -112,10 +119,93 @@ export function createGpuQueue({ command, waitSeconds = DEFAULT_GPU_QUEUE_WAIT_S
 }
 
 // Closing stdin lets the holder exit and the queue free the card; the kill only covers a queue command that ignores that.
+const releasing = new WeakSet();
 function endHolder(holder) {
+  releasing.add(holder);
   holder.stdin.on('error', () => {});
   holder.stdin.end();
   const killTimer = setTimeout(() => holder.kill(), RELEASE_GRACE_MS);
   killTimer.unref();
   holder.once('exit', () => clearTimeout(killTimer));
+}
+
+/** Builds the queue from the parsed --gpu-queue and --gpu-queue-wait values, or returns undefined when --gpu-queue is not set. */
+export function createGpuQueueFromFlags({ queue, wait }) {
+  if (queue === undefined) {
+    if (wait !== undefined) throw new Error('--gpu-queue-wait needs --gpu-queue. Pass both, or remove --gpu-queue-wait.');
+    return undefined;
+  }
+  return createGpuQueue({ command: parseGpuQueueCommand(queue), waitSeconds: parseGpuQueueWaitSeconds(wait) });
+}
+
+const WEIGHT_RANK =Object.freeze({ light: 1, heavy: 2 });
+
+/**
+ * One server-side GPU slot on top of the person's queue, so the server never queues against itself. While the server holds the
+ * card for one unit of work (a render job), a look or a review that wants the same or a lighter weight joins that hold instead of
+ * asking the queue again; the card goes back to the queue when the last user leaves. `take(weight, signal)` waits for the card and
+ * returns a `release` function; `run(weight, work, { signal })` wraps one unit of work. Taking the card must never happen while
+ * holding the runtime's call queue, because the wait can be long.
+ */
+export function createSharedGpuCard(queue) {
+  let current;
+
+  function openSlot(weight) {
+    const slot = { weight, users: 0, granted: false, controller: new AbortController(), finish: undefined };
+    slot.ready = new Promise((resolveReady, rejectReady) => {
+      queue.run(weight, () => {
+        slot.granted = true;
+        resolveReady();
+        return new Promise(resolveFinish => { slot.finish = resolveFinish; });
+      }, { signal: slot.controller.signal }).catch(rejectReady);
+    });
+    slot.ready.catch(() => {});
+    return slot;
+  }
+
+  function leave(slot) {
+    slot.users--;
+    if (slot.users > 0) return;
+    if (current === slot) current = undefined;
+    if (slot.granted) slot.finish();
+    else slot.controller.abort();
+  }
+
+  return {
+    async take(weight, signal) {
+      if (!GPU_QUEUE_WEIGHTS.includes(weight)) throw new RangeError(`GPU queue weight must be light or heavy, not ${weight}.`);
+      signal?.throwIfAborted();
+      if (!current || WEIGHT_RANK[current.weight] < WEIGHT_RANK[weight]) current = openSlot(weight);
+      const slot = current;
+      slot.users++;
+      let onAbort;
+      const cancelled = new Promise((resolveCancelled, rejectCancelled) => {
+        onAbort = () => rejectCancelled(new Error('The GPU queue wait was cancelled.'));
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
+      cancelled.catch(() => {});
+      try {
+        await Promise.race([slot.ready, cancelled]);
+      } catch (error) {
+        leave(slot);
+        throw error;
+      } finally {
+        signal?.removeEventListener('abort', onAbort);
+      }
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        leave(slot);
+      };
+    },
+    async run(weight, work, { signal } = {}) {
+      const release = await this.take(weight, signal);
+      try {
+        return await work();
+      } finally {
+        release();
+      }
+    },
+  };
 }

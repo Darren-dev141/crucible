@@ -336,9 +336,10 @@ async function hashFile(path, maximum) {
 /** Persistent controller. The trusted runner must stop its owned browser and encoder when aborted. */
 // `lockTakeoverHooks` is a seam for tests that need to pause a process at a chosen point of the lock takeover, or to replace how a
 // job file is deleted (`removeJobFile`).
-export async function createAgentRenderJobs({ root, run, limits: inputLimits = {}, lockTakeoverHooks = {} }) {
+export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inputLimits = {}, lockTakeoverHooks = {} }) {
   if (typeof root !== 'string' || !isAbsolute(root)) throw new TypeError('Job root must be an explicit absolute directory.');
   if (typeof run !== 'function') throw new TypeError('run must be an async render callback.');
+  if (acquireGpu !== undefined && typeof acquireGpu !== 'function') throw new TypeError('acquireGpu must be an async function that takes the GPU and returns its release function.');
   objectKeys(inputLimits, Object.keys(DEFAULT_LIMITS), 'limits');
   const limits = { ...DEFAULT_LIMITS, ...inputLimits };
   for (const [key, value] of Object.entries(limits)) boundedNumber(value, 1, DEFAULT_LIMITS[key], key, true);
@@ -814,15 +815,24 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
 
   async function finish(job, snapshot) {
     const { record, controller } = job;
-    const timer = setTimeout(() => {
-      job.failure = 'Render job exceeded its elapsed deadline. If another process was using the GPU, submit the job again.';
-      record.state = 'cancelling';
-      record.reason = job.failure;
-      controller.abort(new Error(job.failure));
-      persist(job).catch(() => {});
-    }, jobDeadlineMs(record.settings, limits.deadlineMs));
+    let timer;
+    // The elapsed deadline covers the render, not the wait for the person's GPU queue, so its clock starts once the card is taken.
+    function startDeadline() {
+      timer = setTimeout(() => {
+        job.failure = 'Render job exceeded its elapsed deadline. If another process was using the GPU, submit the job again.';
+        record.state = 'cancelling';
+        record.reason = job.failure;
+        controller.abort(new Error(job.failure));
+        persist(job).catch(() => {});
+      }, jobDeadlineMs(record.settings, limits.deadlineMs));
+    }
+    let releaseGpu;
     const renamed = [];
     try {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      // The state stays queued while the job waits for the GPU queue.
+      if (acquireGpu) releaseGpu = await acquireGpu(controller.signal);
+      startDeadline();
       if (controller.signal.aborted) throw controller.signal.reason;
       record.state = 'running';
       await persist(job);
@@ -890,6 +900,7 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
       Object.assign(record, failedRecord);
     } finally {
       clearTimeout(timer);
+      releaseGpu?.();
       if (active === job) active = undefined;
     }
   }
