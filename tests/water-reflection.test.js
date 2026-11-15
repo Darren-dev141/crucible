@@ -5,6 +5,8 @@ import { applyWaterReflection, attachWaterReflection, canReuseMirrorImage, findW
 import { createTerrain } from '../src/terrain.js';
 import { createFragmentShader } from '../src/shaders.js';
 import { CrucibleRenderer } from '../src/renderer.js';
+import { liquidWaterSupport } from '../src/shader-registry.js';
+import { liquidFragmentShader } from '../src/liquid-shader.js';
 
 const cube = box(0, 1);
 
@@ -356,4 +358,51 @@ test('worldBounds equals the per-axis formula it replaced, under a rotated and m
     }
   }
   assert.deepEqual(worldBounds({ geometry: { positions }, matrix }), { minimum, maximum });
+});
+
+const TRANSMISSIVE_WATER = { ...WATER, color: [0.55, 0.8, 0.85], transmission: 0.9, ior: 1.33 };
+
+test('water that transmits light qualifies, glass with the default or a glass ior does not', () => {
+  assert.deepEqual(findWaterSurface(lakeScene(TRANSMISSIVE_WATER)).partIndices, [1]);
+  assert.equal(findWaterSurface(lakeScene({ ...TRANSMISSIVE_WATER, ior: 1.5 })), null);
+  assert.equal(findWaterSurface(lakeScene({ ...TRANSMISSIVE_WATER, ior: undefined })), null);
+});
+
+test('transmissive water keeps drawing in the liquid pass with the mirror flag on its material', () => {
+  const { parts, surface } = applyWaterReflection(lakeScene(TRANSMISSIVE_WATER));
+  assert.deepEqual(surface.partIndices, [1]);
+  assert.equal(parts[1].material.waterReflection, true);
+  assert.equal(parts[1].material.transmission, 0.9);
+});
+
+function liquidBindCalls(batchMaterial, { drawn }) {
+  const calls = [];
+  const rig = reuseRig();
+  if (drawn) {
+    rig.renderer.render({ eye: [0, 20, 100], target: [0, 0, 0] });
+  }
+  const recorder = new Proxy({ TEXTURE0: 100, TEXTURE_2D: 1 }, { get: (target, name) => (name in target ? target[name] : (...callArguments) => calls.push([name, ...callArguments])) });
+  rig.renderer.context = recorder;
+  const uniforms = { waterReflection: 'sampler', waterReflectionMatrix: 'matrix', waterClip: 'clip', waterReflectionEnabled: 'enabled' };
+  liquidWaterSupport.bind(rig.renderer, uniforms, { parts: [{ material: batchMaterial }] });
+  rig.detach();
+  return calls;
+}
+
+test('the liquid pass samples the mirror for a flagged batch once the picture is drawn', () => {
+  const calls = liquidBindCalls({ waterReflection: true }, { drawn: true });
+  assert.deepEqual(calls.find(call => call[0] === 'uniform1f'), ['uniform1f', 'enabled', 1]);
+  assert.ok(calls.some(call => call[0] === 'uniformMatrix4fv' && call[1] === 'matrix'));
+});
+
+test('the liquid pass leaves the mirror off for an unflagged batch or before the picture is drawn', () => {
+  assert.deepEqual(liquidBindCalls({}, { drawn: true }).find(call => call[0] === 'uniform1f'), ['uniform1f', 'enabled', 0]);
+  assert.deepEqual(liquidBindCalls({ waterReflection: true }, { drawn: false }).find(call => call[0] === 'uniform1f'), ['uniform1f', 'enabled', 0]);
+});
+
+test('the liquid shader reads the mirror picture the lit shader reads, and clips under the plane while it is drawn', () => {
+  assert.match(liquidFragmentShader, /vec3 waterMirrorColor\(vec3 position, float roughness\)/);
+  assert.match(liquidFragmentShader, /reflection = mix\(reflection, waterMirrorColor\(worldPosition, roughness\), waterMirrorWeight\(roughness\)\)/);
+  assert.match(liquidFragmentShader, /if \(waterClip\.y > 0\.5 && worldPosition\.y < waterClip\.x/);
+  assert.ok(createFragmentShader(['studioLighting', 'waterReflection']).includes('vec3 waterMirrorColor(vec3 position, float roughness)'));
 });

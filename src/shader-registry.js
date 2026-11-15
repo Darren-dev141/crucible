@@ -12,6 +12,9 @@ export const registeredFeatureCode = new Map();
 // material-layer-shaders.js sets bind(renderer, layerMaps): it binds the textures of material.layerMaps for one batch.
 export const layerTextureSupport = {};
 
+// water-reflection.js sets bind(renderer, uniforms, batch): it binds the mirror picture for a batch the liquid pass draws.
+export const liquidWaterSupport = {};
+
 // view-transform-shader.js sets apply(source, kind, viewTransform, hasLook), bindLook(renderer, program) and dispose(renderer).
 export const viewTransformShader = {};
 
