@@ -8,3 +8,5 @@
 - entry:core+lazy: same hook.
 - scene:lit-box+lazy: same hook in a scene that uses the renderer.
 - scene:gltf-box+lazy: same hook.
+- scene:lit-box: the guarded composite call and release hooks in the frame path, which do nothing unless a glowing volume and bloom are both on.
+- scene:gltf-box: the same guarded call and release hooks.
