@@ -1,4 +1,4 @@
-import { CLOSED_ROOM_MAXIMUM_TRIANGLES, CLOSED_ROOM_SHARE, CLOSED_ROOM_WALL_SHARE, closedRoomShare, closedRoomWallShare } from './closed-room.js';
+import { CLOSED_ROOM_MAXIMUM_TRIANGLES, CLOSED_ROOM_SHARE, closedRoomShare, freeOrigin, hitsFrontFace, worldTriangles } from './closed-room.js';
 
 // A closed-room test for rooms with a garden outside the window and heavy props inside. closedRoomShare (which the inspect
 // diagnostic uses) shoots from the middle of the bounds, so a lawn beside the room moves the start out of it, and it gives up
@@ -46,6 +46,41 @@ function partsNearTheRest(parts, worldMatrices) {
   });
   const margin = 1.5 * Math.max(...spreads.map(([low, high]) => high - low));
   return parts.filter((part, index) => spreads.every(([low, high], axis) => centres[index][axis] >= low - margin && centres[index][axis] <= high + margin));
+}
+
+const CLOSED_ROOM_WALL_RAYS = 36;
+// A room has walls when this share of the level rays around the origin hit one; a canopy on columns hits a column now and then.
+const CLOSED_ROOM_WALL_SHARE = 0.8;
+
+/**
+ * The share of level rays (a ring around the up axis at the origin's height) that hit a part's inner face, or null under the same conditions as
+ * closedRoomShare. A roof over a floor on a few columns has a high closedRoomShare, because the rays up and down hit the roof and the floor, but few
+ * level rays hit anything, so this tells a room with walls from a canopy or a colonnade.
+ */
+function closedRoomWallShare(parts, worldMatrices) {
+  const triangles = worldTriangles(parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode)), worldMatrices);
+  if (!triangles) {
+    return null;
+  }
+  const origin = freeOrigin(triangles);
+  if (!origin) {
+    return null;
+  }
+  const direction = [0, 0, 0];
+  let hits = 0;
+  for (let ray = 0; ray < CLOSED_ROOM_WALL_RAYS; ray++) {
+    const angle = ((ray + 0.5) / CLOSED_ROOM_WALL_RAYS) * Math.PI * 2;
+    direction[0] = Math.cos(angle);
+    direction[1] = 0;
+    direction[2] = Math.sin(angle);
+    for (let triangle = 0; triangle < triangles.triangleCount; triangle++) {
+      if (hitsFrontFace(triangles.corners, triangle * 9, origin, direction)) {
+        hits++;
+        break;
+      }
+    }
+  }
+  return hits / CLOSED_ROOM_WALL_RAYS;
 }
 
 /**

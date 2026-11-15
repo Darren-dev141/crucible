@@ -9,7 +9,7 @@ export const CLOSED_ROOM_SHARE = 0.9;
 export const CLOSED_ROOM_MAXIMUM_TRIANGLES = 150_000;
 const PARALLEL_EPSILON = 1e-9;
 
-function worldTriangles(parts, worldMatrices) {
+export function worldTriangles(parts, worldMatrices) {
   let triangleCount = 0;
   for (const part of parts) {
     triangleCount += part.geometry.indices.length / 3;
@@ -64,7 +64,7 @@ function insideAnyPart(point, triangles) {
  * within the bounds. A ray that starts inside a part (a mug, a lamp, a table) tests that part, not the room around it.
  * Null when every candidate is inside a part.
  */
-function freeOrigin(triangles) {
+export function freeOrigin(triangles) {
   for (const heightFraction of ORIGIN_FRACTIONS) {
     for (const offsetFraction of ORIGIN_FRACTIONS) {
       for (const depthFraction of ORIGIN_FRACTIONS) {
@@ -90,7 +90,7 @@ export function fibonacciDirection(index, count, out) {
 }
 
 // Moller-Trumbore, counting only a triangle whose front face looks at the ray (det > 0).
-function hitsFrontFace(corners, offset, origin, direction) {
+export function hitsFrontFace(corners, offset, origin, direction) {
   const edgeOneX = corners[offset + 3] - corners[offset];
   const edgeOneY = corners[offset + 4] - corners[offset + 1];
   const edgeOneZ = corners[offset + 5] - corners[offset + 2];
@@ -146,41 +146,6 @@ export function closedRoomShare(parts, worldMatrices) {
     }
   }
   return hits / CLOSED_ROOM_RAYS;
-}
-
-export const CLOSED_ROOM_WALL_RAYS = 36;
-// A room has walls when this share of the level rays around the origin hit one; a canopy on columns hits a column now and then.
-export const CLOSED_ROOM_WALL_SHARE = 0.8;
-
-/**
- * The share of level rays (a ring around the up axis at the origin's height) that hit a part's inner face, or null under the same conditions as
- * closedRoomShare. A roof over a floor on a few columns has a high closedRoomShare, because the rays up and down hit the roof and the floor, but few
- * level rays hit anything, so this tells a room with walls from a canopy or a colonnade.
- */
-export function closedRoomWallShare(parts, worldMatrices) {
-  const triangles = worldTriangles(parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode)), worldMatrices);
-  if (!triangles) {
-    return null;
-  }
-  const origin = freeOrigin(triangles);
-  if (!origin) {
-    return null;
-  }
-  const direction = [0, 0, 0];
-  let hits = 0;
-  for (let ray = 0; ray < CLOSED_ROOM_WALL_RAYS; ray++) {
-    const angle = ((ray + 0.5) / CLOSED_ROOM_WALL_RAYS) * Math.PI * 2;
-    direction[0] = Math.cos(angle);
-    direction[1] = 0;
-    direction[2] = Math.sin(angle);
-    for (let triangle = 0; triangle < triangles.triangleCount; triangle++) {
-      if (hitsFrontFace(triangles.corners, triangle * 9, origin, direction)) {
-        hits++;
-        break;
-      }
-    }
-  }
-  return hits / CLOSED_ROOM_WALL_RAYS;
 }
 
 export const SKY_OPENNESS_RAYS = 32;
