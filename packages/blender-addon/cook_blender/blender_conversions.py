@@ -166,14 +166,11 @@ def light_feature_notes(light_name, light_type, use_temperature, use_shadow, dif
 
 
 def blender_environment_to_cook_rows(linear_rgb_bottom_first):
-    """Re-orients a Blender equirectangular image (first row at the bottom) for Cook: rows top first, turned a quarter.
+    """Flips a Blender equirectangular image (first row at the bottom) to rows top first.
 
-    Blender puts the +X direction at the horizontal centre of the image; Cook puts +Y (Blender axes) there. A quarter of the
-    width turns one into the other."""
-    import numpy
-
-    top_first = linear_rgb_bottom_first[::-1]
-    return numpy.roll(top_first, top_first.shape[1] // 4, axis=1)
+    Blender and Crucible agree on where the image faces once Crucible loads an HDRI (src/environment-orientation.js turns
+    it a quarter of the width), so the add-on writes the rows as Blender has them and does not turn them itself (#1371)."""
+    return linear_rgb_bottom_first[::-1]
 
 
 def classify_color_space(name):
