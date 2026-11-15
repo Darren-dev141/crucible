@@ -9,6 +9,7 @@ export class RenderTargetLedger {
   /** `samples` is 1 for a plain texture; `layers` is the slice count of an array texture. */
   record(name, { width, height, format, samples = 1, layers = 1 }) {
     const bytes = width * height * layers * samples * BYTES_PER_PIXEL[format];
+    if (!(bytes >= 0)) throw new RangeError(`Render target ${name} needs a positive width and height and a known format, got ${width}x${height} ${format}.`);
     this.targets.set(name, { name, width, height, layers, format, samples, bytes, megabytes: Number((bytes / BYTES_PER_MEGABYTE).toFixed(2)) });
   }
 
