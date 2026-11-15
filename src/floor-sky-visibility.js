@@ -16,8 +16,10 @@ export { withSunBounce } from './sun-bounce.js';
 export const FLOOR_SKY_RAYS = 64;
 export const FLOOR_SKY_MAXIMUM_TEXELS = 24_000;
 export const FLOOR_SKY_MAXIMUM_SECONDS = 20;
-// A total ray budget besides the clock: dense props are traced vertex by vertex, and twice the rays of a full floor is the most a scene may ask for.
-export const FLOOR_SKY_MAXIMUM_RAYS = FLOOR_SKY_MAXIMUM_TEXELS * FLOOR_SKY_RAYS * 2;
+// A total ray budget besides the clock: dense props are traced vertex by vertex, and about two seconds of rays is the most a scene may ask for.
+export const FLOOR_SKY_MAXIMUM_RAYS = 6_000_000;
+// Both faces and the edges of every slab are traced when the whole room is, so its cut is coarser than a floor's: about a quarter of the vertices for the same area.
+const ROOM_SURFACE_EDGE_SCALE = 2.8;
 export const FLOOR_SKY_STRENGTH = 1;
 // With onlyClosedRooms the default is lower: a hall also gets light that comes back from its walls and sunlit floor, which a sky trace does not hold.
 export const FLOOR_SKY_ROOM_STRENGTH = 0.2;
@@ -254,7 +256,7 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
     const bounds = worldBounds(parts[index]);
     return total + (bounds.maximum[0] - bounds.minimum[0]) * (bounds.maximum[2] - bounds.minimum[2]);
   }, 0);
-  const maximumEdge = Math.sqrt(footprint / maximumTexels) * 1.4;
+  const maximumEdge = Math.sqrt(footprint / maximumTexels) * (everySurface ? ROOM_SURFACE_EDGE_SCALE : 1.4);
   const tracer = createTracer(world);
   const offset = sceneScale(world.positions) * 1e-4;
   const samples = fixedSamples(raysPerTexel);
