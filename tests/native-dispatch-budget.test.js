@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createCamera } from '../src/path-tracer.js';
 import { cookInstalled, cookModule, cookTest } from './support/cook.js';
 
-const { buildNativeInputV2, createNativeSession, findNativeAddon, resolveSessionFrame, traceNative } = (await cookModule()) ?? {};
+const { STRUCT_STRIDES_V2, buildNativeInputV2, createNativeSession, findNativeAddon, resolveSessionFrame, traceNative } = (await cookModule()) ?? {};
 const { validatePackOptions } = (await cookModule('pack-input-v2')) ?? {};
 
 const skipWithoutAddon = !cookInstalled || findNativeAddon() === null ? 'the native addon is not built' : false;
@@ -116,7 +116,7 @@ cookTest('session frames under a dispatch budget give the same bytes as frames w
 });
 
 const TILE_ORIGIN_BYTE_OFFSET = 312;
-const PARAMS_BYTES = 320;
+const TILE_ORIGIN_END_BYTE_OFFSET = 320;
 
 function parameterBytes(input) {
   return Buffer.from(input.kernelParams.buffer, input.kernelParams.byteOffset, input.kernelParams.byteLength);
@@ -132,8 +132,8 @@ function withGarbageTileOrigin(input) {
 cookTest('the packer leaves the tile origin words 312 to 319 at zero and does not touch 304 to 311', () => {
   const input = buildRoomInput(IMAGE_OPTIONS);
   const bytes = parameterBytes(input);
-  assert.equal(bytes.length, PARAMS_BYTES);
-  assert.ok(bytes.subarray(TILE_ORIGIN_BYTE_OFFSET, PARAMS_BYTES).every((byte) => byte === 0));
+  assert.equal(bytes.length, STRUCT_STRIDES_V2.kernelParams);
+  assert.ok(bytes.subarray(TILE_ORIGIN_BYTE_OFFSET, TILE_ORIGIN_END_BYTE_OFFSET).every((byte) => byte === 0));
   const withBudget = buildRoomInput({ ...IMAGE_OPTIONS, dispatchBudgetMs: 8 });
   assert.ok(parameterBytes(withBudget).equals(bytes), 'a dispatch budget does not change the packed bytes');
 });

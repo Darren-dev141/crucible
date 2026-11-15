@@ -512,11 +512,19 @@ cookTest('with mip levels off the packed tables are the bytes main packed before
     kernelParams: '582db4072d736a1dfb749a2eeeac2ab47fa64093cb4a26f6f99a4ef41dec9a12',
     materials: '65bd6ad01f6045e2cb0af51bf496358bb318101e21c72627fb34e13b4374ac94',
   };
+  // The golden kernelParams hash was taken when the block ended at byte 320 (the end of the tile origin). Cook later appended
+  // aperture_ratio (word 80, 1.0 for a pinhole) and padding, so the hash covers the original prefix and the tail is checked apart.
+  const kernelParamsPrefixBytes = 320;
   for (const [tableName, expectedHash] of Object.entries(expected)) {
     const table = input[tableName];
-    const hash = createHash('sha256').update(Buffer.from(table.buffer, table.byteOffset, table.byteLength)).digest('hex');
+    let bytes = Buffer.from(table.buffer, table.byteOffset, table.byteLength);
+    if (tableName === 'kernelParams') bytes = bytes.subarray(0, kernelParamsPrefixBytes);
+    const hash = createHash('sha256').update(bytes).digest('hex');
     assert.equal(hash, expectedHash, tableName);
   }
+  const paramsBytes = Buffer.from(input.kernelParams.buffer, input.kernelParams.byteOffset, input.kernelParams.byteLength);
+  assert.equal(paramsBytes.readFloatLE(kernelParamsPrefixBytes), 1, 'a pinhole packs aperture_ratio 1 after the original block');
+  assert.ok(paramsBytes.subarray(kernelParamsPrefixBytes + 4).every((byte) => byte === 0), 'the padding after aperture_ratio is zero');
 });
 
 // A level of odd side halves to floor(side / 2) texels, so each destination texel covers two and a fraction source texels.

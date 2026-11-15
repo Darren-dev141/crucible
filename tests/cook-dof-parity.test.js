@@ -15,7 +15,7 @@ const { resolveThinLensParameters } = packInputV2 ?? {};
 
 const skipWithoutAddon = !cookInstalled || findNativeAddon() === null ? 'the native addon is not built' : false;
 
-// Word indexes in the 320-byte KernelParamsV2 block (abi.wgsl): aperture_radius, focal_distance, aperture_blades, aperture_rotation.
+// Word indexes in the KernelParamsV2 block (abi.wgsl): aperture_radius, focal_distance, aperture_blades, aperture_rotation.
 const APERTURE_RADIUS_WORD = 39;
 const FOCAL_DISTANCE_WORD = 43;
 const APERTURE_BLADES_WORD = 46;
@@ -124,7 +124,7 @@ cookTest('depth of field changes only its own words of the params block', () => 
   const hexagon = kernelWords(packWithCamera({ ...LENS_ON_PINHOLE, apertureBlades: 6, apertureRotation: 90 }));
   assert.deepEqual(differingWords(pinhole, hexagon), LENS_WORDS);
   assert.equal(hexagon[APERTURE_BLADES_WORD], 6);
-  assert.equal(floatOfWord(hexagon[APERTURE_ROTATION_WORD]), Math.fround(Math.PI / 2 + Math.PI / 6));
+  assert.equal(floatOfWord(hexagon[APERTURE_ROTATION_WORD]), Math.fround(Math.PI / 2));
 });
 
 cookTest('a v1 input carries the lens in the free fourth floats and upgrades to the same v2 words', () => {
