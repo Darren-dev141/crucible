@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createGpuQueue, createGpuQueueFromFlags, createSharedGpuCard, parseGpuQueueCommand, parseGpuQueueWaitSeconds } from '../scripts/agent-gpu-queue.mjs';
@@ -195,15 +196,65 @@ test('a look while a render job still waits for the card asks the queue itself i
   (await heavyWaiting)();
 });
 
-test('a script path that Windows cannot start directly is refused at launch with the array form to pass', () => {
-  const script = join(tmpdir(), 'queue.cmd');
-  writeFileSync(script, '');
-  assert.throws(() => parseGpuQueueCommand(script, 'win32'), /\.cmd script.*JSON array.*cmd\.exe/);
-  const shellScript = join(tmpdir(), 'queue.sh');
-  writeFileSync(shellScript, '');
-  assert.throws(() => parseGpuQueueCommand(shellScript, 'win32'), /\.sh script.*\["bash"/);
-  assert.deepEqual(parseGpuQueueCommand(shellScript, 'linux'), { executable: shellScript, arguments: [] });
-  assert.deepEqual(parseGpuQueueCommand(JSON.stringify(['cmd.exe', '/c', script]), 'win32').executable, 'cmd.exe');
+test('a look that arrives while a render job waits on a first-come queue joins the job once it is granted, with one grant', async () => {
+  const queue = serialFakeQueue();
+  let releaseBlocker;
+  const blocker = queue.run('light', () => new Promise(resolve => { releaseBlocker = resolve; }));
+  const card = createSharedGpuCard(queue);
+  const jobTaken = card.take('heavy');
+  const lookTaken = card.take('light');
+  assert.deepEqual(queue.log.filter(line => line.startsWith('request')), ['request:light', 'request:heavy', 'request:light']);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  releaseBlocker();
+  await blocker;
+  const releaseJob = await jobTaken;
+  const releaseLook = await lookTaken;
+  releaseLook();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(queue.log.includes('release:heavy'), false, 'the look finished while the job still holds the card');
+  releaseJob();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(queue.log.filter(line => line.startsWith('grant')), ['grant:light', 'grant:heavy']);
+  assert.equal(queue.log.at(-1), 'release:heavy');
+});
+
+test('a script path that Windows cannot start directly is refused at launch with the array form to pass', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gpu-queue-script-'));
+  try {
+    const script = join(directory, 'queue.cmd');
+    writeFileSync(script, '');
+    assert.throws(() => parseGpuQueueCommand(script, 'win32'), /\.cmd script.*JSON array.*cmd\.exe/);
+    const shellScript = join(directory, 'queue.sh');
+    writeFileSync(shellScript, '');
+    assert.throws(() => parseGpuQueueCommand(shellScript, 'win32'), /\.sh script.*\["bash"/);
+    assert.deepEqual(parseGpuQueueCommand(shellScript, 'linux'), { executable: shellScript, arguments: [] });
+    assert.deepEqual(parseGpuQueueCommand(JSON.stringify(['cmd.exe', '/c', script]), 'win32').executable, 'cmd.exe');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a bare script name on Windows asks for the absolute path, and inherited object keys are not script extensions', () => {
+  assert.throws(() => parseGpuQueueCommand('queue.sh', 'win32'), /\["bash","<absolute path to queue\.sh>"\].*absolute path of the script/);
+  for (const name of ['queue.constructor', 'queue.toString', 'queue.valueOf']) {
+    assert.deepEqual(parseGpuQueueCommand(name, 'win32'), { executable: name, arguments: [] });
+  }
+});
+
+test('a queue command that fails to start after spawning gives the same launch advice', async () => {
+  const queue = createGpuQueue({
+    command: { executable: 'queue', arguments: [] },
+    spawnProcess() {
+      const holder = new EventEmitter();
+      holder.stdout = new EventEmitter();
+      holder.stderr = new EventEmitter();
+      holder.stdin = { on() {}, end() {} };
+      holder.kill = () => {};
+      setImmediate(() => holder.emit('error', new Error('spawn queue ENOENT')));
+      return holder;
+    },
+  });
+  await assert.rejects(queue.run('light', async () => {}), /could not start \(spawn queue ENOENT\).*JSON array/);
 });
 
 test('a queue command the system refuses to spawn fails the call with the launch advice, not a raw spawn error', async () => {

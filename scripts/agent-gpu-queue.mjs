@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 
+const LAUNCH_ADVICE = 'Pass --gpu-queue an executable program, or a JSON array with its interpreter such as ["bash","/path/to/queue.sh"].';
 export const GPU_QUEUE_WEIGHTS = Object.freeze(['light', 'heavy']);
 export const DEFAULT_GPU_QUEUE_WAIT_SECONDS = 600;
 export const MAXIMUM_GPU_QUEUE_WAIT_SECONDS = 3600;
@@ -47,9 +48,12 @@ export function parseGpuQueueCommand(value, platform = process.platform) {
 function rejectScriptWithoutInterpreter(executable, platform) {
   const extension = /\.([A-Za-z0-9]+)$/.exec(executable)?.[1]?.toLowerCase();
   const interpreters = { cmd: '["cmd.exe","/c","<path>"]', bat: '["cmd.exe","/c","<path>"]', ps1: '["powershell.exe","-File","<path>"]', sh: '["bash","<path>"]' };
-  const windowsOnly = platform === 'win32' && extension in interpreters;
+  const windowsOnly = platform === 'win32' && extension !== undefined && Object.hasOwn(interpreters, extension);
   if (!windowsOnly) return;
-  throw new TypeError(`--gpu-queue ${executable} is a .${extension} script, which cannot be started directly on Windows. Pass it with its interpreter as a JSON array, for example ${interpreters[extension].replace('<path>', executable.replaceAll('\\', '/'))}.`);
+  const isBareName = !/[\\/]/.test(executable);
+  const path = isBareName ? `<absolute path to ${executable}>` : executable.replaceAll('\\', '/');
+  const lookupNote = isBareName ? ' The interpreter does not look the script up on PATH, so give the absolute path of the script.' : '';
+  throw new TypeError(`--gpu-queue ${executable} is a .${extension} script, which cannot be started directly on Windows. Pass it with its interpreter as a JSON array, for example ${interpreters[extension].replace('<path>', path)}.${lookupNote}`);
 }
 
 export function parseGpuQueueWaitSeconds(value) {
@@ -80,7 +84,7 @@ export function createGpuQueue({ command, waitSeconds = DEFAULT_GPU_QUEUE_WAIT_S
           windowsHide: true,
         });
       } catch (error) {
-        reject(new Error(`The GPU queue command could not start (${error.message}). Pass --gpu-queue an executable program, or a JSON array with its interpreter such as ["bash","/path/to/queue.sh"].`));
+        reject(new Error(`The GPU queue command could not start (${error.message}). ${LAUNCH_ADVICE}`));
         return;
       }
       let settled = false;
@@ -109,7 +113,7 @@ export function createGpuQueue({ command, waitSeconds = DEFAULT_GPU_QUEUE_WAIT_S
         }
       });
       holder.stderr.on('data', chunk => { errorOutput = (errorOutput + chunk).slice(-400); });
-      holder.on('error', error => fail(`The GPU queue command could not start (${error.message}). Pass --gpu-queue an executable that exists.`));
+      holder.on('error', error => fail(`The GPU queue command could not start (${error.message}). ${LAUNCH_ADVICE}`));
       holder.on('exit', code => {
         if (settled && !releasing.has(holder)) {
           console.error(`The GPU queue command exited with code ${code} while the server still holds the card, so the queue has freed it early. Check that the command passes its standard input through to the program it runs.`);
@@ -196,22 +200,41 @@ export function createSharedGpuCard(queue) {
     else slot.controller.abort();
   }
 
+  // A taker waits on its own slot and also joins a heavier slot that gets the card first, so a look is never held behind a render
+  // job on a strictly first-come queue. The unused own request is aborted by leaving its slot. A failed heavier request never fails
+  // the taker, which still has its own request.
+  async function waitForFirstGrant(ownSlot, heavierWaiting, cancelled) {
+    const neverSettles = new Promise(() => {});
+    const candidates = [ownSlot, ...heavierWaiting].map(slot => slot.ready.then(() => slot, error => (slot === ownSlot ? Promise.reject(error) : neverSettles)));
+    const firstGranted = await Promise.race([...candidates, cancelled]);
+    if (firstGranted === ownSlot) return ownSlot;
+    if (firstGranted.users > 0 && slots.has(firstGranted)) {
+      firstGranted.users++;
+      leave(ownSlot);
+      return firstGranted;
+    }
+    await Promise.race([ownSlot.ready, cancelled]);
+    return ownSlot;
+  }
+
   return {
     async take(weight, signal) {
       if (!GPU_QUEUE_WEIGHTS.includes(weight)) throw new RangeError(`GPU queue weight must be light or heavy, not ${weight}.`);
       signal?.throwIfAborted();
-      const slot = findSlot(weight) ?? openSlot(weight);
-      slot.users++;
+      const ownSlot = findSlot(weight) ?? openSlot(weight);
+      ownSlot.users++;
+      const heavierWaiting = [...slots].filter(slot => !slot.granted && WEIGHT_RANK[slot.weight] > WEIGHT_RANK[weight]);
       let onAbort;
       const cancelled = new Promise((resolveCancelled, rejectCancelled) => {
         onAbort = () => rejectCancelled(new Error('The GPU queue wait was cancelled.'));
         signal?.addEventListener('abort', onAbort, { once: true });
       });
       cancelled.catch(() => {});
+      let heldSlot;
       try {
-        await Promise.race([slot.ready, cancelled]);
+        heldSlot = await waitForFirstGrant(ownSlot, heavierWaiting, cancelled);
       } catch (error) {
-        leave(slot);
+        leave(ownSlot);
         throw error;
       } finally {
         signal?.removeEventListener('abort', onAbort);
@@ -220,7 +243,7 @@ export function createSharedGpuCard(queue) {
       return () => {
         if (released) return;
         released = true;
-        leave(slot);
+        leave(heldSlot);
       };
     },
     async run(weight, work, { signal } = {}) {
