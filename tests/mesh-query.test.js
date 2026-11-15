@@ -221,3 +221,13 @@ test('numeric domains normalize tiny and huge meshes but reject singular, overfl
   assert.throws(() => index.raycast(identity, { origin: [0, 0, 1e8], direction: [0, 0, -1] }), /precision domain/);
   index.dispose();
 });
+
+test('withoutDegenerateTriangles drops zero-area triangles so the rest can be indexed', async () => {
+  const { withoutDegenerateTriangles } = await import('../src/mesh-query.js');
+  const positions = Float32Array.of(0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0, 0);
+  const indices = Uint32Array.of(0, 1, 2, 0, 1, 3);
+  assert.throws(() => createMeshQueryIndex({ positions, indices }), /degenerate/);
+  const usable = withoutDegenerateTriangles({ positions, indices });
+  assert.deepEqual(Array.from(usable.indices), [0, 1, 2]);
+  assert.equal(createMeshQueryIndex(usable).info.triangleCount, 1);
+});
