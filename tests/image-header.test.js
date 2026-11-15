@@ -75,3 +75,14 @@ test('a JPEG size is found past standalone markers and metadata segments (#1319)
   assert.deepEqual(readImageDimensions(jpegFromSegments([exif, frameSegment(0xc2, 800, 600), icc])), { width: 800, height: 600 });
   assert.equal(imageLimitProblem(jpegFromSegments([exif, icc, frameSegment(0xc0, 640, 480)]), 'frame', LIMITS), null);
 });
+
+test('imageLimitProblem appends resize advice to over-limit messages only', () => {
+  const limits = { maxSide: 4, maxDecodedBytes: 1048576 };
+  const png = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]).copy(png, 0);
+  png.write('IHDR', 12, 'latin1');
+  png.writeUInt32BE(9, 16);
+  png.writeUInt32BE(9, 20);
+  assert.match(imageLimitProblem(png, 'big.png', limits, 'Resize it.'), /pixels on a side\. Resize it\.$/);
+  assert.doesNotMatch(imageLimitProblem(Buffer.alloc(40), 'x.png', limits, 'Resize it.'), /Resize it/);
+});

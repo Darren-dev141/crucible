@@ -66,18 +66,19 @@ export function readImageDimensions(bytes) {
 /**
  * The message for an image over the sequence-frame limits, or null when its header says it fits. `maxSide` is pixels on a side
  * and `maxDecodedBytes` the RGBA bytes one decoded frame may take. An image whose size the header does not give is refused too,
- * because a decoder might still read it and the limit could not be checked.
+ * because a decoder might still read it and the limit could not be checked. `oversizeAdvice` is appended to the over-limit messages only.
  */
-export function imageLimitProblem(bytes, label, { maxSide, maxDecodedBytes }) {
+export function imageLimitProblem(bytes, label, { maxSide, maxDecodedBytes }, oversizeAdvice = '') {
+  const advice = oversizeAdvice ? ` ${oversizeAdvice}` : '';
   const size = readImageDimensions(bytes);
   if (!size) {
     return `${label} has no readable size in its header, so the ${maxSide} pixel and ${maxDecodedBytes / 1048576} MiB frame limits cannot be checked. Re-save it as a standard PNG, JPEG or WebP.`;
   }
   if (size.width > maxSide || size.height > maxSide) {
-    return `${label} is ${size.width}x${size.height}; frames are at most ${maxSide} pixels on a side.`;
+    return `${label} is ${size.width}x${size.height}; frames are at most ${maxSide} pixels on a side.${advice}`;
   }
   if (size.width * size.height * 4 > maxDecodedBytes) {
-    return `${label} is ${size.width}x${size.height}, which decodes to more than ${maxDecodedBytes / 1048576} MiB.`;
+    return `${label} is ${size.width}x${size.height}, which decodes to more than ${maxDecodedBytes / 1048576} MiB.${advice}`;
   }
   return null;
 }

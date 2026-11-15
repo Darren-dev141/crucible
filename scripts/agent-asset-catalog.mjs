@@ -239,8 +239,8 @@ export async function readCatalogFile(directory, filename, { enforceImageLimits 
     const imageFormat = lookKind ? null : imageKind(bytes);
     if (imageFormat && !IMAGE_EXTENSIONS[imageFormat].test(filename)) throw new Error('Image extension must match its PNG, JPEG or WebP content.');
     // The header gives the size, so an oversized frame is refused here, before the preview page decodes its pixels.
-    const imageProblem = imageFormat && enforceImageLimits ? imageLimitProblem(bytes, filename, TEXTURE_SEQUENCE_LIMITS) : null;
-    if (imageProblem) throw new SkippableCatalogFileError(`${imageProblem} Resize it before adding it to the --assets or --packs folder.`);
+    const imageProblem = imageFormat && enforceImageLimits ? imageLimitProblem(bytes, filename, TEXTURE_SEQUENCE_LIMITS, 'Resize it before adding it to the --assets or --packs folder.') : null;
+    if (imageProblem) throw new SkippableCatalogFileError(imageProblem);
     if (!imageFormat && !lookKind && !/\.glb$/i.test(filename)) throw new Error('Catalog files must be GLB, PNG, JPEG, WebP, HDR or CUBE, with a matching extension.');
     let document = null;
     if (!imageFormat && !lookKind) {
