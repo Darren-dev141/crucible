@@ -70,6 +70,12 @@ function checkedWeight(weight, time, label) {
   return value;
 }
 
+function checkedReferenceTime(reference, label) {
+  const referenceTime = reference ?? 0;
+  if (!Number.isFinite(referenceTime)) throw new RangeError(`${label} reference must be a clip time in seconds.`);
+  return referenceTime;
+}
+
 function createLayer(definition, position, prepared, resolveJoint) {
   const label = `Layer ${position}`;
   if (!definition?.clip) throw new TypeError(`${label} needs a clip from createAnimationClip.`);
@@ -77,8 +83,7 @@ function createLayer(definition, position, prepared, resolveJoint) {
   const bindings = bindSourceTracks(sampler, prepared);
   if (!bindings.length) throw new RangeError(`${label}: no clip track names a joint of this rig.`);
   const additive = definition.additive === true;
-  const referenceTime = definition.reference ?? 0;
-  if (!Number.isFinite(referenceTime)) throw new RangeError(`${label} reference must be a clip time in seconds.`);
+  const referenceTime = checkedReferenceTime(definition.reference, label);
   let references = [];
   if (additive) {
     sampler.sample(referenceTime);
@@ -153,6 +158,13 @@ function checkedVector(value, label) {
     throw new RangeError(`${label} must be three finite numbers.`);
   }
   return value;
+}
+
+/** A direction as a unit vector. A zero vector has no direction, so it is refused rather than turned into a silent no-op. */
+function checkedDirection(value, label) {
+  const direction = vec3.normalize(new Float64Array(3), checkedVector(value, label));
+  if (vec3.squaredLength(direction) === 0) throw new RangeError(`${label} must not be the zero vector. Pass a direction such as [0, 0, 1].`);
+  return direction;
 }
 
 const LIMIT_AXES = ['x', 'y', 'z'];
@@ -336,7 +348,7 @@ function createSolver(definition, position, prepared, resolveJoint) {
     }
     if (definition.pole !== undefined && typeof definition.pole !== 'function') checkedVector(definition.pole, `${label} pole`);
     const limits = createJointLimits(definition.limits, label, { root, middle }, prepared);
-    const bendToward = definition.bendToward === undefined ? null : vec3.normalize(new Float64Array(3), checkedVector(definition.bendToward, `${label} bendToward`));
+    const bendToward = definition.bendToward === undefined ? null : checkedDirection(definition.bendToward, `${label} bendToward`);
     if (definition.groundNormal !== undefined && typeof definition.groundNormal !== 'function') checkedVector(definition.groundNormal, `${label} groundNormal`);
     return {
       type: 'two-bone', label, weight, root, middle, end, target: definition.target, pole: definition.pole, limits, bendToward,
@@ -355,7 +367,7 @@ function createSolver(definition, position, prepared, resolveJoint) {
       if (!isDescendant(prepared, joint, joints[slot])) throw new RangeError(`${label}: list joints from the base of the chain to the aiming joint.`);
     });
     if (definition.forward !== undefined && definition.worldForward !== undefined) throw new TypeError(`${label} takes forward or worldForward, not both.`);
-    const forward = vec3.normalize(new Float64Array(3), checkedVector(definition.forward ?? definition.worldForward ?? [0, 0, 1], `${label} forward`));
+    const forward = checkedDirection(definition.forward ?? definition.worldForward ?? [0, 0, 1], `${label} forward`);
     if (definition.worldForward !== undefined) {
       // Bone axes differ by rig, but which way a character faces at rest does not: bring that direction into the joint.
       const restRotation = prepared.restWorld.rotations[joints[joints.length - 1]];
@@ -826,7 +838,7 @@ function createMorphLayers(asset, nodes, layers, rig) {
       morphs: layer.morphs, partIndices, mask, owners, additive: layer.additive === true,
       speed: layer.speed ?? 1, offset: layer.offset ?? 0, clipTime: layer.clipTime, label: 'Morph layer',
       weight: weightFunction(layer.weight ?? 1, 'Morph layer weight'),
-      reference: layer.reference ?? 0,
+      reference: checkedReferenceTime(layer.reference, 'Morph layer'),
     };
   });
 }
