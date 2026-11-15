@@ -44,6 +44,10 @@
 .hero-loop .copy { grid-area: copy; min-width: 0; display: flex; flex-direction: column; gap: 22px; }
 .hero-loop .copy h1 { font-size: clamp(40px, 5vw, 72px); }
 .hero-loop .copy .lede { max-width: 34ch; color: var(--muted); font-size: clamp(16px, 1.5vw, 19px); line-height: 1.5; }
+.hero-loop .copy .rename-note { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; animation: rise 700ms var(--ease-out) 330ms backwards; }
+.hero-loop .copy .rename-note a { color: inherit; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); transition: color var(--hover) ease; }
+.hero-loop .copy .rename-note a:hover, .hero-loop .copy .rename-note a:focus-visible { color: var(--text); }
+.hero-loop .copy .rename-note code { font: inherit; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
 .hero-loop .copy .lede, .hero-loop .copy h1, .hero-loop .copy .hero-actions { animation: rise 700ms var(--ease-out) backwards; }
 .hero-loop .copy .lede { animation-delay: 190ms; }
 .hero-loop .copy .hero-actions { animation-delay: 260ms; }
