@@ -53,7 +53,7 @@ const SHARP_ANGLE_MARGIN = 1e-9;
 export function assertSharpAngle(sharpAngle) {
   if (sharpAngle === Infinity) return;
   if (typeof sharpAngle === 'number' && sharpAngle >= 0 && sharpAngle <= Math.PI + SHARP_ANGLE_MARGIN) return;
-  throw new RangeError(`sharpAngle is ${sharpAngle}; pass radians from 0 to ${Math.PI} (3.14159 is 180 degrees), or Infinity to smooth every edge.`);
+  throw new RangeError(`sharpAngle is ${sharpAngle}; pass radians from 0 to ${Math.PI} (degrees go through deg * Math.PI / 180), or Infinity to smooth every edge.`);
 }
 
 /**

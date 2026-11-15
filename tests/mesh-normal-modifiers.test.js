@@ -50,7 +50,7 @@ test('weighted_normal gives a zero-area face the same +Z fallback corner normals
 
 test('extractRender refuses a NaN, negative or oversized sharpAngle and accepts 180 degrees and Infinity', () => {
   for (const sharpAngle of [Number.NaN, -0.5, 4, '30']) {
-    assert.throws(() => extractRender(cube(), { sharpAngle }), /sharpAngle is .*pass radians from 0 to/, `sharpAngle ${sharpAngle}`);
+    assert.throws(() => extractRender(cube(), { sharpAngle }), /sharpAngle is .*pass radians from 0 to .*deg \* Math\.PI \/ 180/, `sharpAngle ${sharpAngle}`);
   }
   for (const sharpAngle of [0, degrees(30), degrees(180), Infinity]) {
     assert.doesNotThrow(() => extractRender(cube(), { sharpAngle }), `sharpAngle ${sharpAngle}`);
