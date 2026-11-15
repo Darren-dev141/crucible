@@ -45,7 +45,7 @@ export function probeAlbedo(material) {
  */
 export function traceProbeMaps(parts, lighting, positions, { width = 64, samples = 32, bounces = 2, rotation = 0, missRadiance = null, skyIrradiance = null, maxSeconds = 60 } = {}) {
   const height = width / 2;
-  if (!Number.isInteger(width) || width < 8 || width * height > MAX_PROBE_PIXELS) throw new RangeError(`Probe width must be an even integer from 8 whose map has at most ${MAX_PROBE_PIXELS} pixels.`);
+  if (!Number.isInteger(width) || width < 8 || width % 2 !== 0 || width * height > MAX_PROBE_PIXELS) throw new RangeError(`Probe width must be an even integer from 8 whose map has at most ${MAX_PROBE_PIXELS} pixels.`);
   if (!Array.isArray(parts) || parts.length === 0 || parts.length > MAX_BAKE_PARTS) throw new RangeError(`Probes take from 1 to ${MAX_BAKE_PARTS} parts.`);
   parts.forEach(validatePart);
   const lights = normalizeLights(lighting);

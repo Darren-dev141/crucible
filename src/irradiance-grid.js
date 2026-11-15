@@ -218,6 +218,16 @@ function smoothNodes(data, valid, size, isConnected) {
   }
 }
 
+// A node count under 2 gives a cell size of infinity or less (nodes at NaN), and no samples divide the light by zero.
+function requireTraceSettings(resolution, samples) {
+  if (resolution !== true && !(Number.isInteger(resolution) && resolution >= 2)) {
+    throw new RangeError('The irradiance grid resolution must be true or a whole node count of at least 2 along the longest side.');
+  }
+  if (!Number.isInteger(samples) || samples < 1) {
+    throw new RangeError('The irradiance grid samples must be a whole number of at least 1.');
+  }
+}
+
 /**
  * Traces the grid. For each node, the cosine weighted light arriving along the six axis directions (the bake's gatherer:
  * emission and direct light at every hit, bounced over `bounces` reflections) becomes a first order fit per colour channel:
@@ -229,6 +239,7 @@ export function traceIrradianceGrid(parts, lighting, { resolution = true, sample
     throw new RangeError(`The irradiance grid takes from 1 to ${MAX_BAKE_PARTS} parts.`);
   }
   parts.forEach(validatePart);
+  requireTraceSettings(resolution, samples);
   const layout = gridLayout(parts, resolution);
   const nodeCount = layout.size[0] * layout.size[1] * layout.size[2];
   if (nodeCount > IRRADIANCE_GRID_LIMITS.maxNodes) {

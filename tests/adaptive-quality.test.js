@@ -73,3 +73,9 @@ test('the GPU timer reads finished queries in order and drops a disjoint result'
   assert.equal(timer.collect(), null);
   assert.equal(createGpuTimer({ getExtension: () => null }), null);
 });
+
+test('a raise threshold that can never be met is refused instead of pinning the scale at its minimum', () => {
+  for (const raiseBelow of [Number.NaN, 0, -1, 1.5]) {
+    assert.throws(() => new AdaptiveResolution({ raiseBelow }), /raiseBelow/, `raiseBelow ${raiseBelow}`);
+  }
+});

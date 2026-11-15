@@ -146,3 +146,13 @@ test('the grid scatters in the fog only when the lighting carries the fog', () =
   assert.notDeepEqual(Array.from(withFog.data), Array.from(without.data));
   assert.deepEqual(Array.from(traceIrradianceGrid(sunlitRoom(), sun, options).data), Array.from(without.data));
 });
+
+test('a grid resolution under 2 or samples under 1 is refused before nodes land at infinity or NaN', () => {
+  const parts = sunlitRoom();
+  for (const resolution of [1, 0, -3, Number.NaN, 2.5]) {
+    assert.throws(() => traceIrradianceGrid(parts, sun, { resolution, samples: 4, bounces: 1 }), /resolution/, `resolution ${resolution}`);
+  }
+  for (const samples of [0, -1, 1.5]) {
+    assert.throws(() => traceIrradianceGrid(parts, sun, { resolution: 8, samples, bounces: 1 }), /samples/, `samples ${samples}`);
+  }
+});
