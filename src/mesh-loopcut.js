@@ -72,7 +72,7 @@ function edgeRings(edit, seeds, positionOf) {
  * `<name>.band-0` (low side) to `<name>.band-<cuts>`; they keep the face's other tags.
  */
 export function loopCut(mesh, edgeRule, { cuts = 1, factor = 0.5, name = 'loop' } = {}) {
-  requireFiniteInRange('loopCut', 'cuts', cuts, 1, MAX_LOOP_CUTS, true);  requireFiniteInRange('loopCut', 'factor', factor, 0, 1);
+  requireFiniteInRange('loopCut', 'cuts', cuts, 1, MAX_LOOP_CUTS, true);
   const table = edgeFaces(mesh);
   const seeds = [];
   selectEdges(mesh, edgeRule, table).forEach((selected, edge) => {

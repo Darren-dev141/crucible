@@ -1,8 +1,7 @@
 // Spline sources for the curve geometry: arc, spiral and star primitives, poly and NURBS splines, and trimming.
 // Every function is deterministic and returns plain arrays; modeling.js validates the public input first.
 import { fillZeroTangents, resolveHandles, sampleBezierSpans } from './modeling-bezier.js';
-import { MAX_RESAMPLE_COUNT } from './curve-operations.js';
-import { requireFiniteInRange } from './modeling-limits.js';
+import { MAX_RESAMPLE_COUNT, requireFiniteInRange } from './modeling-limits.js';
 
 const TWO_PI = Math.PI * 2;
 export const NURBS_DEFAULT_ORDER = 4;

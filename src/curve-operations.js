@@ -1,4 +1,4 @@
-import { requireFiniteInRange } from './modeling-limits.js';
+import { MAX_RESAMPLE_COUNT, requireFiniteInRange } from './modeling-limits.js';
 
 // Polyline curves as plain arrays of [x, y, z]: fillet rounds the corners with circular arcs and resample places points
 // at equal arc length with the direction of travel at each one. Both are deterministic and bounded.
@@ -6,7 +6,7 @@ import { requireFiniteInRange } from './modeling-limits.js';
 export const MAX_CURVE_POINTS = 256;
 export const MAX_FILLET_ARC_SEGMENTS = 16;
 export const MAX_FILLETED_POINTS = 4096;
-export const MAX_RESAMPLE_COUNT = 65536;
+export { MAX_RESAMPLE_COUNT };
 export const MAX_FILLET_RADIUS = 1e6;
 const MINIMUM_LENGTH = 1e-9;
 const STRAIGHT_LIMIT = 1 - 1e-9;
