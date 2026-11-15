@@ -176,7 +176,7 @@ function minimumNormalizedAltitude(positions, indices, scale) {
 
 /**
  * The triangles a query index accepts: zero-area and sliver triangles make createMeshQueryIndex throw, and they cannot
- * be hit by a ray anyway. Returns the geometry unchanged when every triangle is usable.
+ * be hit by a ray anyway.
  */
 export function withoutDegenerateTriangles({ positions, indices }) {
   const low = [Infinity, Infinity, Infinity];
@@ -193,7 +193,7 @@ export function withoutDegenerateTriangles({ positions, indices }) {
     const altitude = normalizedAltitude(positions, indices, offset, scale);
     if (Number.isFinite(altitude) && altitude > MINIMUM_ALTITUDE) kept.push(indices[offset], indices[offset + 1], indices[offset + 2]);
   }
-  return { positions, indices: kept.length === indices.length ? indices : Uint32Array.from(kept) };
+  return { positions, indices: Uint32Array.from(kept) };
 }
 
 function topology(geometry) {
