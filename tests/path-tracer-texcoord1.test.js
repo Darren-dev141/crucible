@@ -217,3 +217,40 @@ cookTest('the native packer reads TEXCOORD_1 of a flattened scene', () => {
 cookTest('the native packer reads TEXCOORD_1 of an instanced scene', () => {
   assert.equal(secondSetCornerCount(buildTraceScene(sharedGeometryParts(true), undefined, { instancing: true })), 6);
 });
+
+const SECOND_UV_SET_SAMPLER_BIT = 1 << 21;
+const TEXTURE_SAMPLER_WORD_INDEX = 3;
+
+// Counts the packed texture descriptors whose sampler word asks the native kernel to read uv1s.
+function mapsOnSecondUvSet(scene) {
+  const { textureDescriptors, textureCount } = cook.buildNativeInputV2(scene, NATIVE_CAMERA, NATIVE_OPTIONS);
+  const words = new Uint32Array(textureDescriptors.buffer.slice(textureDescriptors.byteOffset, textureDescriptors.byteOffset + textureDescriptors.byteLength));
+  const wordsPerDescriptor = words.length / textureCount;
+  let count = 0;
+  for (let offset = TEXTURE_SAMPLER_WORD_INDEX; offset < words.length; offset += wordsPerDescriptor) {
+    if (words[offset] & SECOND_UV_SET_SAMPLER_BIT) count += 1;
+  }
+  return count;
+}
+
+cookTest('only the TEXCOORD_1 map of a flattened scene selects the second UV set in the native input', () => {
+  assert.equal(mapsOnSecondUvSet(buildTraceScene([mixedPart(1)])), 1);
+  assert.equal(mapsOnSecondUvSet(buildTraceScene([mixedPart(0)])), 0);
+});
+
+cookTest('only the TEXCOORD_1 map of an instanced scene selects the second UV set in the native input', () => {
+  assert.equal(mapsOnSecondUvSet(buildTraceScene(sharedGeometryParts(true), undefined, { instancing: true })), 1);
+});
+
+cookTest('a baked part in an instanced scene keeps its second UV set and the descriptor bit in the native input', () => {
+  const sharedPair = sharedGeometryParts(true);
+  const bakedGeometry = floorQuad();
+  bakedGeometry.triangleMaterial = new Uint32Array([0, 0]);
+  const bakedPart = { ...mixedPart(1), name: 'baked', geometry: bakedGeometry };
+  const scene = buildTraceScene([...sharedPair, bakedPart], undefined, { instancing: true });
+  const bakedInstance = scene.instances[2];
+  assert.notEqual(bakedInstance.geometry, bakedGeometry, 'the part was baked into world space');
+  assert.equal(bakedInstance.geometry.uv1s[0], 0.75);
+  assert.equal(secondSetCornerCount(scene), 12, 'the shared quad is packed once and the baked quad once, six corner floats each');
+  assert.equal(mapsOnSecondUvSet(scene), 1, 'one second-set descriptor for the base colour map the three parts share');
+});
