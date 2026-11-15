@@ -67,7 +67,10 @@ export function resolveLocalVolumesWith(resolveGrid, input, label = 'localVolume
   if (!Array.isArray(input)) throw new TypeError(`${label} must be an array of volumes`);
   if (input.length > MAX_LOCAL_VOLUMES) throw new RangeError(`${label} holds at most ${MAX_LOCAL_VOLUMES} volumes, got ${input.length}`);
   const volumes = input.map((volume, index) => resolveLocalVolume(volume, `${label}[${index}]`, resolveGrid));
-  if (volumes.filter(volume => volume.shape === 'grid').length > 1) throw new RangeError(ONE_GRID_VOLUME_MESSAGE);
+  const gridVolumeCount = volumes.filter(volume => volume.shape === 'grid').length;
+  if (gridVolumeCount > 1) {
+    throw new RangeError(ONE_GRID_VOLUME_MESSAGE);
+  }
   return volumes;
 }
 
@@ -81,6 +84,9 @@ export function missingPartMessage(label, name, partNames) {
 /** Throws when a mesh volume of the resolved list names a part the scene lacks. partNames are the IDs of the nodes that have geometry. */
 export function checkLocalVolumePartNames(volumes, partNames, label = 'environment.localVolumes') {
   volumes.forEach((volume, index) => {
-    if (volume.shape === 'mesh' && !partNames.includes(volume.part)) throw new RangeError(missingPartMessage(`${label}[${index}]`, volume.part, partNames));
+    const namesMissingPart = volume.shape === 'mesh' && !partNames.includes(volume.part);
+    if (namesMissingPart) {
+      throw new RangeError(missingPartMessage(`${label}[${index}]`, volume.part, partNames));
+    }
   });
 }

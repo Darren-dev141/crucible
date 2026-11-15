@@ -986,7 +986,6 @@ function normalizeRecipe(input, limits) {
     throw invalidField('camera.fStop', recipe.camera.fStop, 'a camera without effects.depthOfField.blur above 0; set blur to 0 or remove fStop');
   }
   checkLightLinkNames(recipe);
-  if (recipe.environment.localVolumes) checkLocalVolumePartNames(recipe.environment.localVolumes, recipe.nodes.filter(node => node.geometry !== undefined).map(node => node.id));
   if (recipe.effects?.distortion || recipe.effects?.flash) agentSceneModule('postSteps').checkAirStepNodes(recipe);
   if (Object.hasOwn(recipe, 'motion')) {
     recipe.motion = recipe.motion === null || recipe.motion === undefined ? null : agentSceneModule('motion').normalizeAgentMotion(recipe.motion, recipe);
@@ -1468,6 +1467,11 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const assetRuntime = recipe.nodes.some(node => node.vegetation)
       ? agentSceneModule('vegetation').expandVegetation(recipe, limits, assetOutputCache, placedRuntime)
       : placedRuntime;
+    // Placed assets and grown vegetation add part nodes, so the part names are checked after the expansion, like the render binds them.
+    if (recipe.environment.localVolumes) {
+      const partNodeIds = recipe.nodes.filter(node => node.geometry !== undefined).map(node => node.id);
+      checkLocalVolumePartNames(recipe.environment.localVolumes, partNodeIds);
+    }
     if (state) {
       retainedMatrices(state.parts);
     }

@@ -41,34 +41,6 @@ export function validateFogField(field) {
   return field;
 }
 
-// What a fog without detail controls uses: one octave, no warp, the noise as is, the layer top fading from half its height.
-const DEFAULT_DETAIL = { detailOctaves: 1, detailAmount: 0.5, warp: 0, contrast: 1, profileSoftness: 0.5, keyScattering: 1, scatterOctaves: 1, multiScatter: 0.5, multiExtinction: 0.5, multiAnisotropy: 0.5, keyTransmittance: 0, surfaceTransmittance: 0 };
-const DETAIL_LIMITS = {
-  detailOctaves: [1, 3, 'Volume detail octaves'],
-  detailAmount: [0, 1, 'Volume detail amount'],
-  warp: [0, 4, 'Volume warp'],
-  contrast: [0, 4, 'Volume contrast'],
-  profileSoftness: [0, 0.95, 'Volume profile softness'],
-  keyScattering: [0, 10, 'Volume key scattering'],
-  scatterOctaves: [1, 4, 'Volume scatter octaves'],
-  multiScatter: [0, 1, 'Volume multi scatter'],
-  multiExtinction: [0, 1, 'Volume multi extinction'],
-  multiAnisotropy: [0, 1, 'Volume multi anisotropy'],
-  keyTransmittance: [0, 1, 'Volume key transmittance'],
-  surfaceTransmittance: [0, 1, 'Volume surface transmittance'],
-};
-
-/** The twelve detail fields of a resolved volume fog with defaults filled in. Anything unset or out of range throws like the core fields. */
-export function resolveFogDetail(volume) {
-  const detail = { ...DEFAULT_DETAIL };
-  for (const [field, [minimum, maximum, label]] of Object.entries(DETAIL_LIMITS)) {
-    if (volume[field] !== undefined) detail[field] = finiteRange(volume[field], minimum, maximum, label);
-  }
-  if (!Number.isInteger(detail.detailOctaves)) throw new RangeError('Volume detail octaves must be an integer');
-  if (!Number.isInteger(detail.scatterOctaves)) throw new RangeError('Volume scatter octaves must be an integer');
-  return detail;
-}
-
 export function resolveVolumeFog(input = {}) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('volumeFog must be an object');
   const density = finiteRange(input.density ?? 0, 0, 10, 'Volume density');
@@ -87,8 +59,7 @@ export function resolveVolumeFog(input = {}) {
   const noiseScale = finiteRange(input.noiseScale ?? 0.3, 0.001, 100, 'Volume noise scale');
   const maxDistance = finiteRange(input.maxDistance ?? 100, 0.01, 1e4, 'Volume maximum distance');
   const heightFalloff = finiteRange(input.heightFalloff ?? 0, 0, 1e5, 'Volume height falloff');
-  // The detail fields (detailOctaves ... surfaceTransmittance) pass through with the other unknown fields, checked here so a bad value fails when the scene is built.
-  resolveFogDetail(input);
+  // The detail fields (detailOctaves ... keyScattering) pass through with the other unknown fields: the fog addon validates them (resolveFogDetail).
   const resolved = { ...input, density, minimum, maximum, color, ambient, drift, steps, anisotropy, noiseAmount, noiseScale, maxDistance, heightFalloff };
   // Left out when unset, so the renderer can derive it from the scene (volumeShadowAmbient).
   if (input.shadowAmbient !== undefined) {
