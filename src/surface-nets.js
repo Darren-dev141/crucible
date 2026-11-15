@@ -51,8 +51,8 @@ const QUAD_OFFSETS = [[-1, -1], [0, -1], [0, 0], [-1, 0]];
 
 /**
  * One quad of cell vertices per grid edge that crosses the surface, wound so the normal points outward. When
- * `insidePoints` and `outsidePoints`, when arrays, receive the inside and the outside grid point of each quad, for
- * `splitSaddleVertices`.
+ * `insidePoints` or `outsidePoints` is an array, it receives the inside or the outside grid point of each quad (one
+ * entry per quad, in quad order), for `splitSaddleVertices`.
  */
 export function quadsAroundEdges(distances, grid, cellVertex, insidePoints = null, outsidePoints = null) {
   const cellsPerAxis = grid.points.map(count => count - 1);

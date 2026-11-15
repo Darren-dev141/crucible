@@ -147,8 +147,9 @@ export function remeshMesh(mesh, options, buildQuads = quadsAroundEdges) {
   const { distances, origin } = sampleDistances(mesh, surface, grid);
   const placed = placeCellVertices(distances, grid, origin);
   const insidePoints = [];
-  const builtQuads = buildQuads(distances, grid, placed.cellVertex, insidePoints);
-  const { quads, positions } = splitSaddleVertices(builtQuads, insidePoints, placed.positions);
+  const outsidePoints = [];
+  const builtQuads = buildQuads(distances, grid, placed.cellVertex, insidePoints, outsidePoints);
+  const { quads, positions } = splitSaddleVertices(builtQuads, insidePoints, placed.positions, outsidePoints);
   if (!quads.length) throw new RangeError('remesh found no surface: the voxel size is larger than the mesh.');
   const faceOffsets = Uint32Array.from({ length: quads.length + 1 }, (value, index) => index * 4);
   const remeshed = createMeshData({ positions: Float32Array.from(positions), faceOffsets, cornerVertices: Uint32Array.from(quads.flat()) });

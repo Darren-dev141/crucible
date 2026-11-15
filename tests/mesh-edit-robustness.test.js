@@ -216,6 +216,21 @@ test('splitSaddleVertices also splits a concave saddle, two outside points on a 
   assert.equal(split.quads.length, quads.length);
 });
 
+test('remeshMesh separates a concave saddle instead of throwing', () => {
+  const concaveBuilder = (distances, grid, cellVertex, insidePoints, outsidePoints) => {
+    const fixture = concaveSaddleQuads();
+    insidePoints.push(...fixture.insidePoints);
+    outsidePoints.push(...fixture.outsidePoints);
+    return fixture.quads;
+  };
+  const { mesh } = remeshMesh(cube(), { resolution: 8 }, concaveBuilder);
+  const quads = [];
+  for (let face = 0; face < mesh.faceOffsets.length - 1; face++) {
+    quads.push(Array.from(mesh.cornerVertices.subarray(mesh.faceOffsets[face], mesh.faceOffsets[face + 1])));
+  }
+  assert.ok(quadsPerEdge(quads).every(count => count === 2));
+});
+
 function randomSignGrid(seed, pointsPerAxis) {
   let state = seed;
   const next = () => {
