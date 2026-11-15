@@ -42,6 +42,7 @@ export function packLocalVolumes(volumes, buffers) {
     buffers.emission.set([...volume.emission.map(channel => channel * volume.emissionStrength), volume.noiseScale], at);
     buffers.steps.set([volume.steps, packedShape === PACKED_SHAPE_MESH ? buffers.meshParts.length : 0, volume.scatter ?? 0, volume.blur ?? 0], at);
     if (packedShape === PACKED_SHAPE_MESH) buffers.meshParts.push({ part: volume.part, label: `environment.localVolumes[${index}]` });
+    if (volume.shape !== 'grid') buffers.grid[at + 1] = volume.shadowDetail ? 1 : 0;
     if (volume.shape === 'grid') {
       if (buffers.gridVolume) throw new RangeError(ONE_GRID_VOLUME_MESSAGE);
       buffers.gridVolume = volume;
@@ -73,6 +74,9 @@ export const LOCAL_VOLUME_LIGHT_DEPTH_SATURATION = 6;
  * side of the smoke clearly darker than the sunlit side, the way the many scatters of a real smoke take the light from its shade.
  */
 export const LOCAL_VOLUME_SHADOW_STRENGTH = 1.2;
+
+/** The taps along the light of a volume with `shadowDetail` (the others take 3), so the shadow follows the noise and not only the smooth profile. The shader's loop is bounded by the same number. */
+export const LOCAL_VOLUME_DETAIL_SHADOW_TAPS = 8;
 
 /** The share of the mean sky radiance the sky term of a scattering volume keeps. The sky lights the whole volume evenly, so a high share flattens the form the sun gives it. */
 export const LOCAL_VOLUME_SKY_GAIN = 0.5;
