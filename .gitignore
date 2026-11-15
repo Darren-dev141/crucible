@@ -7,6 +7,7 @@ public/packs/
 public/release.json
 # Guides copied from docs/ at build time
 public/*.md
+public/cook-*.jpg
 public/changelog.json
 public/api-reference.json
 artifacts/

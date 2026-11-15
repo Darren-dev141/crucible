@@ -15,7 +15,9 @@ export const EXTENSION_POINTS = Object.freeze({
   runtimeSystem: 'runtime.addSystem(system) on a runtime (crucible/addons/runtime)',
 });
 
-const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
+// The running Crucible version may carry a prerelease tag or build metadata ("0.21.0-rc.1", "0.21.0+build5").
+// Only its x.y.z is compared, as in src/pack-manifest.js.
+const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const COMPARATOR_PATTERN = /^(>=|<=|>|<|=|\^)?(\d+\.\d+\.\d+)$/;
 const LARGEST_PART = 1e9;
 const POINT_NAMES = Object.keys(EXTENSION_POINTS).join(', ');

@@ -78,7 +78,7 @@ Call `scene_capabilities` for field detail. This list is generated from the serv
 
 ## If you know three.js
 
-Models write three.js from memory. The section "If you know three.js" of the [complete guide](https://crucible.codepawl.com/guide.md) maps each common three.js idiom to the Crucible call. The optional addon `@codepawlhq/crucible-three-compat` (folder `packages/three-compat`) accepts the common three.js shapes (`Scene`, `Mesh`, `MeshStandardMaterial`, `PerspectiveCamera`, the light classes, `GLTFLoader`, `setAnimationLoop`) and builds Crucible parts from them. It throws an error that names the Crucible call when you use a name it does not support.
+Models write three.js from memory. The section "If you know three.js" of the [complete guide](https://crucible.codepawl.com/guide.md) maps each common three.js idiom to the Crucible call. The optional addon `@codepawlhq/crucible-three-compat` (folder `packages/three-compat`, not on npm yet: import it from a source checkout) accepts the common three.js shapes (`Scene`, `Mesh`, `MeshStandardMaterial`, `PerspectiveCamera`, the light classes, `GLTFLoader`, `setAnimationLoop`) and builds Crucible parts from them. It throws an error that names the Crucible call when you use a name it does not support.
 
 ## Docs
 

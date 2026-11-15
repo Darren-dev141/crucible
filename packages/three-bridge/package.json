@@ -18,6 +18,11 @@
     "gltf"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codepawl/crucible.git",
+    "directory": "packages/three-bridge"
+  },
   "peerDependencies": {
     "@codepawlhq/crucible": ">=0.19.0 <1.0.0",
     "three": ">=0.160.0"

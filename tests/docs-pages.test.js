@@ -66,9 +66,9 @@ test('the plain-text guide holds every topic once, in navigation order', async (
   assert.ok(text.indexOf('## Introduction') < text.indexOf('## Parts and geometry'));
 });
 
-test('links to plain-text contracts point at files the site publishes', () => {
-  const release = readFileSync(new URL('../scripts/prepare-release.mjs', import.meta.url), 'utf8');
-  const published = new Set(['guide.md', 'gltf.md', 'changelog.md', ...[...release.matchAll(/'([\w-]+\.md)'/g)].map(match => match[1])]);
+test('links to plain-text contracts point at files the site publishes', async () => {
+  const { publishedDocuments } = await import('../scripts/published-documents.mjs');
+  const published = new Set(['guide.md', 'gltf.md', 'changelog.md', ...publishedDocuments.filter(file => file.endsWith('.md'))]);
   for (const page of pages) {
     for (const [, file] of page.text.matchAll(/\]\(\/([\w-]+\.md)(?:#[\w-]+)?\)/g)) {
       assert.ok(published.has(file), `${page.id} links to /${file}, which the site does not publish`);
