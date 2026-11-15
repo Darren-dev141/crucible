@@ -71,7 +71,7 @@ export function normalizeIrradianceGrid(input) {
   const resolution = input;
   const [minimum, maximum] = IRRADIANCE_GRID_LIMITS.resolution;
   if (!Number.isInteger(resolution) || resolution < minimum || resolution > maximum) {
-    throw new RangeError(`bake.irradianceGrid must be true or an integer node count from ${minimum} to ${maximum}.`);
+    throw new RangeError(`bake.irradianceGrid must be true or an integer node count from ${minimum} to ${maximum}; true picks up to 48 along the longest side within the node budget.`);
   }
   return resolution;
 }

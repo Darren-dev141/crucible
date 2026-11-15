@@ -15,14 +15,18 @@ function placed(name, translation, scale) {
   return { name, geometry: cube, matrix, material: { tag: 'surface', color: [0.8, 0.8, 0.8], metallic: 0, roughness: 0.8, emission: 0 } };
 }
 
-function bakedLightFor(keyAffects) {
+function bakeFor(keyAffects, bakeSettings) {
   const parts = [placed('floor', [0, -0.05, 0], [4, 0.1, 4]), placed('wall', [0, 1.5, -2.05], [4.2, 3.2, 0.1])];
   const environment = {
     keyColor: [3, 3, 3], lightDirection: [0.2, 1, 0.3], skyTop: [0.2, 0.3, 0.6], skyBottom: [0.4, 0.4, 0.4],
     pointLights: [], spotLights: [], areaLights: [], keyAffects,
   };
-  const settings = normalizeAgentBake({ preset: 'draft', probes: false });
-  const result = bakeAgentParts(parts, new Map(parts.map(part => [part.name, part.matrix])), environment, settings);
+  const settings = normalizeAgentBake({ preset: 'draft', probes: false, ...bakeSettings });
+  return { parts, result: bakeAgentParts(parts, new Map(parts.map(part => [part.name, part.matrix])), environment, settings) };
+}
+
+function bakedLightFor(keyAffects) {
+  const { result } = bakeFor(keyAffects, {});
   const lightSum = name => {
     const part = result.parts.find(candidate => candidate.name === name);
     const lightmap = part.material.emissiveMap ? lightmapBytes(part) : [];
@@ -34,9 +38,23 @@ function bakedLightFor(keyAffects) {
 test('the sun link changes what each part bakes (#1218)', () => {
   const unlinked = bakedLightFor(undefined);
   assert.ok(unlinked.floor > 0 && unlinked.wall > 0, 'the unlinked sun lights both parts');
-  assert.notDeepEqual(bakedLightFor(['wall']), unlinked);
-  assert.notDeepEqual(bakedLightFor([]), unlinked);
-  assert.notDeepEqual(bakedLightFor(['floor']), bakedLightFor(['wall']));
+  // Only the sun's bounce is baked: a part the sun skips sends none, so its neighbour gets nothing.
+  const floorOnly = bakedLightFor(['floor']);
+  assert.equal(floorOnly.floor, 0);
+  assert.ok(floorOnly.wall > 0);
+  const wallOnly = bakedLightFor(['wall']);
+  assert.ok(wallOnly.floor > 0);
+  assert.equal(wallOnly.wall, 0);
+  assert.deepEqual(bakedLightFor([]), { floor: 0, wall: 0 });
+});
+
+test('the sun link reaches the irradiance grid bake (#1218)', () => {
+  const gridSum = keyAffects => {
+    const { result } = bakeFor(keyAffects, { irradianceGrid: 8 });
+    return Array.from(result.parts[0].material.irradianceGrid.data).reduce((sum, value) => sum + Math.abs(value), 0);
+  };
+  assert.ok(gridSum(undefined) > 0, 'the unlinked sun lights the grid');
+  assert.ok(gridSum([]) < gridSum(undefined), 'a sun linked to no part adds no sun light to the grid');
 });
 
 test('the recipe refuses an irradiance grid node count whose cube passes the node cap (#1218)', () => {
