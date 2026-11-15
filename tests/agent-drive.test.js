@@ -6,6 +6,7 @@ import { parseGltf } from '../src/gltf.js';
 import { createAgentAssetScene } from '../src/agent-asset.js';
 import { createAgentScene } from '../src/agent-scene.js';
 import { createAssetDrive } from '../src/agent-drive.js';
+import { normalizeDrive } from '../src/agent-drive-schema.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { carAsset, CAR_WHEEL_RADIUS, CAR_WHEELBASE, CAR_TRACK } from './fixtures/car-glb.js';
 
@@ -144,6 +145,16 @@ test('the brake signal is on only while the car slows, and the tail lamp glows w
     assert.ok(braking > 5 && coasting > 20, `${braking} braking and ${coasting} other samples`);
     assert.equal(motionDrive(scene).lights.headlights[0].id, 'left');
   });
+});
+
+test('a wheel that gives both node and nodes is rejected instead of dropping node', () => {
+  const wheels = [{ node: 'Wheel_FL' }, { node: 'Wheel_FR', nodes: ['Tire_FR', 'Hub_FR'] }];
+  assert.throws(() => normalizeDrive({ path: CURVE, speed: 3, wheels }), error => {
+    assert.equal(error.fieldPath, 'drive.wheels[1]');
+    assert.match(error.message, /^drive\.wheels\[1\]: got "node and nodes"; expected one of node or nodes; pass node or nodes, not both/);
+    return true;
+  });
+  assert.doesNotThrow(() => normalizeDrive({ path: CURVE, speed: 3, wheels: [{ node: 'Wheel_FL' }, { nodes: ['Tire_FR', 'Hub_FR'] }] }));
 });
 
 test('a bad drive names the problem', async () => {

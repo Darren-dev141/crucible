@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createTree } from '../src/vegetation.js';
 import { TREE_LEVEL_GAINS } from '../src/tree-level-gains.js';
-import { coverageMean, matchMeanVisibility, vertexCoverage } from '../src/tree-sky.js';
+import { coverageMean, createCrownSkyField, matchMeanVisibility, vertexCoverage } from '../src/tree-sky.js';
 
 // Issue #394: a lower level of detail worked out its own sky visibility from its few, large vertices, which put the
 // far levels at the floor (0.04 to 0.06) where level 0 sees 0.08 to 0.12. Under sky light they drew near black.
@@ -121,4 +121,15 @@ test('the fitted gains only touch levels 1 to 3 and stay in a sane range', () =>
       assert.ok(gain.sky >= 0.25 && gain.sky <= 16, `${species} level ${level} sky gain ${gain.sky}`);
     }
   }
+});
+
+test('matchMeanVisibility keeps the field finite when no leaf area weighs it', () => {
+  const visibility = new Float32Array([0.5, 0.25]);
+  const matched = matchMeanVisibility(visibility, 0, new Float32Array([0, 0]));
+  assert.deepEqual(Array.from(matched), [0.5, 0.25]);
+});
+
+test('createCrownSkyField names the fix for an empty or ragged positions array', () => {
+  assert.throws(() => createCrownSkyField(new Float32Array(0)), /at least one vertex position/);
+  assert.throws(() => createCrownSkyField(new Float32Array(4)), /multiple of 3/);
 });

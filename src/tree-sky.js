@@ -42,6 +42,9 @@ function boundsOfPositions(positions) {
  * put them in cells that looked solid and left the far crown near black.
  */
 export function createCrownSkyField(positions) {
+  if (positions.length === 0 || positions.length % 3 !== 0) {
+    throw new RangeError('Pass at least one vertex position (a multiple of 3 floats).');
+  }
   const { minimum, maximum } = boundsOfPositions(positions);
   const longest = Math.max(maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2], 1e-6);
   const cell = longest / GRID_CELLS_ALONG_LONGEST_SIDE;
@@ -126,7 +129,9 @@ export function coverageMean(values, coverage) {
  * lookup alone leaves them seeing more sky on average.
  */
 export function matchMeanVisibility(visibility, targetMean, coverage) {
-  const scale = targetMean / coverageMean(visibility, coverage);
+  const currentMean = coverageMean(visibility, coverage);
+  // No leaf area to weigh by (every triangle has zero area) leaves nothing to match: keep the field as it is instead of scaling by 0/0.
+  const scale = currentMean > 0 && targetMean > 0 ? targetMean / currentMean : 1;
   return scaleVisibility(visibility, scale);
 }
 

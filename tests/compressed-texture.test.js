@@ -120,3 +120,20 @@ test('createTexture uploads a compressed image without generating mips', () => {
   CrucibleRenderer.prototype.createTexture.call(renderer, map);
   assert.deepEqual(calls, ['texStorage2D', 'compressedTexSubImage2D', 'compressedTexSubImage2D', 'compressedTexSubImage2D', 'compressedTexSubImage2D']);
 });
+
+function blockLevel(width, height) {
+  return { width, height, data: new Uint8Array(Math.ceil(width / 4) * Math.ceil(height / 4) * 16) };
+}
+
+test('a base level with a zero, negative or fractional size is refused', () => {
+  for (const [width, height] of [[0, 0], [-4, -4], [2.5, 2.5], [4, 0]]) {
+    assert.throws(() => describeCompressedImage(BC7, [blockLevel(width, height)], 'map', 'srgb'), /whole width and height of at least 1/, `${width}x${height}`);
+  }
+});
+
+test('a full mip chain whose level sizes do not halve is refused', () => {
+  const wrongChain = [blockLevel(8, 8), blockLevel(8, 4), blockLevel(4, 4), blockLevel(1, 1)];
+  assert.throws(() => describeCompressedImage(BC7, wrongChain, 'map', 'srgb'), /mip level 1 is 8x4, but a chain from 8x8 needs 4x4/);
+  const rightChain = [blockLevel(8, 8), blockLevel(4, 4), blockLevel(2, 2), blockLevel(1, 1)];
+  assert.equal(describeCompressedImage(BC7, rightChain, 'map', 'srgb').compressed.levels.length, 4);
+});
