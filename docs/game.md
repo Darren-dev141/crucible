@@ -51,7 +51,7 @@ A field newer than the last npm release carries a tag such as `{since 0.21.0}`; 
 | `ground` | 0 | Height of the walkable ground in metres |
 | `rules` | none | A [game rules](game-rules.md) document, checked when it is set |
 
-A rules part named like a scene node is hidden and shown with it, which is how a coin disappears. Yaw 0 faces -Z, and W moves forward. Removing the player node while a game uses it fails with the field to fix.
+A rules part named like a scene node is hidden and shown with it, which is how a coin disappears. The part starts as hidden as the node: a node stored with `visible: false` stays hidden until a rule shows it, unless the part sets `visible` itself, which wins. Yaw 0 faces -Z, and W moves forward. Removing the player node while a game uses it fails with the field to fix.
 
 The player and each NPC move in world space. A node under a parent that only has a translation keeps its place: `startGame` writes the node's own translation as the world position minus the parents' translations. A parent with a rotation or a scale is refused when the game starts, with the parent's id; give that parent only a translation, or choose a node whose parents have none.
 
