@@ -30,35 +30,7 @@
   --syntax-name: #2a282d;
   --syntax-comment: #6e6c73;
 }
-@media (prefers-color-scheme: dark) {
-  :root[data-theme="crucible"]:not([data-color="light"]) {
-    color-scheme: dark;
-    --window: #17161a;
-    --bg: #201f24;
-    --surface: #2a282d;
-    --text: #f1f0ec;
-    --muted: #a09ea6;
-    --border: #fefefd1f;
-    --tint: #fefefd0f;
-    --tint-strong: #fefefd1c;
-    --primary: #f1f0ec;
-    --primary-text: #17161a;
-    --line: #2f2d34;
-    --accent: #fc9132;
-    --focus: #fc9132;
-    --ok: #5fc48a;
-    --warn: #f0b34a;
-    --error: #ee7a6c;
-    --invert-border: #fefefd1a;
-    --chrome: #17161ad9;
-    --syntax-keyword: #f1f0ec;
-    --syntax-string: #5fc48a;
-    --syntax-number: #f1f0ec;
-    --syntax-flag: #a09ea6;
-    --syntax-name: #f1f0ec;
-    --syntax-comment: #a09ea6;
-  }
-}
+/* Light like codepawl.com unless the visitor picks dark with the header button. */
 :root[data-theme="crucible"][data-color="dark"] {
   color-scheme: dark;
   --window: #17161a;
