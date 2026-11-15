@@ -162,3 +162,45 @@ test('heightmap arrays and functions drive the surface, and bad options throw', 
   const image = { width: 2, height: 2, data: new Uint8ClampedArray([255, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 0, 0, 255]) };
   assert.deepEqual([...heightmapFromImageData(image, 10)], [10, 0, 0, 10]);
 });
+
+const TILTED = { size: 10, chunks: 1, levels: 1, resolution: 4, height: (worldX) => 0.5 * worldX };
+
+test('border normals of a tilted plane match the interior normals', () => {
+  const terrain = createTerrain(TILTED);
+  const interior = terrain.normalAt(0, 0);
+  for (const [worldX, worldZ] of [[-5, 0], [5, 0], [0, -5], [0, 5]]) {
+    const border = terrain.normalAt(worldX, worldZ);
+    for (let axis = 0; axis < 3; axis++) assert.ok(Math.abs(border[axis] - interior[axis]) < 1e-6, `axis ${axis} at ${worldX},${worldZ}`);
+  }
+});
+
+test('mesh vertex normals on the border match the plane slope', () => {
+  const terrain = createTerrain(TILTED);
+  const { positions, normals } = terrain.parts[0].geometry;
+  const expectedX = -0.5 / Math.hypot(0.5, 1);
+  for (let vertex = 0; vertex < positions.length / 3; vertex++) {
+    assert.ok(Math.abs(normals[vertex * 3] - expectedX) < 1e-6, `vertex ${vertex}`);
+  }
+});
+
+test('a plain array or Float64Array of heights builds that ground', () => {
+  const grid = [0, 0, 0, 4, 4, 4, 8, 8, 8];
+  for (const heights of [grid, new Float64Array(grid), new Float32Array(grid)]) {
+    const terrain = createTerrain({ size: 4, chunks: 1, levels: 1, resolution: 2, height: heights });
+    assert.equal(terrain.heightAt(0, 2), 8);
+    assert.equal(terrain.heightAt(0, -2), 0);
+  }
+});
+
+test('a height that is neither a function, an array nor an options object is rejected', () => {
+  assert.throws(() => createTerrain({ size: 4, chunks: 1, levels: 1, resolution: 2, height: 'hills' }), /height must be a function/);
+});
+
+test('update rejects an eye position with a non-finite coordinate and keeps the levels', () => {
+  const terrain = createTerrain({ size: 10, chunks: 2, levels: 2, resolution: 4, height: () => 0 });
+  const levelsBefore = terrain.chunkLevels();
+  assert.throws(() => terrain.update([Number.NaN, 5, 0]), /finite numbers/);
+  assert.throws(() => terrain.update([0, Infinity, 0]), /finite numbers/);
+  assert.throws(() => terrain.update([0, 1]), /finite numbers/);
+  assert.deepEqual(terrain.chunkLevels(), levelsBefore);
+});

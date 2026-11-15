@@ -220,12 +220,13 @@ test('hostile mesh edits are rejected without changing the scene', async () => {
   asset.dispose();
 });
 
-function uvBoxGlb() {
+function uvBoxGlb(normalizeToBounds = false) {
   const geometry = box(0, 1);
   const uvs = new Float32Array(geometry.positions.length / 3 * 2);
   for (let vertex = 0; vertex < geometry.positions.length / 3; vertex++) {
-    uvs[vertex * 2] = geometry.positions[vertex * 3] * 0.5 + 0.5;
-    uvs[vertex * 2 + 1] = geometry.positions[vertex * 3 + 2] * 0.5 + 0.5;
+    const scale = normalizeToBounds ? 1 : 0.5;
+    uvs[vertex * 2] = geometry.positions[vertex * 3] * scale + 0.5;
+    uvs[vertex * 2 + 1] = geometry.positions[vertex * 3 + 2] * scale + 0.5;
   }
   const part = { name: 'Crate', geometry: { ...geometry, uvs }, matrix: mat4.create(), material: { color: [1, 1, 1], metallic: 0, roughness: 1 } };
   return exportGlb([part]);
@@ -245,6 +246,20 @@ test('UVs survive an edit, and faces an edit leaves without UVs read the nearest
   }
   assert.ok(zero < edited.uvs.length / 2 / 4, `${zero} vertices kept the empty 0,0 UV`);
   assert.ok(scene.inspectMeshes({ geometries: ['mesh-0'] }).meshes[0].transfer.uvFacesRebuilt > 0);
+  asset.dispose();
+});
+
+test('a face with a real UV at 0,0 keeps its UVs through an edit that does not touch it', async () => {
+  const asset = await parseGltf(uvBoxGlb(true));
+  const scene = createScene(asset);
+  const before =Array.from(partOf(scene, 'mesh-0').geometry.uvs);
+  const cornerAtOrigin = before.some((value, index) => index % 2 === 0 && value === 0 && before[index + 1] === 0);
+  assert.ok(cornerAtOrigin, 'the fixture has a corner at UV 0,0');
+  applyEdits(scene, 'mesh-0', [{ op: 'delete', select: { tag: 'top' } }]);
+  assert.equal(scene.inspectMeshes({ geometries: ['mesh-0'] }).meshes[0].transfer.uvFacesRebuilt, 0);
+  const after = Array.from(partOf(scene, 'mesh-0').geometry.uvs);
+  const afterCornerAtOrigin = after.some((value, index) => index % 2 === 0 && value === 0 && after[index + 1] === 0);
+  assert.ok(afterCornerAtOrigin, 'the corner at UV 0,0 survived');
   asset.dispose();
 });
 

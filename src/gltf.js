@@ -719,6 +719,7 @@ async function prepareResources(document, data, dataBytes, options, limits, over
       resourceBytes.set(uri, dataUriBytes(uri));
       continue;
     }
+    if (options.allowExternalResources === false) throw new Error(`External glTF uri "${uri}" is not fetched here. Embed it (GLB or data URI).`);
     if (!options.baseUrl && !/^(https?:|blob:)/.test(uri)) throw new Error('External glTF resources require baseUrl. Use GLB for a self-contained local file.');
     const resolved = new URL(uri, options.baseUrl || undefined).href;
     if (!/^(https?:|blob:)/.test(resolved)) throw new Error('Only HTTP, HTTPS, blob and embedded data resources are supported.');

@@ -86,7 +86,7 @@ export function createQueryOnlyCache(parseGltf) {
   let current = null;
   async function load(bytes) {
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    const asset = await parseGltf(buffer, { maxBytes: bytes.length + 1024, maxVertices: QUERY_ASSET_LIMITS.maxVertices, maxParts: QUERY_ASSET_LIMITS.maxParts });
+    const asset = await parseGltf(buffer, { maxBytes: bytes.length + 1024, maxVertices: QUERY_ASSET_LIMITS.maxVertices, maxParts: QUERY_ASSET_LIMITS.maxParts, allowExternalResources: false });
     let triangles = 0;
     for (const part of asset.parts) triangles += part.geometry.indices.length / 3;
     if (triangles > QUERY_ASSET_LIMITS.maxTriangles) {
