@@ -59,7 +59,7 @@ renderer.render({ eye: [0, 2, 5], target: [0, 1, 0], time: 0 });
 | `keyTransmittance` | `0` | `0…1`; how much of the fog between a point and the sun dims the key light scattered there (three taps along the light, to the box exit). 0 keeps today's look |
 | `surfaceTransmittance` | `0` | `0…1`; the same dimming for the key light on a lit surface inside the box, so a dense haze dims a sunlit floor. 0 keeps today's look |
 
-Values must be finite numbers. Active volume fog accepts finite frame time within ±1,000,000 seconds and a nonzero light direction with components within ±1,000,000. Noise samples absolute time, so backward seeks reproduce earlier density.
+Values must be finite numbers, and the detail fields are checked with the rest when the scene or a `set-environment` edit is built. Active volume fog accepts finite frame time within ±1,000,000 seconds and a nonzero light direction with components within ±1,000,000. Noise samples absolute time, so backward seeks reproduce earlier density.
 
 ## Fog field: density and velocity per footprint cell
 
@@ -108,7 +108,7 @@ In a scene with an irradiance grid (`bake.irradianceGrid`) the bounce term is th
 
 ## Local volumes
 
-`environment.localVolumes` holds up to 8 boxes, spheres or parts that absorb and emit light: candle haze, a smoke puff, a glowing cloud in one place. They need no `volumeFog`. With `scatter` at its default `0` they do not scatter, so the sun and the sky do not light them; they only dim what is behind them and add their own glow. Raise `scatter` to light them (see "Lit volumes"). A scene without `localVolumes` draws exactly as before and compiles nothing extra.
+`environment.localVolumes` holds up to 8 boxes, spheres or parts that absorb and emit light: candle haze, a smoke puff, a glowing cloud in one place. They need no `volumeFog`. With `scatter` at its default `0` they do not scatter, so the sun and the sky do not light them; they only dim what is behind them and add their own glow. Raise `scatter` to light them (see "Lit volumes"). A scene without `localVolumes` draws exactly as before and compiles nothing extra. At most one of them takes `shape: "grid"`; a second one is refused when the scene or `set-environment` is built, with the same message as the render.
 
 ```json
 { "environment": { "localVolumes": [
@@ -120,7 +120,7 @@ In a scene with an irradiance grid (`bake.irradianceGrid`) the bounce term is th
 | --- | --- | --- |
 | `shape` | `box` | `box` takes `size: [width, height, depth]`, `sphere` takes `radius`, `mesh` takes `part` |
 | `center` | required for `box` and `sphere` | World position |
-| `part`, `fit` | required, `bounds` | `mesh` only. `part` names a part of the scene; `fit` is `bounds` or `mesh` (see below) |
+| `part`, `fit` | required, `bounds` | `mesh` only. `part` names a part of the scene (a node ID with geometry, checked when the scene or `set-environment` is built); `fit` is `bounds` or `mesh` (see below) |
 | `density` | `1` | `0` to `100`. Extinction per unit length at the core |
 | `absorption` | `[1, 1, 1]` | Per colour channel share of the density, `0` to `1`. A larger value dims that channel more, so `[0.1, 0.6, 1]` removes blue first and leaves a warm tint |
 | `emission`, `emissionStrength` | `[0, 0, 0]`, `1` | Glow colour and its radiance per unit length at the core, `0` to `1000`. Emission does not depend on `density`, so `density: 0` is a pure glow |
