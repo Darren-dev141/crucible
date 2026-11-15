@@ -219,7 +219,7 @@ and the geometry UVs.
 ```
 
 - `frames` lists 2 to 64 IDs from `scene_asset_catalog`. The `--assets` folder takes PNG, JPEG and WebP files next to GLBs, with the same 64 MiB file budget, content-bound SHA-256 IDs and no links. An extension that does not match the file signature rejects the catalog. Entries report `kind: "image"` and `mimeType`; GLBs report `kind: "glb"`. No remote URLs are read.
-- All frames share one size, at most 1024 pixels a side, and a scene decodes at most 64 MiB of frames. Frames are read without colour conversion and should be opaque.
+- All frames share one size, at most 1024 pixels a side, and a scene decodes at most 64 MiB of frames. Frames are read without colour conversion and should be opaque. The catalog reads each image's header and skips one over these limits, so the page never decodes it.
 - `fps` is above 0 and at most 60. The frame at scene time `t` is `floor(t * fps)`: wrapped around the list when `loop` is true (the default), held on the last frame when `loop` is false. Frame 0 shows before any motion time is set.
 - The clock is `motionTime`, the one `scene_look`, `scene_review` and `motion` use. A seek is deterministic: the same time gives the same frame and the same PNG bytes. `scene_render_submit` reads it from `settings.motion.start` plus the elapsed time (or a timeline shot), so a still or video frame shows the frame that `scene_look` shows at that time. A recipe with a sequence and no authored `motion` accepts `settings.motion`.
 - The renderer uploads a frame with `updateTexture` only when the frame index changes. `scene_inspect` reports `textureSequences`: material, frame count, `fps`, `loop`, current `index` and its asset ID.
@@ -389,7 +389,7 @@ It rejects an empty command list.
 Each successful application increments the revision once, including a command that retains existing values.
 Stale revisions and invalid commands leave canonical state, published matrices, materials, and the revision unchanged.
 Every command in a batch stages before any command publishes.
-A batch of plain `set-node`, `set-material` and `set-camera` edits does not copy and check the whole recipe a second time, and part bounds are measured again only for parts whose matrix changed, so a pose edit at 961 parts takes about 20 ms instead of about 60 ms. The final recipe is still checked against `maxRecipeBytes`.
+A batch of plain `set-node`, `set-material` and `set-camera` edits does not copy and check the whole recipe a second time, and part bounds are measured again only for parts whose matrix changed, so a pose edit at 961 parts takes about 9 ms instead of about 60 ms. Such a batch clones only the nodes it names, skips the validation compile of the scene graph when every geometry is already built (the compile that builds the graph runs once), and keeps the undo snapshot as a shared read-only recipe. A scene with placed assets, armatures, relations or instances copies the whole recipe as before. The final recipe is still checked against `maxRecipeBytes`.
 
 Commands run sequentially against a private candidate recipe.
 Final resource references and hierarchy must be valid before publication.

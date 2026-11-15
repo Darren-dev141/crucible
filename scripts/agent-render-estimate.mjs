@@ -2,6 +2,8 @@
 // settings alone, so the same inputs give the same answer. A correction learned from the last few jobs on this machine
 // (kept in the jobs folder, never sent anywhere) can move it, within a fixed bound.
 
+import { MAXIMUM_MEMORY_MIB } from '../src/agent-scene-capabilities.js';
+
 const MIB = 1024 ** 2;
 
 /** What scene_capabilities topic jobs says about the estimate and the report. The details are in docs/mcp.md. */
@@ -168,10 +170,20 @@ function frameWasReduced(metrics) {
   return Boolean(metrics.width && metrics.requestedWidth && (metrics.width < metrics.requestedWidth || metrics.height < metrics.requestedHeight));
 }
 
+/** What to do about a reduced frame: raise --memory when the full frame fits under the server ceiling, else say what to shrink. */
+function memoryAdvice(metrics) {
+  const running = metrics.memoryBudgetMiB ? `; this server runs with --memory ${metrics.memoryBudgetMiB}` : '';
+  const needs = ` The full frame needs a render budget of ${metrics.requiredMemoryMiB} MiB${running}.`;
+  if (metrics.requiredMemoryMiB > MAXIMUM_MEMORY_MIB) {
+    return `${needs} --memory accepts at most ${MAXIMUM_MEMORY_MIB}, so a restart cannot fit it. Reduce the textures, the geometry, the frame size, or turn off HDR or bloom to render at ${metrics.requestedWidth}x${metrics.requestedHeight}.`;
+  }
+  return `${needs} Restart it with --memory ${metrics.requiredMemoryMiB} or more to render at ${metrics.requestedWidth}x${metrics.requestedHeight}.`;
+}
+
 function fallbacksFrom(settings, metrics) {
   const fallbacks = [];
   if (frameWasReduced(metrics)) {
-    const neededBudget = metrics.requiredMemoryMiB ? ` The full frame needs a render budget of ${metrics.requiredMemoryMiB} MiB${metrics.memoryBudgetMiB ? `; this server runs with --memory ${metrics.memoryBudgetMiB}` : ''}. Restart it with --memory ${metrics.requiredMemoryMiB} or more to render at ${metrics.requestedWidth}x${metrics.requestedHeight}.` : '';
+    const neededBudget = metrics.requiredMemoryMiB ? memoryAdvice(metrics) : '';
     fallbacks.push(`The memory budget reduced the frame from ${metrics.requestedWidth}x${metrics.requestedHeight} to ${metrics.width}x${metrics.height}.${neededBudget}`);
   }
   if (metrics.pathTracer?.backendNote) fallbacks.push(metrics.pathTracer.backendNote);
