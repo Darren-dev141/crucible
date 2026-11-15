@@ -815,7 +815,7 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
   async function finish(job, snapshot) {
     const { record, controller } = job;
     const timer = setTimeout(() => {
-      job.failure = 'Render job exceeded its elapsed deadline. If another process was using the GPU, submit the job again; this job failed alone and the runtime stays usable.';
+      job.failure = 'Render job exceeded its elapsed deadline. If another process was using the GPU, submit the job again.';
       record.state = 'cancelling';
       record.reason = job.failure;
       controller.abort(new Error(job.failure));

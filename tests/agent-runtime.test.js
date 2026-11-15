@@ -107,7 +107,7 @@ async function importedBindings(source) {
 }
 
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
-  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0 } = {}) {
+  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0 } = {}) {
   const events = [];
   const sandboxTimers = new Set();
   const viewports = [];
@@ -157,6 +157,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
         data: Buffer.alloc(oversize ? 1024 * 1024 + 1 : 16).toString('base64') };
       if (method === 'dispose' && failDispose) throw new Error('Injected disposal failure');
       if (method === 'resume' && resumeDelayMs) await new Promise(resolve => setTimeout(resolve, resumeDelayMs));
+      if (method === 'suspend' && suspendDelayMs) await new Promise(resolve => setTimeout(resolve, suspendDelayMs));
       if (method === 'apply') { sourceRevision++; return { revision: sourceRevision }; }
       return {};
     }
@@ -366,6 +367,23 @@ runTest('a job cut short by its deadline leaves the runtime usable although the 
     assert.ok(events.includes('source:resume'));
     assert.equal((await runtime.capabilities()).phase, 'ready');
     assert.equal((await runtime.apply({ sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a slow suspend at job start does not fail the runtime (#1256)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId, events } = await reviewRuntimeHarness({ blockPrivateCreate: true, suspendDelayMs: 100, deadlineMs: 40,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    const abortController = new AbortController();
+    setTimeout(() => abortController.abort(new Error('Render job exceeded its elapsed deadline.')), 150);
+    await assert.rejects(runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: abortController.signal, progress: async () => {} }));
+    assert.ok(events.includes('source:suspend'));
+    assert.equal((await runtime.capabilities()).phase, 'ready');
   } finally { await runtime.close(); }
 });
 

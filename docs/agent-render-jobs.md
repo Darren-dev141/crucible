@@ -346,8 +346,9 @@ A job that traces on the native path tracer holds more in the Node process, beca
 | Video encoder drain and finalization | 30 seconds each |
 | Close settlement deadline | Five seconds |
 
-A job that passes its elapsed deadline fails alone, and the runtime stays usable for the next job: bringing the scene page back after the job gets four times the ordinary 30 second call limit, because a job that ran out of time usually shared the GPU with another process.
-Retry such a job once the card is free.
+Handing the scene page to a job, or to a review, and bringing it back each get four times the ordinary 30 second call limit, 120 seconds, because a job that ran out of time usually shared the GPU with another process.
+A job that passes its elapsed deadline fails alone. Retry it once the card is free. If the scene page still does not come back within 120 seconds, the runtime is `failed`, and the next call says so: restart the server.
+Other calls (`scene_inspect`, `scene_apply`) queue behind that handoff, so after a deadline failure they can wait up to 120 seconds, and the job stays `cancelling` for that long.
 One server owns one `--jobs` folder. A second server given the same folder fails with "The job store is already owned by a live process", and the error says to start it with its own `--jobs` folder.
 
 The controller rejects odd MP4 dimensions.
