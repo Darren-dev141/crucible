@@ -1,6 +1,6 @@
-- entry:core: the hook in the renderer that draws glowing local volumes before bloom extraction, so a fireball blooms.
-- entry:core+lazy: same hook.
-- scene:lit-box: same hook in a scene that uses the renderer.
-- scene:lit-box+lazy: same hook.
-- scene:gltf-box: same hook in a scene that uses the renderer.
-- scene:gltf-box+lazy: same hook.
+- entry:fog-shader: the composite pass (its own fragment shader and target) that draws a glowing volume before bloom extraction; it compiles only for a frame with bloom and a glowing volume.
+- scene:agent-scene: the composite path in the frame loop and its release hooks.
+- scene:agent-scene+lazy: the composite code loads with the volume code.
+- goal:agent-scene: the composite path in the frame loop.
+- goal:lit-box: the guarded composite call in the frame path.
+- goal:gltf-box: the same guarded call.
