@@ -907,6 +907,18 @@ function checkLightLinkNames(recipe) {
   }
 }
 
+// A typo in lines.nodes would turn nothing off without a sign. A node that exists but is hidden stays valid.
+function checkLineNodeNames(recipe) {
+  const lines = recipe.environment?.lines;
+  if (!lines?.nodes) {
+    return;
+  }
+  const unknown = agentSceneModule('lineArt').unknownLineNodeNames(lines, recipe.nodes);
+  if (unknown.length > 0) {
+    throw invalidField('environment.lines.nodes', unknown.slice(0, 4), 'node IDs that exist in nodes; scene_inspect lists them');
+  }
+}
+
 // Every light's affects list in light order: the mask of a part depends on these lists and nothing else of the environment.
 function lightLinksKey(environment) {
   const lights = [...environment.pointLights, ...(environment.spotLights ?? []), ...(environment.areaLights ?? [])];
@@ -989,6 +1001,7 @@ function normalizeRecipe(input, limits) {
     throw invalidField('camera.fStop', recipe.camera.fStop, 'a camera without effects.depthOfField.blur above 0; set blur to 0 or remove fStop');
   }
   checkLightLinkNames(recipe);
+  checkLineNodeNames(recipe);
   if (recipe.effects?.distortion || recipe.effects?.flash) agentSceneModule('postSteps').checkAirStepNodes(recipe);
   if (Object.hasOwn(recipe, 'motion')) {
     recipe.motion = recipe.motion === null || recipe.motion === undefined ? null : agentSceneModule('motion').normalizeAgentMotion(recipe.motion, recipe);

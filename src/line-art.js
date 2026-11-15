@@ -191,7 +191,7 @@ export function lineNodeTable(lines, groups) {
   const height = Math.ceil(count / NODE_TABLE_WIDTH);
   const data = new Float32Array(NODE_TABLE_WIDTH * height * 4);
   names.forEach((name, nodeIndex) => {
-    const setting = lines.nodes[name];
+    const setting = Object.hasOwn(lines.nodes, name) ? lines.nodes[name] : undefined;
     const mode = !setting ? NODE_MODE.normal : !setting.lines ? NODE_MODE.off : setting.silhouetteOnly ? NODE_MODE.silhouette : NODE_MODE.normal;
     const color = setting?.color ?? lines.color;
     for (const identifier of groups[name]) {
@@ -199,6 +199,13 @@ export function lineNodeTable(lines, groups) {
     }
   });
   return { count, data, width: NODE_TABLE_WIDTH, height };
+}
+
+/** The names in `lines.nodes` that are not the ID of any node of the recipe, so a typo fails instead of doing nothing. */
+export function unknownLineNodeNames(lines, recipeNodes) {
+  if (!lines?.nodes) return [];
+  const known = new Set((recipeNodes ?? []).map(node => node.id));
+  return Object.keys(lines.nodes).filter(name => !known.has(name));
 }
 
 function drawsOutlines(lines) {
@@ -396,6 +403,7 @@ function createLineArtStage(state) {
   let vertexArray = null;
   let outputTarget = null;
   let nodeTexture = null;
+  let nodeTextureIsEmpty = false;
   const guideTargets = new Map();
   const segmentBuffers = new Map();
 
@@ -430,23 +438,35 @@ function createLineArtStage(state) {
     if (nodeTexture) {
       context.deleteTexture(nodeTexture);
       nodeTexture = null;
+      nodeTextureIsEmpty = false;
     }
   }
 
-  // Uploads the per-ID table; a one-texel table stands in when the frame has no per-node settings, so the sampler is always complete.
+  // Uploads the per-ID table. A frame without per-node settings gets a one-texel table, made once and not rebuilt.
+  // The texture is bound on its own unit: binding first would replace the guide of whichever unit was active.
   function bindNodeTable(renderer, lines, unit) {
     const { context } = renderer;
-    const table = lineNodeTable(lines, renderer.passSupport.objectNodes());
+    const hasNodes = Boolean(lines.nodes) && Object.keys(lines.nodes).length > 0;
+    context.activeTexture(context.TEXTURE0 + unit);
     if (!nodeTexture) {
       nodeTexture = context.createTexture();
       context.bindTexture(context.TEXTURE_2D, nodeTexture);
       context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.NEAREST);
       context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, context.NEAREST);
+      nodeTextureIsEmpty = false;
+    } else {
+      context.bindTexture(context.TEXTURE_2D, nodeTexture);
     }
-    context.activeTexture(context.TEXTURE0 + unit);
-    context.bindTexture(context.TEXTURE_2D, nodeTexture);
-    const data = table.data ?? new Float32Array(4);
-    context.texImage2D(context.TEXTURE_2D, 0, context.RGBA32F, table.data ? table.width : 1, table.data ? table.height : 1, 0, context.RGBA, context.FLOAT, data);
+    if (!hasNodes) {
+      if (!nodeTextureIsEmpty) {
+        context.texImage2D(context.TEXTURE_2D, 0, context.RGBA32F, 1, 1, 0, context.RGBA, context.FLOAT, new Float32Array(4));
+        nodeTextureIsEmpty = true;
+      }
+      return 0;
+    }
+    const table = lineNodeTable(lines, renderer.passSupport.objectNodes());
+    context.texImage2D(context.TEXTURE_2D, 0, context.RGBA32F, table.width, table.height, 0, context.RGBA, context.FLOAT, table.data);
+    nodeTextureIsEmpty = false;
     return table.count;
   }
 

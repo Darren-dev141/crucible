@@ -1,7 +1,7 @@
 // Draws the line art reference scene with per-node line settings on the GPU and writes the stills the pull request shows.
 //   node scripts/smoke-line-art-nodes.mjs [--output <folder>]
 // Checks: lines false removes a node's contour, silhouetteOnly drops its inner lines, a node colour paints its lines,
-// and the frame without per-node settings is unchanged. Run it through gpu-lock (a light job).
+// and the frame without per-node settings is unchanged, from the first frame on. Run it through gpu-lock (a light job).
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
@@ -16,9 +16,9 @@ const output = resolve(argumentsGiven.includes('--output') ? argumentsGiven[argu
 const SIZE = { width: 960, height: 540 };
 const LINE_WIDTH = 2;
 const CASES = {
-  warmup: { width: LINE_WIDTH, extra: {} },
   off: { width: 0, extra: {} },
   plain: { width: LINE_WIDTH, extra: {} },
+  plainAgain: { width: LINE_WIDTH, extra: {} },
   ballOff: { width: LINE_WIDTH, extra: { nodes: { ball: { lines: false } } } },
   stepsSilhouette: { width: LINE_WIDTH, extra: { nodes: { 'step-1': { silhouetteOnly: true }, 'step-2': { silhouetteOnly: true }, 'step-3': { silhouetteOnly: true } } } },
   twinRed: { width: LINE_WIDTH, extra: { nodes: { 'twin-left': { color: [1, 0, 0] } } } },
@@ -67,13 +67,15 @@ for (const [name, png] of Object.entries(frames)) {
   await writeFile(`${output}/${name}.png`, png);
   pixels[name] = await readPixels(await sharp(png).toBuffer());
 }
-const strength = Object.fromEntries(Object.keys(CASES).filter(name => name !== 'off' && name !== 'warmup').map(name => [name, lineStrength(pixels.off, pixels[name])]));
+const strength = Object.fromEntries(Object.keys(CASES).filter(name => name !== 'off').map(name => [name, lineStrength(pixels.off, pixels[name])]));
 const counts = Object.fromEntries(Object.entries(strength).map(([name, value]) => [name, lineCount(value)]));
 const red = Object.fromEntries(Object.entries(strength).map(([name, value]) => [name, redLinePixels(pixels[name], value)]));
 console.log('line pixels', JSON.stringify(counts));
 console.log('red line pixels', JSON.stringify(red));
 
 assert.ok(counts.plain > 1000, 'the plain frame draws lines');
+// The first lines frame is drawn without any warm-up; a node table bound on the wrong texture unit once blanked the crease guide.
+assert.ok(frames.plain.equals(frames.plainAgain), `the first lines frame equals the second (${counts.plain} vs ${counts.plainAgain} line pixels)`);
 assert.ok(counts.ballOff < counts.plain - 100, `lines false drops the sphere contour (${counts.ballOff} vs ${counts.plain})`);
 assert.ok(counts.stepsSilhouette < counts.plain - 100, `silhouetteOnly drops the inner lines of the steps (${counts.stepsSilhouette} vs ${counts.plain})`);
 assert.equal(red.plain, 0, 'the plain frame has no red lines');

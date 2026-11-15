@@ -60,3 +60,38 @@ test('objectNodes groups the object IDs by node, and a placed asset is one node'
   assert.deepEqual(nodes.prop.map(identifier => names[identifier - 1].split('/')[0]), nodes.prop.map(() => 'prop'));
   assert.deepEqual(nodes.floor.map(identifier => names[identifier - 1]), ['floor']);
 });
+
+function sceneWithNodeIds(ids, lines) {
+  const recipe = {
+    format: 'crucible.scene', schemaVersion: 1,
+    geometries: [{ id: 'ground', type: 'box' }],
+    materials: [{ id: 'grass', color: [0.2, 0.5, 0.2] }],
+    nodes: ids.map(id => ({ id, geometry: 'ground', material: 'grass' })),
+  };
+  if (lines) recipe.environment = { lines };
+  return createAgentScene(recipe, {});
+}
+
+test('a node named like an Object.prototype member is an ordinary node', () => {
+  const ids = ['constructor', 'toString', 'hasOwnProperty', 'valueOf', '__proto__'];
+  const scene = sceneWithNodeIds(ids);
+  const renderer = { batches: [{ parts: scene.parts }], drawsInOpaqueLoop: () => true };
+  installRenderPasses(renderer);
+  const nodes = renderer.passSupport.objectNodes();
+  assert.deepEqual(Object.keys(nodes).sort(), [...ids].sort());
+  assert.deepEqual(Object.getOwnPropertyDescriptor(nodes, 'constructor').value.length, 1);
+});
+
+test('lines.nodes does not read inherited members for a node named constructor or valueOf', () => {
+  const lines = resolveLineArt({ nodes: { floor: { lines: false } } });
+  const table = lineNodeTable(lines, Object.assign(Object.create(null), { constructor: [1], valueOf: [2], floor: [3] }));
+  const texel = identifier => [...table.data.subarray(identifier * 4, identifier * 4 + 4)];
+  assert.equal(texel(1)[3], 0 + 4 * 1, 'constructor draws normally');
+  assert.equal(texel(2)[3], 0 + 4 * 2, 'valueOf draws normally');
+  assert.equal(texel(3)[3], 1 + 4 * 3, 'floor is off');
+});
+
+test('lines.nodes names that match no node of the recipe fail and name the fix', () => {
+  assert.throws(() => sceneWithNodeIds(['floor'], { nodes: { flooor: { lines: false } } }), /environment\.lines\.nodes.*flooor.*scene_inspect/s);
+  assert.doesNotThrow(() => sceneWithNodeIds(['floor', 'constructor'], { nodes: { floor: { lines: false }, constructor: { lines: false } } }));
+});

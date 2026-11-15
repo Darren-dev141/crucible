@@ -45,7 +45,7 @@ The width is in pixels of the output, so a 480 pixel preview and a 1920 pixel re
 | `silhouetteOnly` | `false` | Only the contour where the node meets another node or the background. No creases, no depth jumps, no lines between its own parts. Use it for dense textured props. |
 | `color` | `lines.color` | Linear RGB of the node's lines. A line between two nodes is drawn half by each side, each in its own colour; the background side takes the colour of the node it borders. |
 
-At most 64 nodes. A name that is not drawn in the frame (hidden, or not opaque) is ignored, so a node can be switched off by a motion track without an error.
+At most 64 nodes. A key must be the ID of a node in `nodes`: an ID that exists nowhere fails when the scene is created and names it (`scene_inspect` lists the IDs). A node that exists but is not drawn in the frame (hidden, or not opaque) is ignored, so a node can be switched off by a motion track without an error. A placed asset is named by its placement ID. A node that expands into several others (instances, crowds, vegetation) is not grouped: name the expanded node IDs that `scene_inspect` lists.
 
 To composite lines for some nodes over shading for others, read `metrics.objectNodes` of the `objectId` pass (see [render jobs](agent-render-jobs.md)): it maps each node ID to the object IDs it owns.
 
