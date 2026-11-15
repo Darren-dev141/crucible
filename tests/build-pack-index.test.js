@@ -64,3 +64,32 @@ test('the zip sorts its entries and holds the original bytes', () => {
   const dataStart = secondOffset + 30 + secondNameLength;
   assert.deepEqual(inflateRawSync(zip.subarray(dataStart, dataStart + compressedSize)), content);
 });
+
+function withLineEndings(folder, lineEnding) {
+  for (const name of readdirSync(folder, { recursive: true })) {
+    if (!/\.(json|cube)$/.test(name)) continue;
+    const path = join(folder, name);
+    const text = readFileSync(path, 'utf8').replace(/\r\n/g, '\n').replace(/\n/g, lineEnding);
+    writeFileSync(path, text);
+  }
+}
+
+test('a pack checked out with LF or CRLF line endings gives the same zip and sha256', async (context) => {
+  const lineFeed = packsFolderWithExample(context);
+  const carriageReturn = packsFolderWithExample(context);
+  withLineEndings(join(lineFeed.packsDirectory, 'example-starter'), '\n');
+  withLineEndings(join(carriageReturn.packsDirectory, 'example-starter'), '\r\n');
+  const [lineFeedPack] = await buildPackIndex(lineFeed);
+  const [carriageReturnPack] = await buildPackIndex(carriageReturn);
+  assert.equal(carriageReturnPack.sha256, lineFeedPack.sha256);
+  assert.equal(carriageReturnPack.bytes, lineFeedPack.bytes);
+});
+
+test('the zip turns CRLF in text entries into LF and leaves binary entries alone', () => {
+  const binary = Buffer.from([0x89, 0x50, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const lineFeedZip = createZip(new Map([['a.json', Buffer.from('{\n}\n')], ['b.png', binary]]));
+  const carriageReturnZip = createZip(new Map([['a.json', Buffer.from('{\r\n}\r\n')], ['b.png', binary]]));
+  assert.deepEqual(carriageReturnZip, lineFeedZip);
+  const changedBinary = createZip(new Map([['a.json', Buffer.from('{\n}\n')], ['b.png', Buffer.from([0x89, 0x50, 0x0a, 0x1a, 0x0a])]]));
+  assert.notDeepEqual(changedBinary, lineFeedZip);
+});

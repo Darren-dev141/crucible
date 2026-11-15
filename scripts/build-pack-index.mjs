@@ -67,14 +67,26 @@ function centralHeader(nameBytes, entry, offset) {
   return Buffer.concat([header, nameBytes]);
 }
 
-/** Zips `files` (relative path to bytes). Sorted paths, fixed timestamps and fixed attributes make equal input give equal bytes. */
+const TEXT_EXTENSIONS = new Set(['.json', '.cube', '.md', '.txt', '.js', '.mjs', '.glsl', '.wgsl', '.csv', '.svg', '.yml', '.yaml']);
+
+/** Turns CRLF into LF in text entries so a Windows checkout zips to the same bytes as CI. Other files stay untouched. */
+function normalizeLineEndings(name, bytes) {
+  if (!TEXT_EXTENSIONS.has(extname(name).toLowerCase())) return bytes;
+  const text = bytes.toString('latin1');
+  return text.includes('\r\n') ? Buffer.from(text.replaceAll('\r\n', '\n'), 'latin1') : bytes;
+}
+
+/**
+ * Zips `files` (relative path to bytes). Sorted paths, fixed timestamps, fixed attributes and LF line endings in text
+ * entries make equal input give equal bytes.
+ */
 export function createZip(files) {
   const names = [...files.keys()].sort((first, second) => Buffer.compare(Buffer.from(first), Buffer.from(second)));
   const localParts = [];
   const centralParts = [];
   let offset = 0;
   for (const name of names) {
-    const bytes = files.get(name);
+    const bytes = normalizeLineEndings(name, files.get(name));
     const nameBytes = Buffer.from(name, 'utf8');
     const entry = { ...compress(bytes), checksum: crc32(bytes), size: bytes.length };
     const local = Buffer.concat([localHeader(nameBytes, entry), entry.data]);
