@@ -306,9 +306,9 @@ export function cylinder(segments = 80, bevel = 0.025, bevelSegments = 6) {
 
 export function box(bevel = 0.08, subdivisions = 6) {
   finiteFloat(bevel, 'bevel');
-  // A bevel below half a unit's double precision leaves the core at 0.5, so every face normal would divide by zero.
-  if (bevel < 0 || bevel > 0.5 || bevel > 0 && 0.5 - bevel === 0.5) {
-    throw new RangeError('Box bevel must be 0 or 1e-10 to 0.5.');
+  // A bevel below about 3e-17 leaves the core at exactly 0.5, so every face normal would divide by zero; 1e-16 is the round floor.
+  if (bevel < 0 || bevel > 0.5 || bevel > 0 && bevel < 1e-16) {
+    throw new RangeError('Box bevel must be 0 or from 1e-16 to 0.5: a smaller bevel underflows and gives NaN normals.');
   }
   integer(subdivisions, 1, 128, 'subdivisions');
   primitiveBudget(bevel === 0 ? 24 : 6 * (2 * subdivisions + 2) ** 2);
