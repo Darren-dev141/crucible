@@ -1,4 +1,4 @@
-import { normalizePathTracerOptions } from './path-tracer.js';
+import { normalizePathTracerOptions, PATH_TRACER_LIMITS } from './path-tracer.js';
 
 // What both backends of the real-time tracer (path-tracer-realtime.js, path-tracer-realtime-webgpu.js) read from the options.
 
@@ -24,17 +24,36 @@ function requireFilterIterations(value) {
   }
 }
 
+function requireOutputSize(value, name) {
+  if (value === undefined) return;
+  if (!Number.isInteger(value) || value < 1) {
+    throw new RangeError(`The real-time path tracer option ${name} must be a whole number of pixels from 1, got ${value}. Leave it out for the default.`);
+  }
+}
+
+// The tracing size is the output size over resolutionDivisor; name those options when it leaves the tracer's range.
+function requireTraceSizeInRange(traceSize, outputSize, name) {
+  const { minimum, maximum } = PATH_TRACER_LIMITS[name];
+  if (traceSize < minimum || traceSize > maximum) {
+    throw new RangeError(`The real-time path tracer traces ${name} ${traceSize} (option ${name} ${outputSize} over resolutionDivisor), and it must be from ${minimum} to ${maximum}. Change ${name} or resolutionDivisor.`);
+  }
+}
+
 /** The output and tracing sizes and the normalized tracer options of `createRealtimeTracer`'s raw options. */
 export function resolveRealtimeOptions(rawOptions) {
   requirePositiveNumber(rawOptions.resolutionDivisor, 'resolutionDivisor');
   requirePositiveNumber(rawOptions.historyLimit, 'historyLimit');
   requirePositiveNumber(rawOptions.cacheCellSize, 'cacheCellSize');
   requireFilterIterations(rawOptions.filterIterations);
+  requireOutputSize(rawOptions.width, 'width');
+  requireOutputSize(rawOptions.height, 'height');
   const resolutionDivisor = rawOptions.resolutionDivisor ?? DEFAULT_RESOLUTION_DIVISOR;
   const outputWidth = rawOptions.width ?? 960;
   const outputHeight = rawOptions.height ?? 540;
   const traceWidth = Math.max(1, Math.ceil(outputWidth / resolutionDivisor));
   const traceHeight = Math.max(1, Math.ceil(outputHeight / resolutionDivisor));
+  requireTraceSizeInRange(traceWidth, outputWidth, 'width');
+  requireTraceSizeInRange(traceHeight, outputHeight, 'height');
   const backend = rawOptions.backend ?? 'gpu';
   if (!REALTIME_BACKENDS.includes(backend)) throw new RangeError(`The real-time path tracer backend must be one of ${REALTIME_BACKENDS.join(', ')}.`);
   const options = normalizePathTracerOptions({
