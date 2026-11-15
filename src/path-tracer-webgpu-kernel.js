@@ -202,12 +202,22 @@ fn atlasTexel(x: i32, y: i32) -> vec4<f32> {
   return unpack4x8unorm(atlas[u32(y) * params.seedAndAtlas.y + u32(x)]);
 }
 
+fn wrapTexel(index: i32, size: i32, mode: i32) -> i32 {
+  if (mode == 1) { return clamp(index, 0, size - 1); }
+  if (mode == 2) {
+    let folded = ((index % (2 * size)) + 2 * size) % (2 * size);
+    return select(2 * size - 1 - folded, folded, folded < size);
+  }
+  return ((index % size) + size) % size;
+}
+
 fn sampleAtlas(rectangle: vec4<f32>, flags: f32, uv: vec2<f32>) -> vec4<f32> {
   if (rectangle.z <= 0.0) { return vec4<f32>(1.0); }
   let width = i32(rectangle.z);
   let height = i32(rectangle.w);
-  let repeat = (flags % 2.0) >= 1.0;
-  let encoded = flags >= 2.0;
+  let encoded = (floor(flags / 2.0) % 2.0) >= 1.0;
+  let wrapU = i32(floor(flags / 4.0) % 4.0);
+  let wrapV = i32(floor(flags / 16.0) % 4.0);
   let x = uv.x * rectangle.z - 0.5;
   let y = uv.y * rectangle.w - 0.5;
   let left = floor(x);
@@ -218,13 +228,8 @@ fn sampleAtlas(rectangle: vec4<f32>, flags: f32, uv: vec2<f32>) -> vec4<f32> {
   for (var corner = 0; corner < 4; corner++) {
     var column = i32(left) + (corner & 1);
     var row = i32(top) + (corner >> 1u);
-    if (repeat) {
-      column = ((column % width) + width) % width;
-      row = ((row % height) + height) % height;
-    } else {
-      column = clamp(column, 0, width - 1);
-      row = clamp(row, 0, height - 1);
-    }
+    column = wrapTexel(column, width, wrapU);
+    row = wrapTexel(row, height, wrapV);
     let weight = select(1.0 - shareX, shareX, (corner & 1) == 1) * select(1.0 - shareY, shareY, (corner >> 1u) == 1);
     let texel = atlasTexel(i32(rectangle.x) + column, i32(rectangle.y) + row);
     let color = select(texel.rgb, srgbToLinear(texel.rgb), encoded);

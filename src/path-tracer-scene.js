@@ -42,6 +42,21 @@ export const SUN_ANGULAR_RADIUS = Math.PI / 360;
 
 const IDENTITY_MATRIX = Object.freeze([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const REPEAT_WRAP = 10497;
+const CLAMP_WRAP = 33071;
+const MIRRORED_REPEAT_WRAP = 33648;
+// Per axis wrap codes of a resolved texture, the same numbers Cook's packer reads as wrapU and wrapV.
+export const WRAP_REPEAT = 0;
+export const WRAP_CLAMP = 1;
+export const WRAP_MIRROR = 2;
+const WRAP_CODES = new Map([[REPEAT_WRAP, WRAP_REPEAT], [CLAMP_WRAP, WRAP_CLAMP], [MIRRORED_REPEAT_WRAP, WRAP_MIRROR]]);
+
+function wrapCodeOf(glWrapMode, field) {
+  const code = WRAP_CODES.get(glWrapMode ?? REPEAT_WRAP);
+  if (code === undefined) {
+    throw new RangeError(`Texture ${field} is 10497 (repeat), 33071 (clamp to edge) or 33648 (mirrored repeat), got ${JSON.stringify(glWrapMode)}. Pass one of those glTF sampler values, or leave it out to repeat.`);
+  }
+  return code;
+}
 
 function addWeightedTransform(output, offset, palette, joint, weight, x, y, z, translationWeight) {
   const base = joint * 16;
@@ -50,21 +65,42 @@ function addWeightedTransform(output, offset, palette, joint, weight, x, y, z, t
   output[offset + 2] += weight * (palette[base + 2] * x + palette[base + 6] * y + palette[base + 10] * z + palette[base + 14] * translationWeight);
 }
 
+// Adds the weighted upper 3x3 of one joint matrix to the blended deformation matrix (row major, as normalMatrix reads it).
+function addWeightedLinearPart(blended, palette, joint, weight) {
+  const base = joint * 16;
+  for (let row = 0; row < 3; row++) {
+    for (let column = 0; column < 3; column++) {
+      blended[row * 3 + column] += weight * palette[base + column * 4 + row];
+    }
+  }
+}
+
 /** The geometry of a skinned part at its current pose, as plain positions and normals. */
 export function skinnedGeometry(part) {
   const { geometry, skin } = part;
   const vertexCount = geometry.positions.length / 3;
   const positions = new Float32Array(geometry.positions.length);
   const normals = new Float32Array(geometry.normals.length);
+  const blendedLinearPart = new Float64Array(9);
   const influenceCount = geometry.skinWeights.length / vertexCount;
   for (let vertex = 0; vertex < vertexCount; vertex++) {
     const offset = vertex * 3;
+    blendedLinearPart.fill(0);
     for (let influence = 0; influence < influenceCount; influence++) {
       const weight = geometry.skinWeights[vertex * influenceCount + influence];
       if (weight === 0) continue;
       const joint = geometry.skinIndices[vertex * influenceCount + influence];
       addWeightedTransform(positions, offset, skin.jointMatrices, joint, weight, geometry.positions[offset], geometry.positions[offset + 1], geometry.positions[offset + 2], 1);
-      addWeightedTransform(normals, offset, skin.jointMatrices, joint, weight, geometry.normals[offset], geometry.normals[offset + 1], geometry.normals[offset + 2], 0);
+      addWeightedLinearPart(blendedLinearPart, skin.jointMatrices, joint, weight);
+    }
+    // Like the rasterizer (shaders.js), the normal takes the inverse transpose of the blended deformation, which differs from
+    // the deformation itself once a joint scales unevenly.
+    const normalTransform = normalMatrix([...blendedLinearPart.slice(0, 3), 0, ...blendedLinearPart.slice(3, 6), 0, ...blendedLinearPart.slice(6, 9), 0, 0, 0, 0, 1]);
+    const normalX = geometry.normals[offset];
+    const normalY = geometry.normals[offset + 1];
+    const normalZ = geometry.normals[offset + 2];
+    for (let axis = 0; axis < 3; axis++) {
+      normals[offset + axis] = normalTransform[axis * 3] * normalX + normalTransform[axis * 3 + 1] * normalY + normalTransform[axis * 3 + 2] * normalZ;
     }
     const length = Math.hypot(normals[offset], normals[offset + 1], normals[offset + 2]) || 1;
     for (let axis = 0; axis < 3; axis++) normals[offset + axis] /= length;
@@ -136,13 +172,17 @@ export function resolveTexture(descriptor) {
   const image = descriptor?.image;
   const data = texturePixels(image);
   if (!data) return null;
+  const wrapUCode = wrapCodeOf(descriptor.wrapS, 'wrapS');
+  const wrapVCode = wrapCodeOf(descriptor.wrapT, 'wrapT');
   return {
     width: image.width,
     height: image.height,
     data,
     colorLookup: descriptor.colorSpace === 'linear' ? null : SRGB_TO_LINEAR,
     // A map without a wrap mode repeats: the rasteriser and glTF both default to repeat.
-    repeat: (descriptor.wrapS ?? REPEAT_WRAP) === REPEAT_WRAP,
+    repeat: wrapUCode === WRAP_REPEAT && wrapVCode === WRAP_REPEAT,
+    wrapU: wrapUCode,
+    wrapV: wrapVCode,
     // The UV set the map reads: 1 is TEXCOORD_1 (geometry.lightUvs), anything else is TEXCOORD_0 (geometry.uvs).
     uvSet: descriptor.uvChannel === 1 ? 1 : 0,
   };
@@ -213,9 +253,23 @@ function validateGeometry(part, geometry) {
   if (geometry.colors && geometry.colors.length !== vertexCount * 3) throw new RangeError(`${label} needs one colour for every position.`);
 }
 
+const TRACED_MAP_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'transmissionMap'];
+
+function namesSecondUvSet(material) {
+  const descriptors = [...TRACED_MAP_FIELDS.map(field => material[field]), ...Object.values(material.layerMaps ?? {})];
+  return descriptors.some(descriptor => descriptor?.uvChannel === 1);
+}
+
+function requireSecondUvSetGeometry(part, geometry) {
+  if (namesSecondUvSet(part.material ?? {}) && !geometry.lightUvs) {
+    throw new RangeError(`${partLabel(part)} has a map with uvChannel 1 but its geometry has no lightUvs. Set geometry.lightUvs (TEXCOORD_1), or use uvChannel 0.`);
+  }
+}
+
 function validatePart(part, geometry) {
   validateMatrix(part);
   validateGeometry(part, geometry);
+  requireSecondUvSetGeometry(part, geometry);
 }
 
 /**
@@ -376,12 +430,34 @@ function softFalloffOf(light, label) {
   return light.softFalloff ? { softFalloff: true } : {};
 }
 
+// Missing colour and intensity default as in the rasterizer (lighting.js); a value that is given must be usable.
+function lightEmission(light, label) {
+  const color = light.color ?? [1, 1, 1];
+  if (!(Array.isArray(color) || ArrayBuffer.isView(color)) || color.length !== 3 || !Array.from(color).every(channel => Number.isFinite(channel) && channel >= 0)) {
+    throw new RangeError(`${label}.color is three finite numbers from 0 up, such as [1, 0.9, 0.8], got ${JSON.stringify(light.color)}. Leave it out for white.`);
+  }
+  const intensity = light.intensity ?? 1;
+  if (!Number.isFinite(intensity) || intensity < 0) {
+    throw new RangeError(`${label}.intensity is a finite number from 0 up, got ${JSON.stringify(light.intensity)}. Leave it out for 1.`);
+  }
+  return { color, intensity };
+}
+
+// Aimed along the guide, the cross product vanishes, so the rectangle falls back to the x axis (as light-bake.js and lighting.js do).
+const MINIMUM_ACROSS_LENGTH = 1e-3;
+
 function resolveAreaLight(light, index) {
+  const label = `environment.areaLights[${index}]`;
   const normal = normalized(light.direction);
   const guide = normalized(light.up ?? [0, 1, 0]);
-  const across = normalized([guide[1] * normal[2] - guide[2] * normal[1], guide[2] * normal[0] - guide[0] * normal[2], guide[0] * normal[1] - guide[1] * normal[0]]);
+  const rawAcross = [guide[1] * normal[2] - guide[2] * normal[1], guide[2] * normal[0] - guide[0] * normal[2], guide[0] * normal[1] - guide[1] * normal[0]];
+  const rawAcrossLength = Math.hypot(rawAcross[0], rawAcross[1], rawAcross[2]);
+  if (light.up !== undefined && rawAcrossLength < MINIMUM_ACROSS_LENGTH) {
+    throw new RangeError(`${label}.up must not be parallel to its direction, got up ${JSON.stringify(light.up)} for direction ${JSON.stringify(light.direction)}. Pass an up that points a different way, or leave it out.`);
+  }
+  const across = rawAcrossLength < MINIMUM_ACROSS_LENGTH ? [1, 0, 0] : normalized(rawAcross);
   const along = [normal[1] * across[2] - normal[2] * across[1], normal[2] * across[0] - normal[0] * across[2], normal[0] * across[1] - normal[1] * across[0]];
-  return { bit: AREA_FIRST_BIT + index, position: light.position, color: light.color, intensity: light.intensity, width: light.width, height: light.height, normal, across, along, profile: traceProfile(light) };
+  return { bit: AREA_FIRST_BIT + index, position: light.position, ...lightEmission(light, label), width: light.width, height: light.height, normal, across, along, profile: traceProfile(light) };
 }
 
 /**
@@ -435,9 +511,9 @@ function resolveLights(environment, limit = resolveLightLimit(), parts = []) {
   }
   return {
     sun: sunPower > 0 ? { bit: SUN_BIT, direction: normalized(environment.lightDirection ?? [0, 1, 0]), color: environment.keyColor, angularRadius: environment.sunAngularRadius ?? SUN_ANGULAR_RADIUS } : null,
-    points: (environment.pointLights ?? []).map((light, index) => ({ bit: POINT_FIRST_BIT + index, position: light.position, color: light.color, intensity: light.intensity, radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.pointLights[${index}]`) })),
+    points: (environment.pointLights ?? []).map((light, index) => ({ bit: POINT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.pointLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.pointLights[${index}]`) })),
     spots: (environment.spotLights ?? []).map((light, index) => ({
-      bit: SPOT_FIRST_BIT + index, position: light.position, color: light.color, intensity: light.intensity, radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.spotLights[${index}]`),
+      bit: SPOT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.spotLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.spotLights[${index}]`),
       direction: normalized(light.direction),
       cosineHalfAngle: Math.cos(light.angle),
       profile: traceProfile(light),
@@ -611,6 +687,7 @@ function measureInstancedParts(parts, geometries) {
   parts.forEach((part, index) => {
     const geometry = geometries[index];
     validateMatrix(part);
+    requireSecondUvSetGeometry(part, geometry);
     totalTriangles += geometry.indices.length / 3;
     if (sharesAuthoredGeometry(part, geometry)) {
       if (seen.has(geometry)) return;
