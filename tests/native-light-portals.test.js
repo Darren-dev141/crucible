@@ -170,9 +170,10 @@ cookTest('the v2 packer rejects a disk portal', () => {
   assert.throws(() => buildNativeInputV2(scene, createCamera(ROOM_CAMERA, 8, 8), { width: 8, height: 8, samples: 1 }), /needs a rect light/);
 });
 
-cookTest('the CPU and WebGL tracers are told that a portal draws nothing, the native kernel is not', () => {
+cookTest('the WebGL and WebGPU tracers are told that a portal draws nothing, the CPU tracer and the native kernel are not', () => {
   const environment = { areaLights: [WINDOW_PORTAL] };
-  assert.match(describeIgnoredFeatures([], environment, 'cpu').join(' '), /Light portals .* are ignored/);
+  assert.match(describeIgnoredFeatures([], environment, 'gpu').join(' '), /Light portals .* are ignored/);
+  assert.doesNotMatch(describeIgnoredFeatures([], environment, 'cpu').join(' '), /portal/);
   assert.doesNotMatch(describeIgnoredFeatures([], environment, 'native', { kernelMaterials: true }).join(' '), /portal/);
   assert.doesNotMatch(describeIgnoredFeatures([], { areaLights: [] }, 'cpu').join(' '), /portal/);
 });

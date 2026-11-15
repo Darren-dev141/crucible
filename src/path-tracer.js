@@ -1,3 +1,4 @@
+import { portalPdf, samplePortalDirection } from './path-tracer-portal.js';
 import { cameraFieldOfView, resolveThinLens } from './camera.js';
 import { fresnelSchlick } from './material-layers.js';
 import { pointLightFalloff } from './ray-query.js';
@@ -520,6 +521,8 @@ function createPathTracer(scene, options) {
   // The denoiser's features come from the first surface a camera ray meets, not from fog in front of it.
   let featuresRecorded = false;
   const { lights, environment } = scene;
+  // With portals the sky is drawn through them (#1144); a scene with none samples the whole map as before.
+  const portals = environment ? lights.portals ?? [] : [];
   if (lights.sun) buildFrame(lights.sun.direction, sunFrame);
   const sunCosineMax = Math.cos(lights.sun?.angularRadius ?? SUN_ANGULAR_RADIUS);
 
@@ -688,7 +691,9 @@ function createPathTracer(scene, options) {
   };
 
   function sampleEnvironmentLight(depth, normal) {
-    environmentSampledPdf = sampleEnvironment(environment, random.next(), random.next(), random.next(), random.next(), lightDirection);
+    environmentSampledPdf = portals.length > 0
+      ? samplePortalDirection(portals, hit.point[0], hit.point[1], hit.point[2], random.next(), random.next(), random.next(), lightDirection)
+      : sampleEnvironment(environment, random.next(), random.next(), random.next(), random.next(), lightDirection);
     if (!(environmentSampledPdf > 0)) return;
     environmentRadiance(environment, lightDirection[0], lightDirection[1], lightDirection[2], lightRadiance);
     addDirect(depth, normal, scene.farDistance, environmentWeight);
@@ -788,12 +793,12 @@ function createPathTracer(scene, options) {
     else addOneLight(depth, normal);
   }
 
-  function addEscape(depth, previousPdf, afterMirror) {
+  function addEscape(depth, previousPdf, afterMirror, originX, originY, originZ) {
     if (!environment) return;
     environmentRadiance(environment, direction[0], direction[1], direction[2], sky);
     let weight = 1;
     if (!afterMirror) {
-      const environmentSide = environmentPdf(environment, direction[0], direction[1], direction[2]) * selectionProbability;
+      const environmentSide = (portals.length > 0 ? portalPdf(portals, originX, originY, originZ, direction[0], direction[1], direction[2]) : environmentPdf(environment, direction[0], direction[1], direction[2])) * selectionProbability;
       weight = previousPdf * previousPdf / (previousPdf * previousPdf + environmentSide * environmentSide);
     }
     addRadiance(depth, throughput[0] * sky[0] * weight, throughput[1] * sky[1] * weight, throughput[2] * sky[2] * weight);
@@ -935,7 +940,7 @@ function createPathTracer(scene, options) {
         continue;
       }
       if (!found) {
-        addEscape(depth, previousPdf, afterMirror);
+        addEscape(depth, previousPdf, afterMirror, positionX, positionY, positionZ);
         break;
       }
       const material = hit.material;
@@ -1030,7 +1035,7 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
   const hasSoftFalloff = [...(environment?.pointLights ?? []), ...(environment?.spotLights ?? [])].some(light => light.softFalloff === true);
   if (hasSoftFalloff && !kernelMaterials) notes.add('softFalloff is ignored: only the native cycles kernel draws a light as an oriented disk, the other tracers draw a sphere.');
   const hasPortal = (environment?.areaLights ?? []).some(light => light.portal === true);
-  if (hasPortal && !kernelMaterials) notes.add('Light portals (areaLights with portal: true) are ignored: only the native cycles kernel samples the environment through them, the other tracers draw no light from a portal.');
+  if (hasPortal && !kernelMaterials && backend !== 'cpu') notes.add('Light portals (areaLights with portal: true) are ignored: only the native cycles kernel and the CPU tracer sample the environment through them, the other tracers draw no light from a portal.');
   if (!environment?.map) notes.add('There is no environment map, so the sky is black and only the lights shine.');
   if (environment?.cameraIntensity !== undefined && !kernelMaterials) notes.add('cameraIntensity is ignored: only the native cycles kernel draws the sky a camera ray sees at its own strength, the other tracers use the map intensity.');
   for (const part of parts) {
