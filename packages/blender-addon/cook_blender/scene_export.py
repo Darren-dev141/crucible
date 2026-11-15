@@ -77,7 +77,7 @@ def build_camera_entries(scene, width, height, report, camera_object=None, honor
         "up": to_yup(up_vector),
         "fov": vertical_fov_degrees(camera_data, width, height),
         "near": camera_data.clip_start,
-        "far": max(camera_data.clip_end, 1000.0),
+        "far": conversions.far_clip(camera_data.clip_start, camera_data.clip_end),
     }
     lens_entry = {"enabled": False}
     if camera_data.dof.use_dof:
@@ -421,6 +421,8 @@ def collect_parts(depsgraph, materials, report):
             for slot, arrays in groups.items():
                 geometry_indices[key][slot] = len(geometries)
                 geometries.append(arrays)
+        if not geometry_indices[key]:
+            report["emptyMeshCount"] = report.get("emptyMeshCount", 0) + 1
         for slot, geometry_index in geometry_indices[key].items():
             part = {
                 "name": original_object.name if instance.parent is None else f"{instance.parent.original.name}/{original_object.name}",
@@ -453,7 +455,7 @@ def export_scene(depsgraph, width, height, work_directory):
     materials = MaterialExporter(work_directory)
     environment, geometries, parts = collect_parts(depsgraph, materials, report)
     if not parts:
-        raise ValueError("The scene has no visible mesh to render. Check that objects are enabled for rendering (the camera icon in the Outliner).")
+        raise ValueError(conversions.no_visible_mesh_message(report.get("emptyMeshCount", 0)))
     world_entry = export_world(scene.world, work_directory, report)
     for object_type, count in report["unsupportedObjects"].items():
         report["notes"].append(f"{count} {object_type} object(s) are not rendered: Cook draws triangle meshes only in this release")

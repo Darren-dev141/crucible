@@ -163,6 +163,21 @@ def light_feature_notes(light_name, light_type, use_temperature, use_shadow, dif
     return notes
 
 
+def far_clip(clip_start, clip_end):
+    """The camera's far plane: Blender's clip end, kept just past the near plane so the pair stays a valid range."""
+    return max(clip_end, clip_start * 1.001 + 1e-6)
+
+
+def no_visible_mesh_message(empty_mesh_count):
+    """The error for a scene with nothing to draw; `empty_mesh_count` counts renderable mesh objects that evaluated to no triangles."""
+    if empty_mesh_count > 0:
+        return (
+            f"The scene's {empty_mesh_count} mesh object(s) evaluate to no triangles. "
+            "Check for empty meshes, or modifiers and Geometry Nodes that remove all faces."
+        )
+    return "The scene has no visible mesh to render. Check that objects are enabled for rendering (the camera icon in the Outliner)."
+
+
 def lens_feature_notes(aperture_ratio):
     """What a camera's depth of field carries that Cook does not read, one sentence each."""
     notes = []

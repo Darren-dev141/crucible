@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from cook_blender import blender_conversions as conversions  # noqa: E402
 from cook_blender import material_export  # noqa: E402
+from cook_blender import native_runner  # noqa: E402
 
 
 def fake_image(width, height, name="Missing.png"):
@@ -75,6 +76,44 @@ class LensNoteTests(unittest.TestCase):
 
     def test_a_round_aperture_needs_no_note(self):
         self.assertEqual(conversions.lens_feature_notes(1.0), [])
+
+
+class FarClipTests(unittest.TestCase):
+    def test_a_clip_end_below_a_thousand_is_kept(self):
+        self.assertEqual(conversions.far_clip(0.1, 100.0), 100.0)
+
+    def test_a_clip_end_equal_to_the_start_still_ends_past_it(self):
+        self.assertGreater(conversions.far_clip(0.5, 0.5), 0.5)
+
+
+class EmptySceneMessageTests(unittest.TestCase):
+    def test_meshes_without_triangles_get_their_own_message(self):
+        message = conversions.no_visible_mesh_message(3)
+        self.assertIn("3 mesh object", message)
+        self.assertIn("no triangles", message)
+        self.assertNotIn("enabled for rendering", message)
+
+    def test_no_mesh_at_all_keeps_the_render_flag_hint(self):
+        self.assertIn("enabled for rendering", conversions.no_visible_mesh_message(0))
+
+
+class RelativePathTests(unittest.TestCase):
+    def test_a_blender_relative_folder_is_expanded_before_the_checks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for parts in (native_runner.TRACE_SCRIPT_PARTS, native_runner.NATIVE_ADDON_PARTS):
+                os.makedirs(os.path.join(directory, *parts[:-1]), exist_ok=True)
+                open(os.path.join(directory, *parts), "w").close()
+            expand = {"//tracer": directory}.get
+            resolved = native_runner.resolve_native_directory("//tracer", environment={}, expand_path=expand)
+            self.assertEqual(resolved, os.path.abspath(directory))
+
+
+class EnvironmentCapTests(unittest.TestCase):
+    def test_a_cap_that_is_not_a_finite_number_is_refused_by_name(self):
+        for value in (float("nan"), float("inf")):
+            with self.assertRaises(ValueError) as raised:
+                native_runner.environment_cap_argument(value)
+            self.assertIn("environment cap", str(raised.exception))
 
 
 if __name__ == "__main__":
