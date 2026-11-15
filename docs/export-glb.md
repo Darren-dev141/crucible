@@ -7,6 +7,8 @@ It preserves shared geometry accessors and shared meshes when materials match.
 Available from version `0.4.0`.
 
 ```js
+import { box, exportGlb } from 'crucible';
+
 const geometry = box();
 geometry.colors = new Float32Array(geometry.positions.length).fill(0.5);
 geometry.uvs = new Float32Array(geometry.positions.length / 3 * 2);

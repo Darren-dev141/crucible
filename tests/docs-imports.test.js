@@ -29,8 +29,8 @@ const shippedFiles = [...markdownFiles('docs'), ...markdownFiles('skills')];
 /** The import statements inside fenced js blocks: { file, specifier, names }. */
 function importsOf(file) {
   const imports = [];
-  for (const [, code] of readText(file).matchAll(/```(?:js|javascript|mjs)\n([\s\S]*?)```/g)) {
-    for (const match of code.matchAll(/import\s+(?:([\w$]+)\s*,?\s*)?(?:\{([^}]*)\}|\*\s+as\s+[\w$]+)?\s*from\s*'([^']+)'/g)) {
+  for (const [, code] of readText(file).matchAll(/```(?:js|javascript|mjs|html)\n([\s\S]*?)```/g)) {
+    for (const match of code.matchAll(/import\s+(?:([\w$]+)\s*,?\s*)?(?:\{([^}]*)\}|\*\s+as\s+[\w$]+)?\s*from\s*['"]([^'"]+)['"]/g)) {
       const names = match[2] === undefined
         ? []
         : match[2].split(',').map(name => name.trim().split(/\s+as\s+/)[0]).filter(Boolean);
@@ -59,7 +59,7 @@ function sourceOfSubpath(subpath) {
 }
 
 test('shipped docs and skills never import a repository path the npm package does not contain', () => {
-  const offenders = allImports.filter(item => /^\.{1,2}\/(?:src|scripts)\//.test(item.specifier) || /^\.\/src\//.test(item.specifier));
+  const offenders = allImports.filter(item => /^\.{1,2}\//.test(item.specifier));
   assert.deepEqual(offenders.map(item => `${item.file}: ${item.specifier}`), []);
 });
 
