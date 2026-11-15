@@ -73,7 +73,8 @@ Volume, area and bounds match Blender 5.2 for an open and a closed Bezier curve 
 in `splines`, never both. A spline is `{ points | shape, closed, kind, weights, order, knots, knotMode, trim }`, and `curve(points, { kind, weights, order, knots, knotMode, trim })` is the one-spline form.
 
 - `kind` is `bezier` (default), `poly` or `nurbs`. A poly spline is straight segments with sharp corners; each ring takes the
-  direction of the segment that leaves it, so corners are not mitred. A NURBS spline is a cubic B-spline by default: open ones are
+  direction of the segment that leaves it, so corners are not mitred. Where points repeat, a ring takes the direction of the
+  nearest distinct point (trailing repeats keep the direction they arrived with); a curve whose points all coincide is an error. A NURBS spline is a cubic B-spline by default: open ones are
   clamped (they start and end on the first and last point), closed ones are periodic. `weights` holds one number above 0 per
   point (default 1); a higher weight pulls the curve toward its point.
 - NURBS `order` is an integer from 2 to 8 and at most the point count (default 4, cubic; 2 follows the control polygon, 3 with
