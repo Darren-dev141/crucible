@@ -50,6 +50,9 @@ export function sequenceFrameIndex(sequence, time) {
   }
   // The small offset keeps a time such as 0.29 s at 100 fps on frame 29 despite binary rounding.
   const raw = Math.floor(Math.max(0, time ?? 0) * sequence.fps + 1e-9);
+  if (!Number.isFinite(raw)) {
+    throw invalidField('time', time, `a number of seconds small enough that time times ${sequence.fps} fps stays finite, such as 0.5`, RangeError);
+  }
   return sequence.loop ? raw % count : Math.min(raw, count - 1);
 }
 

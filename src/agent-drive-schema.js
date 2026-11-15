@@ -93,6 +93,9 @@ function normalizeLights(lights, path) {
       knownKeys(light, TAIL_LIGHT_FIELDS, lampPath);
       if (typeof light.material !== 'string' || !light.material) throw invalidField(`${lampPath}.material`, light.material, 'the id of the material whose emission the lamp drives, such as "tail"', TypeError);
       if (light.signal !== 'brake' && light.signal !== 'reverse') throw invalidField(`${lampPath}.signal`, light.signal, 'one of brake, reverse');
+      for (const field of ['off', 'on']) {
+        if (light[field] !== undefined && !Number.isFinite(light[field])) throw invalidField(`${lampPath}.${field}`, light[field], 'a finite emission number, such as 4', TypeError);
+      }
       return structuredClone(light);
     });
   }
