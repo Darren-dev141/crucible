@@ -412,9 +412,9 @@ vec3 localVolumeInScatter(int index, vec3 position, vec3 direction) {
     vec3 lightDirection = normalize(vec3(towardSun.x, towardSun.y * ${LOCAL_VOLUME_SUN_FLATTEN.toFixed(3)}, towardSun.z));
     bool detailShadow = localVolumeGrid[index].y > 0.5 && localVolumeGrid[index].x < 0.5;
     vec3 lightDepth = localVolumeDepth(index, position, lightDirection, detailShadow ? ${LOCAL_VOLUME_DETAIL_SHADOW_TAPS} : 3, detailShadow) * ${LOCAL_VOLUME_SHADOW_STRENGTH.toFixed(3)};
-    // The octave sum of multiple scattering (scatterOctaves, in the free fourth component of the first axis row); one octave is the single scatter.
+    // The octave sum of multiple scattering (scatterOctaves, in the free fourth component of the first axis row, as the octaves beyond the first so a volume without it keeps its bytes); one octave is the single scatter.
     float cosine = dot(direction, towardSun);
-    int octaves = int(localVolumeAxes[index * 3].w + 0.5);
+    int octaves = 1 + int(localVolumeAxes[index * 3].w + 0.5);
     vec3 phaseSum = vec3(0.0);
     float weight = 1.0;
     float extinction = 1.0;

@@ -35,11 +35,11 @@ test('scatterOctaves defaults to 1 and takes a whole number from 1 to 4', () => 
   assert.equal(LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES, 4);
 });
 
-test('the octave count rides in the free fourth component of the first axis row', () => {
+test('the octave count rides in the free fourth component of the first axis row, as the octaves beyond the first so a volume without it keeps its bytes', () => {
   const buffers = createLocalVolumeBuffers();
   packLocalVolumes(resolveLocalVolumes([SMOKE, { ...SMOKE, scatterOctaves: 3 }]), buffers);
-  assert.deepEqual([buffers.axes[3], buffers.axes[7], buffers.axes[11]], [1, 0, 0]);
-  assert.deepEqual([buffers.axes[15], buffers.axes[19], buffers.axes[23]], [3, 0, 0]);
+  assert.deepEqual([buffers.axes[3], buffers.axes[7], buffers.axes[11]], [0, 0, 0]);
+  assert.deepEqual([buffers.axes[15], buffers.axes[19], buffers.axes[23]], [2, 0, 0]);
 });
 
 test('one octave is the single scatter, and more octaves return more light that fills the shaded side most', () => {

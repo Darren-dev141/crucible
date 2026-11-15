@@ -100,7 +100,7 @@ test('the bounds of a rotated, scaled part become an oriented box that the inter
   assert.deepEqual(Array.from(span).map(value => Math.round(value * 1e6) / 1e6), [3, 5]);
   assert.equal(localVolumeInterval(box, 10.5, 1.5, -5, 1, 0, 0, 100, span), false);
   const buffers = packLocalVolumes([box], createLocalVolumeBuffers());
-  assert.deepEqual(Array.from(buffers.axes.slice(0, 12)).map(value => Math.round(value)), [0, 0, -1, 1, 0, 1, 0, 0, 1, 0, 0, 0]);
+  assert.deepEqual(Array.from(buffers.axes.slice(0, 12)).map(value => Math.round(value)), [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0]);
   assert.throws(() => packLocalVolumes([volume], createLocalVolumeBuffers()), /bindLocalVolumeParts/);
 });
 
