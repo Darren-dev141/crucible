@@ -38,6 +38,7 @@ import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACT
 import { RENDER_QUALITY_NOTE, applyQuality, tierReport } from './agent-render-quality.mjs';
 import { RENDER_BUDGET_NOTE, chooseBudgetSettings, parseBudget } from './agent-render-budget.mjs';
 import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
+import { objectIdMetrics } from './agent-object-id-metrics.mjs';
 import { encodeRenderOutput, encodeMultilayerExr } from './render-output-encoders.mjs';
 import { createFrameEncoder } from './frame-encoder.mjs';
 import { DEFAULT_PAGE_ENCODER_QUANTIZER, createFrameReceiver, startVideoEncoderInPage } from './gpu-frame-reader.mjs';
@@ -61,8 +62,6 @@ const LOOK_MINIMUM_SIDE = 64;
 const MAXIMUM_MOTION_SOURCES = 4;
 // A job writes files, not MCP image responses, so a 1920x1080 PNG may be larger than an inline image.
 const MAXIMUM_JOB_FRAME_BYTES = 12 * 1024 * 1024;
-// The object ID pass lists the part behind each ID in the job metrics; longer lists are cut and flagged.
-const MAXIMUM_OBJECT_NAMES = 1000;
 // A path trace shares the machine with the person using it, so it takes half of the eight-thread ceiling.
 const PATH_TRACER_THREADS = 8;
 const MAXIMUM_QUEUED_CALLS = 16;
@@ -904,8 +903,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
               passPixels[pass] = (await readFloatPass(pass)).pixels;
               if (pass === 'depth') metrics.depthRangeMetres = RENDER_PASS_DEPTH_RANGE;
               if (pass === 'objectId') {
-                metrics.objectNames = passInfo.objectNames.slice(0, MAXIMUM_OBJECT_NAMES);
-                metrics.objectNamesTruncated = passInfo.objectNames.length > MAXIMUM_OBJECT_NAMES;
+                Object.assign(metrics, objectIdMetrics(passInfo));
               }
               if (pass === 'cryptomatte') metrics.cryptomatte = passInfo.cryptomatte;
               if (pass === 'wireframe') metrics.wireframe = passInfo.wireframe;
@@ -925,8 +923,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             if (pass === 'wireframe') metrics.wireframe = passInfo.wireframe;
             if (pass === 'depth') metrics.depthRangeMetres = RENDER_PASS_DEPTH_RANGE;
             if (pass === 'objectId') {
-              metrics.objectNames = passInfo.objectNames.slice(0, MAXIMUM_OBJECT_NAMES);
-              metrics.objectNamesTruncated = passInfo.objectNames.length > MAXIMUM_OBJECT_NAMES;
+              Object.assign(metrics, objectIdMetrics(passInfo));
             }
           }
         }

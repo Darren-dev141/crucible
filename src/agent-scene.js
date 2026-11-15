@@ -968,6 +968,25 @@ function checkLightLinkNames(recipe) {
   }
 }
 
+// A typo in lines.nodes would turn nothing off without a sign. A node that exists but is hidden stays valid.
+function checkLineNodeNames(recipe) {
+  const lines = recipe.environment?.lines;
+  if (!lines?.nodes) {
+    return;
+  }
+  const unknown = agentSceneModule('lineArt').unknownLineNodeNames(lines, recipe.nodes);
+  if (unknown.length > 0) {
+    throw invalidField('environment.lines.nodes', unknown.slice(0, 4), `node IDs that exist in nodes${unknown.length > 4 ? ` (${unknown.length - 4} more are unknown too)` : ''}; scene_inspect lists them. After remove-node, drop that node's entry from lines.nodes in the same call`);
+  }
+  // A group that draws nothing itself (an expanded instances node, a plain group) would do nothing without a sign.
+  // A placed asset, vegetation and crowd nodes are groups too, but their parts name them in `group`.
+  const drawsNothing = recipe.nodes.find(node => Object.hasOwn(lines.nodes, node.id) && node.geometry === undefined && !node.asset && !node.vegetation);
+  if (drawsNothing) {
+    const childIds = recipe.nodes.filter(node => node.parent === drawsNothing.id).map(node => node.id);
+    throw invalidField(`environment.lines.nodes.${drawsNothing.id}`, drawsNothing.id, `the ID of a node that draws a part; ${JSON.stringify(drawsNothing.id)} is a group with no geometry of its own. ${childIds.length > 0 ? `Name its children instead, such as ${childIds.slice(0, 3).join(', ')}` : 'It has no children, so remove its entry from lines.nodes'}`);
+  }
+}
+
 // Every light's affects list in light order: the mask of a part depends on these lists and nothing else of the environment.
 function lightLinksKey(environment) {
   const lights = [...environment.pointLights, ...(environment.spotLights ?? []), ...(environment.areaLights ?? [])];
@@ -1053,6 +1072,7 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
     throw invalidField('camera.fStop', recipe.camera.fStop, 'a camera without effects.depthOfField.blur above 0; set blur to 0 or remove fStop');
   }
   checkLightLinkNames(recipe);
+  checkLineNodeNames(recipe);
   if (recipe.effects?.distortion || recipe.effects?.flash) agentSceneModule('postSteps').checkAirStepNodes(recipe);
   if (Object.hasOwn(recipe, 'motion')) {
     recipe.motion = recipe.motion === null || recipe.motion === undefined ? null : agentSceneModule('motion').normalizeAgentMotion(recipe.motion, recipe);
