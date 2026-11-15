@@ -375,6 +375,11 @@ function validateNetcodeOptions(options) {
 // ----- The authority side -----
 
 const SESSION_ID_LENGTH_LIMIT = 64;
+const RETIRED_SESSION_HISTORY = 8;
+
+function isValidSession(session) {
+  return typeof session === 'string' && session.length <= SESSION_ID_LENGTH_LIMIT;
+}
 
 // A random id for one run of a client or authority. A restart on the same peer id gets a new one, so the other side
 // can tell a new run from a late message of the old one.
@@ -382,6 +387,14 @@ function createSessionId() {
   // Fixed width, so the byte count of a run does not depend on the draw.
   const randomPart = Math.floor(Math.random() * 0xffffffff).toString(36).padStart(7, '0');
   return `${Date.now().toString(36)}-${randomPart}`;
+}
+
+function highestInputSequence(inputs) {
+  let highest = 0;
+  for (const entry of inputs) {
+    if (Number.isSafeInteger(entry?.sequence) && entry.sequence > highest) highest = entry.sequence;
+  }
+  return highest;
 }
 
 function createAuthority(settings, stats) {
@@ -416,9 +429,20 @@ function createAuthority(settings, stats) {
       stats.rejectedMessages += 1;
       return;
     }
-    if (typeof message.session === 'string' && message.session.length <= SESSION_ID_LENGTH_LIMIT) {
+    if (message.session !== undefined) {
+      if (!isValidSession(message.session)) {
+        stats.rejectedMessages += 1;
+        return;
+      }
       if (record.session !== null && record.session !== message.session) resetPeerRecord(record);
       record.session = message.session;
+    }
+    // The newest message carries the client's current state; an older one reordered behind it must not undo that.
+    const newestSequence = highestInputSequence(inputs);
+    const isNewestMessage = newestSequence > record.lastQueuedSequence;
+    if (message.acknowledgedTick === null && isNewestMessage) {
+      // The client holds no snapshot (it reset on a restart), so the base we remember is gone.
+      record.acknowledgedTick = null;
     }
     // An ack beyond this run's tick belongs to an earlier run of the authority and cannot name a base it has.
     if (Number.isInteger(message.acknowledgedTick) && message.acknowledgedTick <= tick && message.acknowledgedTick >= (record.acknowledgedTick ?? -1)) {
@@ -568,6 +592,7 @@ function createClient(settings, stats) {
   let stepSeconds = null;
   const sessionId = createSessionId();
   let authoritySession = null;
+  const retiredAuthoritySessions = [];
   let latestTick = -1;
   let inputSequence = 0;
   let predicted = null;
@@ -616,8 +641,21 @@ function createClient(settings, stats) {
       stats.rejectedMessages += 1;
       return;
     }
-    if (typeof message.session === 'string' && message.session.length <= SESSION_ID_LENGTH_LIMIT) {
-      if (authoritySession !== null && authoritySession !== message.session) resetForNewAuthority();
+    if (message.session !== undefined) {
+      if (!isValidSession(message.session)) {
+        stats.rejectedMessages += 1;
+        return;
+      }
+      // A snapshot of an earlier run that was still in flight must not reset the new run's state again.
+      if (retiredAuthoritySessions.includes(message.session)) {
+        stats.staleSnapshots += 1;
+        return;
+      }
+      if (authoritySession !== null && authoritySession !== message.session) {
+        retiredAuthoritySessions.push(authoritySession);
+        if (retiredAuthoritySessions.length > RETIRED_SESSION_HISTORY) retiredAuthoritySessions.shift();
+        resetForNewAuthority();
+      }
       authoritySession = message.session;
     }
     if (message.tick <= latestTick) {

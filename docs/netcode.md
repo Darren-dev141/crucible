@@ -41,7 +41,7 @@ Each fixed step the client samples `readInput`, applies it to its predicted enti
 
 Every `snapshotEveryTicks` fixed steps (default 2) the authority builds one snapshot of all entities, quantised to integers (`positionStep` 0.01, `rotationStep` 0.001, `velocityStep` 0.01, `variableStep` 0.01) and sends each peer a delta against the last snapshot that peer acknowledged. A peer that has acknowledged nothing, or whose base is too old, gets a full snapshot. A lost snapshot is repaired by the next one, since the delta base only moves forward on acknowledgement. Stale and out-of-order snapshots are dropped.
 
-A restart is recognised by a run id that every input and snapshot carries. A client that restarts on the same peer id gets a full snapshot, and its inputs count from sequence 1 again. When the authority restarts on the same peer id, a client drops its old snapshots, samples and pending inputs, resyncs from a full snapshot and counts it in `authorityRestarts`.
+A restart is recognised by a run id that every input and snapshot carries. A client that restarts on the same peer id gets a full snapshot, and its inputs count from sequence 1 again. When the authority restarts on the same peer id, a client drops its old snapshots, samples and pending inputs, resyncs from a full snapshot and counts it in `authorityRestarts`. A late snapshot of the old run that arrives after the new one is dropped as stale, and a null ack on the newest input message makes the authority forget the base it remembered. A present but invalid `session` is counted in `rejectedMessages`.
 
 ## Prediction, reconciliation and interpolation
 
