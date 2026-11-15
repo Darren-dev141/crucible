@@ -76,6 +76,34 @@ function closestTopic(name, allNames) {
   return near.length === 1 ? near[0] : undefined;
 }
 
+// Words an agent reaches for that stand for a topic under another name.
+const TOPIC_ALIASES = Object.freeze({ render: 'jobs', renders: 'jobs', renderjobs: 'jobs' });
+
+function editDistance(first, second) {
+  let previousRow = Array.from({ length: second.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= first.length; row++) {
+    const currentRow = [row];
+    for (let column = 1; column <= second.length; column++) {
+      const substitution = previousRow[column - 1] + (first[row - 1] === second[column - 1] ? 0 : 1);
+      currentRow.push(Math.min(previousRow[column] + 1, currentRow[column - 1] + 1, substitution));
+    }
+    previousRow = currentRow;
+  }
+  return previousRow[second.length];
+}
+
+/** The topics worth suggesting for an unknown name: an alias first, then names within two edits or sharing a stem. */
+function suggestTopics(name, allNames) {
+  const lowered = name.toLowerCase();
+  const aliased = TOPIC_ALIASES[lowered];
+  if (aliased && allNames.includes(aliased)) return [aliased];
+  const stem = lowered.replace(/(ies|y|s)$/, '');
+  return allNames.filter(candidate => {
+    const candidateLowered = candidate.toLowerCase();
+    return editDistance(lowered, candidateLowered) <= 2 || (stem.length >= 4 && candidateLowered.includes(stem));
+  }).slice(0, 3);
+}
+
 /** The topics a caller can ask for, by name. */
 export function capabilityTopicNames(capabilities, outlineSources) {
   const names = {
@@ -99,15 +127,19 @@ export function answerCapabilities(capabilities, topic, outlineSources) {
   }
   const allNames = [...names.scene, ...names.runtime, ...names.schemas];
   const parts = topic.split('.');
-  if (parts[0] === 'scene' && parts.length > 1) parts.shift();
+  // The index groups topics under scene, runtime and schemas; a caller may repeat the group as a prefix (schemas.geometries).
+  if (['scene', 'runtime', 'schemas'].includes(parts[0]) && parts.length > 1) parts.shift();
   const [requestedName, branchName] = parts;
-  const name = closestTopic(requestedName, allNames) ?? requestedName;
+  const aliased = TOPIC_ALIASES[requestedName.toLowerCase()];
+  const name = closestTopic(requestedName, allNames) ?? (allNames.includes(aliased) ? aliased : requestedName);
   const notes = sceneTopics(capabilities.scene).get(name);
   const runtime = RUNTIME_SECTIONS.includes(name) ? capabilities[name] : undefined;
   const source = outlineSources.get(name);
   const found = [notes, runtime, source].some(value => value !== undefined);
   if (!found) {
-    throw new Error(`Unknown topic ${topic}. Topics: ${allNames.join(', ')}.`);
+    const suggestions = suggestTopics(requestedName, allNames);
+    const didYouMean = suggestions.length ? ` Did you mean ${suggestions.join(' or ')}?` : '';
+    throw new Error(`Unknown topic ${topic}.${didYouMean} Topics: ${allNames.join(', ')}.`);
   }
   const answeredTopic = [name, branchName].filter(Boolean).join('.');
   if (source) return { topic: answeredTopic, ...(notes === undefined ? {} : { notes }), fields: outlineAnswer(name, branchName, source) };

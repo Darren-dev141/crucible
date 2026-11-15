@@ -23,6 +23,7 @@ import { parseGltf } from '../src/gltf.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { exportGlb } from '../src/export.js';
 import '../src/texture-update.js';
+import { staleRevisionMessage } from '../src/agent-errors.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
 import { rasterOptionsFor } from './agent-render-quality.mjs';
 import { hasPatternTextures } from './agent-preview-textures.js';
@@ -959,7 +960,7 @@ window.__agentPreview = {
   },
   snapshot({ sessionId, expectedRevision }) {
     const record = requireSession(sessionId);
-    if (record.scene.revision !== expectedRevision) throw new Error('Stale revision for render snapshot.');
+    if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('render snapshot', expectedRevision, record.scene.revision));
     return { sourceRevision: record.scene.revision, recipe: record.scene.exportRecipe(),
       clips: record.asset?.animations.map(clip => ({ duration: clip.duration })) ?? [] };
   },
@@ -1351,7 +1352,7 @@ window.__agentPreview = {
     return afterMeshBooleans(operations, () => {
       const record = requireSession(sessionId);
       if (record.asset) throw new TypeError('Branches support procedural recipe scenes.');
-      if (record.scene.revision !== expectedRevision) throw new Error('Stale revision for branch.');
+      if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('branch', expectedRevision, record.scene.revision));
       const baseRecipe = record.scene.exportRecipe();
       const scratch = createAgentScene(baseRecipe);
       validatePreviewCamera(candidateCamera(record, operations));
