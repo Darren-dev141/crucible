@@ -595,6 +595,14 @@ const ikSolver = z.discriminatedUnion('type', [
     weight: ikWeight,
   }).describe('Point a node, such as a head, lamp or camera, at a target.'),
 ]);
+// Properties of the tracks the schema accepts; light, sun, environment and effects take any property name here and the backend checks it.
+const motionTrackProperties = {
+  node: ['translation', 'rotation', 'scale'],
+  material: ['color', 'emissiveColor', 'emission', 'metallic', 'roughness'],
+  camera: ['eye', 'target', 'fov', 'roll'],
+  geometry: ['oceanTime'],
+};
+const motionTrackKinds = [...Object.keys(motionTrackProperties), 'light', 'sun', 'environment', 'effects'];
 const motionTrackFields = ['kind', 'id', 'property', 'interpolation', 'keyframes', 'extrapolation', 'modifiers'];
 // A union reports only "Invalid input"; name the field and the allowed ones the way set-motion does.
 function motionTrackUnionMessage(issue) {
@@ -602,7 +610,11 @@ function motionTrackUnionMessage(issue) {
   if (!track || typeof track !== 'object' || Array.isArray(track)) return 'A motion track is an object {kind, id, property, keyframes: [{time, value}]}.';
   const unknownField = Object.keys(track).find(field => !motionTrackFields.includes(field));
   if (unknownField !== undefined) return `Unknown or unsupported motion track field: ${unknownField}. Allowed fields: ${motionTrackFields.join(', ')}.`;
-  if (track.kind === undefined) return 'A motion track needs kind (node, material, camera, geometry, light, sun, sky or effects), id, property and keyframes.';
+  const kindList = motionTrackKinds.join(', ');
+  if (track.kind === undefined) return `A motion track needs kind (${kindList}), id, property and keyframes.`;
+  if (!motionTrackKinds.includes(track.kind)) return `Unknown motion track kind: ${JSON.stringify(track.kind)}. Kinds: ${kindList}.`;
+  const properties = motionTrackProperties[track.kind];
+  if (properties && !properties.includes(track.property)) return `Unknown ${track.kind} track property: ${JSON.stringify(track.property)}. ${track.kind} properties: ${properties.join(', ')}.`;
   return undefined;
 }
 const motion = z.strictObject({

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { createAgentMcpServer } from '../scripts/mcp-server.mjs';
+import { walkerRecipe } from '../bench/agent-modeling/walker.mjs';
 import { createAgentScene, loadPhysicsEngine, AGENT_SCENE_CAPABILITIES } from '../src/agent-scene.js';
 
 await loadPhysicsEngine();
@@ -153,5 +154,44 @@ test('scene_create names the bad field and the allowed ones for a malformed moti
     assert.equal(created.isError, true);
     assert.match(created.text, /Unknown or unsupported motion track field: node/);
     assert.match(created.text, /Allowed fields: kind, id, property/);
+  });
+});
+
+test('scene_create accepts a recipe ragdoll on a real armature', async () => {
+  await withRoundTripClient(async client => {
+    const recipe = walkerRecipe();
+    delete recipe.motion;
+    recipe.geometries.push({ id: 'slab', type: 'box' });
+    recipe.nodes.push({ id: 'floor', geometry: 'slab', material: 'cloth', translation: [0, -0.25, 0], scale: [8, 0.5, 8] });
+    recipe.armatures[0].translation = [0, 1, 0];
+    recipe.physics = { duration: 1, bodies: [{ node: 'floor', type: 'fixed' }], ragdoll: { armature: 'rig' } };
+    await assertAccepted(client, recipe);
+  });
+});
+
+test('scene_create accepts the plane mesh base and refuses segments outside 1 to 64', async () => {
+  await withRoundTripClient(async client => {
+    const withSegments = segments => oneBoxRecipe({
+      geometries: [{ id: 'sheet', type: 'mesh', base: { type: 'plane', segments } }],
+      nodes: [{ id: 'a', geometry: 'sheet', material: 'red' }],
+    });
+    await assertAccepted(client, withSegments(8));
+    for (const segments of [0, 65]) {
+      const refused = await call(client, 'scene_create', { recipe: withSegments(segments) });
+      assert.equal(refused.isError, true);
+    }
+  });
+});
+
+test('scene_create names the valid kinds and properties for a motion track with a wrong kind or property', async () => {
+  await withRoundTripClient(async client => {
+    const keyframes = [{ time: 0, value: [0, 0, 0] }];
+    const createdWith = track => call(client, 'scene_create', { recipe: oneBoxRecipe({ motion: { duration: 1, tracks: [track] } }) });
+    const missingKind = await createdWith({ id: 'a', property: 'translation', keyframes });
+    assert.match(missingKind.text, /needs kind \(node, material, camera, geometry, light, sun, environment, effects\)/);
+    const wrongKind = await createdWith({ kind: 'sky', id: 'a', property: 'translation', keyframes });
+    assert.match(wrongKind.text, /Unknown motion track kind: "sky"\. Kinds: node, material/);
+    const wrongProperty = await createdWith({ kind: 'node', id: 'a', property: 'bogus', keyframes });
+    assert.match(wrongProperty.text, /Unknown node track property: "bogus"\. node properties: translation, rotation, scale\./);
   });
 });
