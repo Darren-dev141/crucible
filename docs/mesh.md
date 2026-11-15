@@ -103,6 +103,7 @@ Each problem has `kind`, `severity`, `count`, up to eight sample indices and a s
 | `boundary-edge` | warning | edges with one face (open surfaces) |
 | `loose-vertex` | warning | vertices used by no face |
 | `non-planar-quad` | warning (`geometry: true`) | quads folded by more than 45 degrees across their diagonal |
+| `folded-face` | warning (`geometry: true`) | two neighbouring faces whose normals point opposite ways, so the surface doubles back on itself |
 | `skewed-quad` | warning (`geometry: true`) | quads with a corner more than 60 degrees from a right angle (outside radial pole fans) |
 
 `ok` is false when any error is present. With `geometry: true`, spatial checks (`intersecting-parts`, `self-intersection`, `thin-wall`, `floating-part`, `asymmetric`) and quad distortion warnings are included.
@@ -132,7 +133,7 @@ Edits (names follow Blender's `bmesh.ops` where they match):
 | --- | --- | --- |
 | `extrude_face_region` | `select`, `offset`, optional `direction` or `alongNormals`, `name` | `<name>.cap`, `<name>.side` |
 | `extrude_individual` | same | same, per face |
-| `inset_region` | `select`, `thickness`, optional `depth`, `name` | `<name>.cap`, `<name>.rim` |
+| `inset_region` | `select`, `thickness`, optional `depth`, `name` | `<name>.cap`, `<name>.rim`. A thickness past the face limit (where the inner faces would collapse, flip or shrink below 0.001% of their area, folding the rim) is clamped to the largest one that holds, 3 significant digits; the result reports `thickness` and `clamped`. If no thickness holds, the edit throws and names the limit |
 | `inset_individual` | same | same, per face |
 | `delete` | `select` (required) | |
 | `flip_normals` | `select` | |
@@ -342,8 +343,8 @@ in those cases use only arithmetic and position.
 | `edges` | `{ "between": [faceRule, faceRule] }` (the rim between two regions, for example top and side), `{ "angle": 30 }` (edges bending at least this many degrees; the default), `{ "boundaryOf": faceRule }`, or `{ "all": true }` |
 | `width` | Distance from the edge into each neighbouring face |
 | `segments` | 1 to 16; 1 is a flat chamfer, 3 or more reads as round |
-| `profile` | As in Blender: 0.5 is a circular arc (default), 0.25 is flat, 1 is square, and below 0.25 is concave |
-| `clampOverlap` | Default true: shrink `width` so neighbouring bevels cannot cross; the result reports `clamped` and the `width` used |
+| `profile` | As in Blender: 0.5 is a circular arc (default), 0.25 is flat, 1 is square, and below 0.25 is concave. Values above 0.99 are capped at 0.99, because at 1 every ring point lands on the corner and the faces have no area; the result reports `profile` and `profileClamped`, also in the edit result. At many segments (8 or more) `geometry: true` lint may still warn about thin or folded slivers in the near-square ring; default lint stays clean |
+| `clampOverlap` | Default true: shrink `width` so neighbouring bevels cannot cross; the result reports `clamped` and the `width` used; with `false` a concave profile with a wide bevel can turn the part inside out (lint reports `inverted-part`). A concave profile reaches deeper than a flat one, so its limit is smaller (about 0.36 of an edge at profile 0.1 instead of 0.49) |
 
 Only edges with two consistently wound faces bevel. A face corner next to one beveled edge slides along its other
 edge, shared with the face across that edge, so no T-junctions appear. Each beveled edge becomes a strip of

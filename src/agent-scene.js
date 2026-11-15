@@ -4,6 +4,7 @@ import { createSceneGraph } from './scene-graph.js';
 import { currentFormatName } from './legacy-names.js';
 import { invalidField, withFieldPrefix } from './field-error.js';
 import { applyProjection, validateCameraShift, CAMERA_LENS_FIELDS } from './camera.js';
+import { checkLocalVolumePartNames } from './local-volume-resolve.js';
 import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, agentEnvironmentMap, VOLUME_FOG_FIELDS } from './agent-look.js';
 import { postStepSupport } from './shader-registry.js';
 import { agentSceneModule, agentSceneModuleLoaded } from './agent-scene-modules.js';
@@ -1466,6 +1467,11 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const assetRuntime = recipe.nodes.some(node => node.vegetation)
       ? agentSceneModule('vegetation').expandVegetation(recipe, limits, assetOutputCache, placedRuntime)
       : placedRuntime;
+    // Placed assets and grown vegetation add part nodes, so the part names are checked after the expansion, like the render binds them.
+    if (recipe.environment.localVolumes) {
+      const partNodeIds = recipe.nodes.filter(node => node.geometry !== undefined).map(node => node.id);
+      checkLocalVolumePartNames(recipe.environment.localVolumes, partNodeIds);
+    }
     if (state) {
       retainedMatrices(state.parts);
     }
