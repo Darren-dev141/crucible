@@ -83,3 +83,21 @@ test('walkMap refuses a region above maxCells and unknown options', () => {
   assert.throws(() => query.walkMap({ min: [0, 0], max: [1, 1], radius: 1 }), /Unsupported walkMap option/);
   query.dispose();
 });
+
+test('raycast follows a part whose retained world matrix moved after the query was created', () => {
+  const matrix = translation(0, 0, 0);
+  const query = createSceneQuery([{ id: 'mover', geometry: quad(1), matrix, material: 'm' }]);
+  assert.equal(query.raycast({ origin: [0, 5, 0], direction: [0, -1, 0] }).id, 'mover');
+  matrix[12] = 50;
+  assert.equal(query.raycast({ origin: [50, 5, 0], direction: [0, -1, 0] }).id, 'mover');
+  assert.equal(query.raycast({ origin: [0, 5, 0], direction: [0, -1, 0] }), null);
+  query.dispose();
+});
+
+test('raycast rejects a maxDistance that is not a number instead of reporting a miss', () => {
+  const query = createSceneQuery(parts);
+  for (const maxDistance of [Number.NaN, '5']) {
+    assert.throws(() => query.raycast({ origin: [-2, 20, 0], direction: [0, -1, 0], maxDistance }), /maxDistance must be a number/, String(maxDistance));
+  }
+  query.dispose();
+});

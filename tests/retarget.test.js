@@ -345,3 +345,9 @@ test('createCrowd rejects columns and size that would give NaN or lopsided place
   assert.equal(createCrowd({ count: 4, clip, columns: 2 }).instances.length, 4);
   assert.equal(createCrowd({ count: 4, clip, layout: 'scatter', size: 6 }).instances.length, 4);
 });
+
+test('a rig root matrix with zero scale is rejected instead of filling the pose with NaN', () => {
+  const source = createHumanoidRig(MIXAMO_NAMES);
+  const target = { ...createHumanoidRig(UNREAL_NAMES), rootMatrix: new Array(15).fill(0).concat(1) };
+  assert.throws(() => retargetClip(source, target, createRaisedArmClip()), /rootMatrix needs a finite, nonzero scale/);
+});

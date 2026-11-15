@@ -2,6 +2,10 @@ import { editMesh } from './mesh-edit.js';
 import { faceNormals } from './mesh-normals.js';
 import { selectFaces } from './mesh-select.js';
 import { MeshBuilder } from './mesh-stack.js';
+import { requireFiniteInRange } from './modeling-limits.js';
+
+export const MAX_BEVEL_SEGMENTS = 16;
+export const MAX_BEVEL_WIDTH = 1e6;
 
 // Edge bevel on manifold meshes, a compact take on Blender's bmesh_bevel for the common cases agents need:
 // rounding the rim between two tagged regions, or every edge sharper than an angle.
@@ -164,7 +168,9 @@ function profileDepthReach(profile) {
  * Returns { mesh, width, clamped, bevelEdges, stripFaces, cornerFaces, filledCorners }. Strip faces get `<name>.strip`,
  * corner fills `<name>.corner`; the faces around keep their tags.
  */
-export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile: requestedProfile = 0.5, clampOverlap = true, name = 'bevel' }) {
+export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile: requestedProfile = 0.5, clampOverlap = true, name = 'bevel' } = {}) {
+  requireFiniteInRange('bevelEdges', 'width', width, 0, MAX_BEVEL_WIDTH);
+  requireFiniteInRange('bevelEdges', 'segments', segments, 1, MAX_BEVEL_SEGMENTS, true);
   const profile = Math.min(requestedProfile, MAXIMUM_PROFILE);
   const profileReach = profileDepthReach(profile);
   const table = edgeFaces(mesh);

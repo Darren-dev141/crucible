@@ -150,3 +150,11 @@ test('a hull that starts with a velocity has a wake and white water at its hull 
 test('a boat wake field is checked: lifetime, width, strength and height name what to pass', () => {
   assert.throws(() => createAgentScene(boatRecipe({ lifetime: 0 })), /boat\.wake\.lifetime must be a number from 0\.5 to 60/);
 });
+
+test('wakeTrail skips points whose strength is not a number', () => {
+  const stern = speed => () => ({ x: 0, z: 0, speed });
+  const zeroLifetime = wakeTrail({ sample: stern(3), time: 1, lifetime: 0, width: 1, strength: 1, count: 4 });
+  const missingSpeed = wakeTrail({ sample: stern(undefined), time: 1, lifetime: 2, width: 1, strength: 1, count: 4 });
+  for (const point of [...zeroLifetime, ...missingSpeed]) assert.ok(point.every(Number.isFinite), `point ${point}`);
+  assert.equal(missingSpeed.length, 0);
+});
