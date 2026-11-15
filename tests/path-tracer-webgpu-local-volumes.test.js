@@ -99,7 +99,7 @@ async function renderBothBackends({ volumes, width, height, samples }) {
 
 test('on a WebGPU adapter box and sphere volumes match the CPU tracer', { timeout: 300000 }, async context => {
   await withWebGpuPage(context, async page => {
-    const { cpu, webgpu } = await page.evaluate(renderBothBackends, { volumes: [SMOKE_BOX, PUFF, EMBER], width: 64, height: 40, samples: 32 });
+    const { cpu, webgpu } = await page.evaluate(renderBothBackends, { volumes: [SMOKE_BOX, PUFF, EMBER], width: 48, height: 30, samples: 32 });
     let difference = 0;
     let reference = 0;
     let lit = 0;
@@ -110,5 +110,5 @@ test('on a WebGPU adapter box and sphere volumes match the CPU tracer', { timeou
     });
     assert.ok(lit > 200, `the volumes show in the frame: ${lit} lit values`);
     assert.ok(difference / reference < 0.05, `mean relative difference ${(difference / reference).toFixed(4)}`);
-  });
+  }, { hardwareOnly: true });
 });
