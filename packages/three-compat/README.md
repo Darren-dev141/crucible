@@ -1,6 +1,6 @@
 # @codepawlhq/crucible-three-compat
 
-Optional addon that lets code written from memory in the three.js style build a Crucible scene. It imports neither `three` nor `crucible`: you pass the Crucible exports to it, so the core gains no dependency and this package gains none. It is not part of the core `crucible` archive.
+Optional addon that lets code written from memory in the three.js style build a Crucible scene. It imports neither `three` nor `crucible`: you pass the Crucible exports to it, so the core gains no dependency and this package gains none. It is not part of the core `crucible` archive and is not on npm yet: import it from this folder in a source checkout.
 
 ```js
 import * as core from '@codepawlhq/crucible';

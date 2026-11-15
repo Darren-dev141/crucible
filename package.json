@@ -242,7 +242,8 @@
     "check:change-note": "node scripts/check-change-note.mjs",
     "check:release-changelog": "node scripts/check-release-changelog.mjs",
     "check:site-build": "vite build --outDir artifacts/site-check --emptyOutDir",
-    "check:links:package": "node scripts/check-links.mjs --package"
+    "check:links:package": "node scripts/check-links.mjs --package",
+    "check:published-site": "node scripts/check-published-site.mjs"
   },
   "peerDependencies": {
     "@dimforge/rapier3d-compat": "0.21.0",
