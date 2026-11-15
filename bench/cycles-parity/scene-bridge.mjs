@@ -313,6 +313,7 @@ async function rebuildEnvironmentMap(worldDescription, repositoryRootPath = REPO
     const hdriPath = worldDescription.assetFile !== undefined
       ? resolveAssetFile(assetDirectory, worldDescription.assetFile)
       : resolve(repositoryRootPath, worldDescription.file);
+    // Kept on parseRadianceHdr, unturned (#1371): render-cycles.py compensates with ENVIRONMENT_ROTATION_Z, so both sides keep the pre-0.21.0 look this bench was tuned on.
     const hdriBytes = await readFile(hdriPath);
     const parsedHdri = parseRadianceHdr(hdriBytes.buffer.slice(hdriBytes.byteOffset, hdriBytes.byteOffset + hdriBytes.byteLength));
     const cappedData = parsedHdri.data.map((radiance) => Math.min(radiance, worldDescription.radianceLimit));
