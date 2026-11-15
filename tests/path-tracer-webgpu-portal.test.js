@@ -37,7 +37,7 @@ async function startServer(port) {
 }
 
 // Runs in the page: renders the room with and without the portal on the WebGPU tracer and returns the mean and the seed difference of each.
-async function measureRoom({ width, height, samples, seeds }) {
+async function measureRoom({ width, height, samples, seeds, kernel }) {
   const { box } = await import('/src/geometry.js');
   const { createEnvironmentMap } = await import('/src/environment.js');
   const { renderPathTracedImage } = await import('/src/path-tracer.js');
@@ -54,6 +54,16 @@ async function measureRoom({ width, height, samples, seeds }) {
   for (const withPortal of [false, true]) {
     const frames = [];
     for (const seed of seeds) {
+      if (kernel) {
+        // renderPathTracedImage does not expose the kernel choice, so the wavefront run calls the tracer directly.
+        const { createCamera, normalizePathTracerOptions } = await import('/src/path-tracer.js');
+        const { buildTraceSceneForDevice } = await import('/src/path-tracer-scene.js');
+        const gpuModule = await import('/src/path-tracer-webgpu.js');
+        const scene = await buildTraceSceneForDevice(parts, { map, areaLights: withPortal ? [portal] : [] }, gpuModule);
+        const traced = await gpuModule.traceOnWebGpu(scene, createCamera(camera, width, height), { ...normalizePathTracerOptions({ width, height, samples, bounces: 8, seed, backend: 'webgpu', denoiser: 'none', threads: 1 }), kernel }, () => {});
+        frames.push(Array.from(traced.color));
+        continue;
+      }
       const image = await renderPathTracedImage({ parts, environment: { map, areaLights: withPortal ? [portal] : [] }, camera }, { width, height, samples, bounces: 8, seed, backend: 'webgpu', denoiser: 'none', threads: 1 });
       frames.push(Array.from(image.linear));
       result.ignored = image.report.ignored;
@@ -96,7 +106,8 @@ test('on a WebGPU adapter a portal keeps the mean of a room lit through a window
     const page = await browser.newPage({ viewport: { width: 128, height: 128 } });
     await page.goto(`http://127.0.0.1:${port}/`);
     if (!await page.evaluate(async () => Boolean(navigator.gpu && await navigator.gpu.requestAdapter()))) {
-      skipOrThrow(context, 'Chrome has no WebGPU adapter');
+      // Most CI runners have no adapter, so this skips there too instead of failing the shard.
+      context.skip('Chrome has no WebGPU adapter');
       return;
     }
     const spp = process.env.CI ? 16 : 64;
@@ -106,6 +117,13 @@ test('on a WebGPU adapter a portal keeps the mean of a room lit through a window
     assert.doesNotMatch(mean.ignored.join(' '), /portal/, 'the WebGPU tracer should no longer name portals as ignored');
     assert.ok(mean.without.mean > 0.02, `the room is lit: ${mean.without.mean}`);
     assert.ok(Math.abs(mean.with.mean / mean.without.mean - 1) < 0.015, `mean ${mean.with.mean} with a portal against ${mean.without.mean} without`);
+    const wavefront = await page.evaluate(measureRoom, { width: 32, height: 24, samples: spp * 8, seeds: [1, 2], kernel: 'wavefront' });
+    context.diagnostic(`wavefront mean ${wavefront.with.mean.toFixed(5)} with a portal, ${wavefront.without.mean.toFixed(5)} without`);
+    assert.ok(Math.abs(wavefront.with.mean / wavefront.without.mean - 1) < 0.015, `wavefront mean ${wavefront.with.mean} with a portal against ${wavefront.without.mean} without`);
+    const wavefrontSeeds = await page.evaluate(measureRoom, { width: 32, height: 24, samples: spp, seeds: [1, 2, 3, 4], kernel: 'wavefront' });
+    context.diagnostic(`wavefront seed difference ${wavefrontSeeds.without.seedDifference.toFixed(5)} without, ${wavefrontSeeds.with.seedDifference.toFixed(5)} with`);
+    assert.ok(wavefrontSeeds.without.seedDifference / wavefrontSeeds.with.seedDifference >= 2, `wavefront seed difference ${wavefrontSeeds.without.seedDifference} without, ${wavefrontSeeds.with.seedDifference} with a portal`);
+    assert.ok(wavefront.with.mean > 0.02, `the wavefront room is lit: ${wavefront.with.mean}`);
     assert.ok(seeds.without.seedDifference / seeds.with.seedDifference >= 2, `seed difference ${seeds.without.seedDifference} without, ${seeds.with.seedDifference} with a portal`);
   } finally {
     await browser?.close();
