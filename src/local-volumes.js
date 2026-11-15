@@ -27,7 +27,7 @@ export const PACKED_SHAPE_MESH = 2;
 
 export function packLocalVolumes(volumes, buffers) {
   if (volumes.some(volume => volume.shape === 'mesh' && !volume.center)) throw new RangeError('A mesh volume names a part: bind it with bindLocalVolumeParts before packing');
-  if (volumes.some(volume => volume.shape === 'grid' && !volume.gridData)) throw new RangeError('A grid volume names a grid: bind it with bindLocalVolumeParts before packing');
+  if (volumes.some(volume => volume.shape === 'grid' && !volume.gridData)) throw new RangeError('Bind a grid volume with bindLocalVolumeParts before packing');
   buffers.count = volumes.length;
   buffers.meshParts = [];
   buffers.gridVolume = null;
