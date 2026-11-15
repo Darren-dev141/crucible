@@ -26,7 +26,7 @@ renderer.setAnimationLoop(() => {
 
 ## What it accepts
 
-`Scene`, `Group`, `Object3D`, `Mesh`, `BoxGeometry`, `PlaneGeometry`, `SphereGeometry`, `CylinderGeometry` (equal radii), `TorusGeometry`, `MeshStandardMaterial`, `MeshPhysicalMaterial`, `Texture`, `CanvasTexture`, `PerspectiveCamera`, `OrthographicCamera`, `AmbientLight`, `HemisphereLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `RectAreaLight`, `GLTFLoader` (`load` and `loadAsync`), `OrbitControls`, `WebGLRenderer` (`render`, `setSize`, `setPixelRatio`, `setAnimationLoop`, `dispose`), `Clock`, `Color`, `Vector2`, `Vector3` and `Euler` (order XYZ).
+`Scene`, `Group`, `Object3D`, `Mesh`, `BoxGeometry`, `PlaneGeometry`, `SphereGeometry`, `CylinderGeometry` (equal radii), `TorusGeometry`, `MeshStandardMaterial`, `MeshPhysicalMaterial`, `Texture`, `CanvasTexture`, `PerspectiveCamera`, `OrthographicCamera`, `AmbientLight`, `HemisphereLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `RectAreaLight`, `GLTFLoader` (`load` and `loadAsync`), `OrbitControls`, `WebGLRenderer` (`render`, `setSize`, `setPixelRatio`, `setAnimationLoop`, `dispose`), `Clock`, `Color`, `Vector2`, `Vector3` and `Euler` (all six orders). Several `DirectionalLight`s are merged into the one Crucible key light: summed intensity, intensity-weighted colour and direction.
 
 Light intensities pass through unchanged: three.js and Crucible use different units, so tune them by eye. A scene with at least one light switches the studio rig off, as in three.js; a scene with none keeps it. `AmbientLight` and `HemisphereLight` use their intensity only, not their colour.
 

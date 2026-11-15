@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { constants, setPriority } from 'node:os';
+import * as RealThree from 'three';
 import * as core from '../src/index.js';
 import { loadGltf } from '../src/gltf.js';
 import { createThreeCompat, unsupportedNames } from '../packages/three-compat/index.mjs';
@@ -250,4 +251,67 @@ test('OrbitControls.dispose removes every listener it added', () => {
   assert.deepEqual([...added.keys()].sort(), ['pointerdown', 'pointermove', 'wheel']);
   controls.dispose();
   assert.equal(added.size, 0, 'listeners still attached after dispose');
+});
+
+test('several DirectionalLights add up like in three.js instead of the last one winning', () => {
+  const first = new THREE.DirectionalLight(0xffffff, 1);
+  first.position.set(0, 5, 0);
+  const second = new THREE.DirectionalLight(0xffffff, 2);
+  second.position.set(4, 0, 0);
+  const { scene, camera } = litScene(first);
+  scene.add(second);
+  const { environment } = THREE.collectScene(scene, camera);
+  assert.equal(environment.keyIntensity, 3, 'the intensities are summed');
+  const length = Math.hypot(...environment.lightDirection);
+  assert.ok(Math.abs(length - 1) < 1e-9, 'a blended direction is a unit vector');
+  // The stronger light pulls the direction: (1 * up + 2 * right) normalised.
+  const expected = [2, 1, 0].map(value => value / Math.sqrt(5));
+  environment.lightDirection.forEach((value, axis) => assert.ok(Math.abs(value - expected[axis]) < 1e-9));
+  assert.equal(environment.keyColor, undefined, 'white lights leave the key colour alone');
+});
+
+test('blended DirectionalLights mix their colours by intensity and survive opposite directions', () => {
+  const red = new THREE.DirectionalLight(0xff0000, 1);
+  red.position.set(0, 3, 0);
+  const blue = new THREE.DirectionalLight(0x0000ff, 3);
+  blue.position.set(0, -3, 0);
+  const { scene, camera } = litScene(red);
+  scene.add(blue);
+  const { environment } = THREE.collectScene(scene, camera);
+  assert.equal(environment.keyIntensity, 4);
+  assert.deepEqual(environment.lightDirection.map(Math.sign), [0, -1, 0], 'the stronger light wins when directions oppose');
+  const [redShare, , blueShare] = environment.keyColor;
+  assert.ok(Math.abs(redShare - 0.25) < 1e-9 && Math.abs(blueShare - 0.75) < 1e-9);
+  const cancelled = new THREE.DirectionalLight(0xffffff, 1);
+  cancelled.position.set(0, 3, 0);
+  const opposite = new THREE.DirectionalLight(0xffffff, 1);
+  opposite.position.set(0, -3, 0);
+  const equalScene = litScene(cancelled);
+  equalScene.scene.add(opposite);
+  const equal = THREE.collectScene(equalScene.scene, equalScene.camera).environment;
+  assert.ok(equal.lightDirection.every(Number.isFinite), 'equal and opposite lights give a finite direction');
+});
+
+test('rotation.order set after construction changes the matrix like three.js', () => {
+  const angles = [0.4, -0.7, 1.1];
+  for (const order of ['XYZ', 'YXZ', 'ZXY', 'ZYX', 'YZX', 'XZY']) {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial());
+    mesh.rotation.set(...angles);
+    mesh.rotation.order = order;
+    const expected = new RealThree.Matrix4().makeRotationFromEuler(new RealThree.Euler(...angles, order)).elements;
+    const actual = mesh.localMatrix();
+    for (let index = 0; index < 16; index += 1) {
+      assert.ok(Math.abs(actual[index] - expected[index]) < 1e-6, `${order} element ${index}`);
+    }
+  }
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial());
+  mesh.rotation.order = 'ABC';
+  assert.throws(() => mesh.localMatrix(), /Euler order "ABC".*XYZ/);
+  assert.doesNotThrow(() => new THREE.Euler(0, 0, 0, 'ZYX'));
+});
+
+test('a torus with radius 0 throws an error that names the radius', () => {
+  assert.throws(() => new THREE.TorusGeometry(0, 0.4), /TorusGeometry radius is 0.*positive/);
+  assert.throws(() => new THREE.TorusGeometry(Number.NaN, 0.4), /TorusGeometry radius is NaN/);
+  assert.doesNotThrow(() => new THREE.TorusGeometry(2, 0.4));
 });

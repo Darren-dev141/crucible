@@ -258,3 +258,12 @@ test('toThreeObject refuses attribute arrays that do not match the vertex count 
   assert.throws(() => toThreeObject([trianglePart({ colors: new Float32Array(12) })], THREE), /12 values in geometry\.colors.*3 vertices need 9/);
   assert.throws(() => toThreeObject([trianglePart({ indices: new Uint32Array([0, 1, 3]) })], THREE), /indices entry 3.*0 to 2/);
 });
+
+test('an InstancedMesh count above its matrix array is clamped with a warning, not NaN', () => {
+  const instanced = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial(), 3);
+  instanced.count = 5;
+  const { parts, warnings } = fromThreeObject(instanced);
+  assert.equal(parts.length, 3, 'one part per matrix in the array');
+  for (const part of parts) assert.ok(part.matrix.every(Number.isFinite), 'every matrix is finite');
+  assert.ok(warnings.some(warning => /count 5 is above the 3 matrices instanceMatrix holds/.test(warning)), 'the clamp is reported');
+});

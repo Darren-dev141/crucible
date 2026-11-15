@@ -163,10 +163,16 @@ class Vector3 {
   }
 }
 
+const EULER_ORDERS = ['XYZ', 'YXZ', 'ZXY', 'ZYX', 'YZX', 'XZY'];
+
+function checkEulerOrder(order) {
+  if (!EULER_ORDERS.includes(order)) throw new CompatError(`Euler order "${order}" is not supported. Use one of ${EULER_ORDERS.join(', ')}.`);
+}
+
 class Euler extends Vector3 {
   constructor(x = 0, y = 0, z = 0, order = 'XYZ') {
     super(x, y, z);
-    if (order !== 'XYZ') throw new CompatError(`Euler order "${order}" is not supported. Use XYZ, or set part.matrix yourself.`);
+    checkEulerOrder(order);
     this.order = order;
   }
 }
@@ -196,18 +202,41 @@ function multiply(left, right) {
   return result;
 }
 
+// A turn about one axis as a column-major 3 x 3 matrix.
+function axisRotation(axis, angle) {
+  const [sin, cos] = [Math.sin(angle), Math.cos(angle)];
+  if (axis === 'X') return [1, 0, 0, 0, cos, sin, 0, -sin, cos];
+  if (axis === 'Y') return [cos, 0, -sin, 0, 1, 0, sin, 0, cos];
+  return [cos, sin, 0, -sin, cos, 0, 0, 0, 1];
+}
+
+function multiply3(left, right) {
+  const result = new Array(9).fill(0);
+  for (let column = 0; column < 3; column++) {
+    for (let row = 0; row < 3; row++) {
+      for (let step = 0; step < 3; step++) result[column * 3 + row] += left[step * 3 + row] * right[column * 3 + step];
+    }
+  }
+  return result;
+}
+
+// Order "XYZ" is R = Rx * Ry * Rz, the three.js convention; every other order multiplies its axes the same way.
+function rotationMatrix(rotation) {
+  const order = rotation.order ?? 'XYZ';
+  checkEulerOrder(order);
+  const angles = { X: rotation.x, Y: rotation.y, Z: rotation.z };
+  const [first, second, third] = [...order].map(axis => axisRotation(axis, angles[axis]));
+  return multiply3(multiply3(first, second), third);
+}
+
 function composeMatrix(position, rotation, scale) {
-  const [sinX, cosX] = [Math.sin(rotation.x), Math.cos(rotation.x)];
-  const [sinY, cosY] = [Math.sin(rotation.y), Math.cos(rotation.y)];
-  const [sinZ, cosZ] = [Math.sin(rotation.z), Math.cos(rotation.z)];
-  // R = Rx * Ry * Rz, three.js order XYZ.
-  const xAxis = [cosY * cosZ, cosX * sinZ + sinX * sinY * cosZ, sinX * sinZ - cosX * sinY * cosZ];
-  const yAxis = [-cosY * sinZ, cosX * cosZ - sinX * sinY * sinZ, sinX * cosZ + cosX * sinY * sinZ];
-  const zAxis = [sinY, -sinX * cosY, cosX * cosY];
+  const axes = rotationMatrix(rotation);
+  const scales = [scale.x, scale.y, scale.z];
+  const scaled = axes.map((value, index) => value * scales[Math.floor(index / 3)]);
   return new Float32Array([
-    ...xAxis.map(value => value * scale.x), 0,
-    ...yAxis.map(value => value * scale.y), 0,
-    ...zAxis.map(value => value * scale.z), 0,
+    ...scaled.slice(0, 3), 0,
+    ...scaled.slice(3, 6), 0,
+    ...scaled.slice(6, 9), 0,
     position.x, position.y, position.z, 1,
   ]);
 }
@@ -336,6 +365,9 @@ export function createThreeCompat(core) {
 
   class TorusGeometry {
     constructor(radius = 1, tube = 0.4, radialSegments = 12, tubularSegments = 48) {
+      if (!(Number.isFinite(radius) && radius > 0)) {
+        throw new CompatError(`TorusGeometry radius is ${radius}. Pass a positive radius, the distance from the centre to the middle of the tube.`);
+      }
       const tubeRatio = tube / radius;
       this[geometrySymbol] = {
         build: () => shared(`torus:${tubeRatio}:${tubularSegments}:${radialSegments}`, () => core.torus(tubeRatio, tubularSegments, radialSegments)),
@@ -512,6 +544,33 @@ export function createThreeCompat(core) {
     return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
   }
 
+  function directionOf(light) {
+    return subtract(light.worldPosition(), light.targetPoint());
+  }
+
+  // three.js adds every directional light. Crucible has one key light, so the lights become one with the total
+  // intensity, the intensity-weighted mean colour and the direction of the intensity-weighted sum of unit directions.
+  function keyLightOf(directionalLights) {
+    if (directionalLights.length === 1) {
+      const [light] = directionalLights;
+      return { keyIntensity: light.intensity, lightDirection: directionOf(light), keyColor: colorOrUndefined(light.color) };
+    }
+    const total = directionalLights.reduce((sum, light) => sum + light.intensity, 0);
+    const strongest = directionalLights.reduce((best, light) => (light.intensity > best.intensity ? light : best));
+    const weightedDirection = [0, 0, 0];
+    const weightedColor = [0, 0, 0];
+    for (const light of directionalLights) {
+      const direction = directionOf(light);
+      const length = Math.hypot(...direction) || 1;
+      direction.forEach((value, axis) => { weightedDirection[axis] += light.intensity * value / length; });
+      light.color.toArray().forEach((value, channel) => { weightedColor[channel] += light.intensity * value / (total || 1); });
+    }
+    const blendedLength = Math.hypot(...weightedDirection);
+    const lightDirection = blendedLength > 1e-9 ? weightedDirection.map(value => value / blendedLength) : directionOf(strongest);
+    const keyColor = weightedColor.every(value => Math.abs(value - 1) < 1e-12) ? undefined : weightedColor;
+    return { keyIntensity: total, lightDirection, keyColor };
+  }
+
   function environmentFor(lights, scene) {
     const environment = {};
     const background = scene.background instanceof Color ? scene.background.toArray() : null;
@@ -522,13 +581,13 @@ export function createThreeCompat(core) {
     if (lights.length === 0) return environment;
     // A three.js scene is dark until it has lights, so the studio rig is switched off once the scene brings its own.
     Object.assign(environment, { keyIntensity: 0, fillIntensity: 0, ambientIntensity: 0, pointLights: [], spotLights: [], areaLights: [] });
+    const directionalLights = [];
     for (const light of lights) {
       const position = light.worldPosition();
       if (light instanceof AmbientLight || light instanceof HemisphereLight) {
         environment.ambientIntensity += light.intensity;
       } else if (light instanceof DirectionalLight) {
-        const direction = subtract(position, light.targetPoint());
-        Object.assign(environment, withoutUndefined({ keyIntensity: light.intensity, lightDirection: direction, keyColor: colorOrUndefined(light.color) }));
+        directionalLights.push(light);
       } else if (light instanceof PointLight) {
         environment.pointLights.push(withoutUndefined({
           position, color: light.color.toArray(), intensity: light.intensity, range: light.distance > 0 ? light.distance : undefined,
@@ -550,6 +609,7 @@ export function createThreeCompat(core) {
         });
       }
     }
+    if (directionalLights.length > 0) Object.assign(environment, withoutUndefined(keyLightOf(directionalLights)));
     return environment;
   }
 
