@@ -267,6 +267,15 @@ function applyNormalMap(material, hit, u, v) {
   hit.normal[2] = mappedZ / mappedLength;
 }
 
+// The interpolated UVs of the hit, set by fillHit: TEXCOORD_0 then TEXCOORD_1 (zeros when the part has no second set).
+const HIT_UV = new Float64Array(4);
+
+/** Samples a map at the hit with the UV set the map names. */
+function sampleMap(texture, out) {
+  const offset = texture.uvSet === 1 ? 2 : 0;
+  sampleTexture(texture, HIT_UV[offset], HIT_UV[offset + 1], out);
+}
+
 function sampleTexture(texture, u, v, out) {
   const { width, height, data, colorLookup, repeat } = texture;
   const x = u * width - 0.5;
@@ -296,7 +305,7 @@ const CORNER_WEIGHTS = new Float64Array(3);
 
 /** Interpolates the surface at a hit: position, facing-corrected normal is left to the caller, colour and alpha. */
 function fillHit(scene, triangleId, originX, originY, originZ, directionX, directionY, directionZ, distance, hit) {
-  const { positions, normals, uvs, colors, indices } = scene;
+  const { positions, normals, uvs, uvs1, colors, indices } = scene;
   const first = indices[triangleId * 3];
   const second = indices[triangleId * 3 + 1];
   const third = indices[triangleId * 3 + 2];
@@ -330,6 +339,8 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
   let blue = 0;
   let u = 0;
   let v = 0;
+  let secondSetU = 0;
+  let secondSetV = 0;
   CORNER_VERTICES[0] = first;
   CORNER_VERTICES[1] = second;
   CORNER_VERTICES[2] = third;
@@ -347,7 +358,15 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
     blue += weight * colors[vertex * 3 + 2];
     u += weight * uvs[vertex * 2];
     v += weight * uvs[vertex * 2 + 1];
+    if (uvs1) {
+      secondSetU += weight * uvs1[vertex * 2];
+      secondSetV += weight * uvs1[vertex * 2 + 1];
+    }
   }
+  HIT_UV[0] = u;
+  HIT_UV[1] = v;
+  HIT_UV[2] = secondSetU;
+  HIT_UV[3] = secondSetV;
   const length = Math.hypot(normalX, normalY, normalZ) || 1;
   hit.normal[0] = normalX / length;
   hit.normal[1] = normalY / length;
@@ -359,7 +378,7 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
   hit.color[1] = material.color[1] * green;
   hit.color[2] = material.color[2] * blue;
   if (material.texture) {
-    sampleTexture(material.texture, u, v, hit.texel);
+    sampleMap(material.texture, hit.texel);
     hit.color[0] *= hit.texel[0];
     hit.color[1] *= hit.texel[1];
     hit.color[2] *= hit.texel[2];
@@ -369,7 +388,7 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
   hit.emission[1] = material.emission[1];
   hit.emission[2] = material.emission[2];
   if (material.emissiveTexture) {
-    sampleTexture(material.emissiveTexture, u, v, hit.mapTexel);
+    sampleMap(material.emissiveTexture, hit.mapTexel);
     hit.emission[0] *= hit.mapTexel[0];
     hit.emission[1] *= hit.mapTexel[1];
     hit.emission[2] *= hit.mapTexel[2];
@@ -379,15 +398,15 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
   hit.clearcoat = material.clearcoat;
   hit.transmission = material.transmission;
   if (material.clearcoatTexture) {
-    sampleTexture(material.clearcoatTexture, u, v, hit.mapTexel);
+    sampleMap(material.clearcoatTexture, hit.mapTexel);
     hit.clearcoat *= hit.mapTexel[0];
   }
   if (material.transmissionTexture) {
-    sampleTexture(material.transmissionTexture, u, v, hit.mapTexel);
+    sampleMap(material.transmissionTexture, hit.mapTexel);
     hit.transmission *= hit.mapTexel[0];
   }
   if (material.surfaceTexture) {
-    sampleTexture(material.surfaceTexture, u, v, hit.mapTexel);
+    sampleMap(material.surfaceTexture, hit.mapTexel);
     hit.roughness *= hit.mapTexel[1];
     hit.metallic *= hit.mapTexel[2];
   }
@@ -398,11 +417,13 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
     TANGENT_EDGES[3] = edgeTwoX;
     TANGENT_EDGES[4] = edgeTwoY;
     TANGENT_EDGES[5] = edgeTwoZ;
-    TANGENT_UV_DIFFERENCES[0] = uvs[second * 2] - uvs[first * 2];
-    TANGENT_UV_DIFFERENCES[1] = uvs[second * 2 + 1] - uvs[first * 2 + 1];
-    TANGENT_UV_DIFFERENCES[2] = uvs[third * 2] - uvs[first * 2];
-    TANGENT_UV_DIFFERENCES[3] = uvs[third * 2 + 1] - uvs[first * 2 + 1];
-    applyNormalMap(material, hit, u, v);
+    const normalSet = material.normalTexture.uvSet === 1 && uvs1 ? uvs1 : uvs;
+    TANGENT_UV_DIFFERENCES[0] = normalSet[second * 2] - normalSet[first * 2];
+    TANGENT_UV_DIFFERENCES[1] = normalSet[second * 2 + 1] - normalSet[first * 2 + 1];
+    TANGENT_UV_DIFFERENCES[2] = normalSet[third * 2] - normalSet[first * 2];
+    TANGENT_UV_DIFFERENCES[3] = normalSet[third * 2 + 1] - normalSet[first * 2 + 1];
+    const normalOffset = normalSet === uvs1 ? 2 : 0;
+    applyNormalMap(material, hit, HIT_UV[normalOffset], HIT_UV[normalOffset + 1]);
   }
   return alpha;
 }

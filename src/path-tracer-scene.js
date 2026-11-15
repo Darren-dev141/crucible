@@ -143,6 +143,8 @@ export function resolveTexture(descriptor) {
     colorLookup: descriptor.colorSpace === 'linear' ? null : SRGB_TO_LINEAR,
     // A map without a wrap mode repeats: the rasteriser and glTF both default to repeat.
     repeat: (descriptor.wrapS ?? REPEAT_WRAP) === REPEAT_WRAP,
+    // The UV set the map reads: 1 is TEXCOORD_1 (geometry.lightUvs), anything else is TEXCOORD_0 (geometry.uvs).
+    uvSet: descriptor.uvChannel === 1 ? 1 : 0,
   };
 }
 
@@ -207,6 +209,7 @@ function validateGeometry(part, geometry) {
     if (!(geometry.indices[slot] < vertexCount)) throw new RangeError(`${label} has an index past its last vertex.`);
   }
   if (geometry.uvs && geometry.uvs.length !== vertexCount * 2) throw new RangeError(`${label} needs one UV pair for every position.`);
+  if (geometry.lightUvs && geometry.lightUvs.length !== vertexCount * 2) throw new RangeError(`${label} needs one lightUvs pair (TEXCOORD_1) for every position.`);
   if (geometry.colors && geometry.colors.length !== vertexCount * 3) throw new RangeError(`${label} needs one colour for every position.`);
 }
 
@@ -229,11 +232,13 @@ function traceGeometry(part) {
   return boxProjectedGeometry(geometry, columnLengths(part.matrix ?? IDENTITY_MATRIX), boxMapScale, boxMapAxis);
 }
 
-function allocateWorld(vertexTotal, indexTotal) {
+function allocateWorld(vertexTotal, indexTotal, withSecondUvSet = false) {
   return {
     positions: new Float32Array(vertexTotal * 3),
     normals: new Float32Array(vertexTotal * 3),
     uvs: new Float32Array(vertexTotal * 2),
+    // The second UV set, only when a part has one; a part without it leaves zeros, the (0, 0) texel.
+    uvs1: withSecondUvSet ? new Float32Array(vertexTotal * 2) : null,
     colors: new Float32Array(vertexTotal * 3).fill(1),
     indices: new Uint32Array(indexTotal),
     triangleMaterial: new Uint32Array(indexTotal / 3),
@@ -265,6 +270,7 @@ function writeWorldPart(world, part, geometry, partIndex, vertexOffset, triangle
     world.normals[target + 2] = worldZ / length;
   }
   if (geometry.uvs) world.uvs.set(geometry.uvs, (vertexOffset) * 2);
+  if (geometry.lightUvs && world.uvs1) world.uvs1.set(geometry.lightUvs, vertexOffset * 2);
   if (geometry.colors) world.colors.set(geometry.colors, vertexOffset * 3);
   // A mirrored part keeps outward vertex normals, so its triangles swap their last two corners to keep the winding
   // (and the cross-product normal) outward too.
@@ -339,7 +345,7 @@ function flattenParts(parts, geometries = parts.map(traceGeometry), limits = res
   if (indexTotal / 3 > limits.unique) {
     throw new RangeError(flattenedLimitMessage(limits, indexTotal / 3));
   }
-  const world = allocateWorld(vertexTotal, indexTotal);
+  const world = allocateWorld(vertexTotal, indexTotal, geometries.some(geometry => geometry.lightUvs));
   let vertexOffset = 0;
   let triangleOffset = 0;
   parts.forEach((part, partIndex) => {
@@ -634,7 +640,7 @@ function requireInstancedCaps(parts, { uniqueGeometries, uniqueTriangles, totalT
 
 // A part that cannot share its geometry is moved into world space once and traced with an identity matrix.
 function bakeWorldGeometry(part, geometry) {
-  const world = allocateWorld(geometry.positions.length / 3, geometry.indices.length);
+  const world = allocateWorld(geometry.positions.length / 3, geometry.indices.length, Boolean(geometry.lightUvs));
   writeWorldPart(world, part, geometry, 0, 0, 0);
   delete world.triangleMaterial;
   return world;
