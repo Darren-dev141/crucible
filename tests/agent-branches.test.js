@@ -35,6 +35,15 @@ test('branch reads return copies, so a caller cannot edit stored recipes', () =>
   assert.equal(store.get('one').operations.length, 1);
 });
 
+test('a stored branch snapshot is a copy, so editing the forked recipe afterwards does not change the branch', () => {
+  const store = createBranchStore();
+  const recipe = { id: 'red', nodes: [{ id: 'a' }] };
+  store.fork('one', { ...forkInput('red'), recipe });
+  recipe.nodes.push({ id: 'b' });
+  recipe.id = 'edited';
+  assert.deepEqual(store.get('one').recipe, { id: 'red', nodes: [{ id: 'a' }] });
+});
+
 test('the branch count is capped, a name can be reused at the cap, and unknown names fail clearly', () => {
   const store = createBranchStore();
   for (let index = 0; index < BRANCH_LIMITS.maximumBranches; index++) store.fork(`b${index}`, forkInput(`r${index}`));

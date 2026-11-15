@@ -1,6 +1,7 @@
 import { createEnvironmentMap, createEnvironmentResources } from './environment.js';
 import { fullscreenVertex } from './gl-program.js';
-import { layerTextureSupport, registerShaderFeatureCode } from './shader-registry.js';
+import { layerTextureSupport, liquidProbeSupport, registerShaderFeatureCode } from './shader-registry.js';
+import { probeEnabledState, probeLookupGlsl, probeUniformsGlsl } from './probe-glsl.js';
 import { boundsCentre, traceProbes, worldBounds } from './probe-trace.js';
 
 // Reflection probes: the room around a point, traced once and prefiltered like an environment map, so a glossy part
@@ -72,26 +73,26 @@ export function applyReflectionProbes(parts, lighting, specs, options = {}) {
 }
 
 registerShaderFeatureCode('probe', Object.freeze({
-  declarations: 'uniform float probeEnabled;\nuniform vec4 probeFloor;\n',
+  declarations: probeUniformsGlsl + probeLookupGlsl,
   // Divides out the world-mode weight the surroundings get below, because a probe's radiance is already the real light.
   probeSurroundings: '    if (probeEnabled > 0.5) surroundings = environmentRadiance(reflected, roughness * environmentLevelMax) / max(mix(1.0, 0.5 * daylight, worldMode), 0.05);\n',
-  // probeEnabled is 2 when the probe knows its floor: a ray heading down is looked up toward where it meets that floor,
-  // seen from the probe, as a box-projected cube map does, because the probe sits at the part's centre and not at the shaded point.
-  probeReflection: [
-    '  if (probeEnabled > 1.5 && reflected.y < -0.01 && worldPosition.y > probeFloor.w) {',
-    '    reflected = normalize(worldPosition + reflected * ((probeFloor.w - worldPosition.y) / reflected.y) - probeFloor.xyz);',
-    '  }',
-    '',
-  ].join('\n'),
+  probeReflection: '  reflected = probeSampleDirection(reflected, worldPosition);\n',
 }));
 
 const rendererStates = new WeakMap();
+const probeResourceCaches = new WeakMap();
+
+/** The prefiltered textures a renderer holds for its probes, by probe data. Exported so a test can stand in for the GPU. */
+export function probeResourcesOf(renderer) {
+  if (!probeResourceCaches.has(renderer)) probeResourceCaches.set(renderer, new Map());
+  return probeResourceCaches.get(renderer);
+}
 
 // Adding a feature (a render pass asks for its own) links a new program, whose uniforms sit at new locations and start at their
 // defaults, so the locations are looked up again for each program. A location of another program makes the next uniform call fail.
 function stateOf(renderer) {
   if (!rendererStates.has(renderer)) {
-    rendererStates.set(renderer, { resources: new Map(), program: null, enabledLocation: null, floorLocation: null, bound: false });
+    rendererStates.set(renderer, { resources: probeResourcesOf(renderer), program: null, enabledLocation: null, floorLocation: null, bound: false });
   }
   const state = rendererStates.get(renderer);
   if (state.program !== renderer.program) {
@@ -156,23 +157,64 @@ function bindProbe(renderer, mapState) {
     context.uniform1f(state.enabledLocation, 0);
     return;
   }
+  state.bound = true;
+  bindProbeSpecular(renderer, state, probeMap, renderer.uniforms);
+  if (globalMap && renderer.environmentResources) {
+    // The environment's irradiance still lights the diffuse term, and the intensity uniform is now 1.
+    context.uniform3fv(renderer.uniforms['environmentIrradiance[0]'], renderer.environmentResources.irradiance.map(value => value * globalMap.intensity));
+  }
+  if (probeMap.parallax) context.uniform4fv(state.floorLocation, probeMap.parallax);
+  context.uniform1f(state.enabledLocation, probeEnabledState(probeMap));
+}
+
+// Prefilters the probe once and points the environment sampler and its uniforms at it, in whichever program `uniforms` belongs to.
+function bindProbeSpecular(renderer, state, probeMap, uniforms) {
   if (!state.resources.has(probeMap.data)) {
     state.resources.set(probeMap.data, prefilterProbe(renderer, probeMap));
   }
   const resources = state.resources.get(probeMap.data);
-  const uniforms = renderer.uniforms;
-  state.bound = true;
+  const context = renderer.context;
   renderer.bindEnvironmentTextures(resources.specularTexture, renderer.environmentResources?.brdfTexture ?? renderer.whiteTexture);
   context.uniform1f(uniforms.environmentIntensity, 1);
   context.uniform2f(uniforms.environmentRotation, Math.cos(probeMap.rotation), Math.sin(probeMap.rotation));
   context.uniform1f(uniforms.environmentLevelMax, resources.levelCount - 1);
-  if (globalMap && renderer.environmentResources) {
-    // The environment's irradiance still lights the diffuse term, and the intensity uniform is now 1.
-    context.uniform3fv(uniforms['environmentIrradiance[0]'], renderer.environmentResources.irradiance.map(value => value * globalMap.intensity));
-  }
-  if (probeMap.parallax) context.uniform4fv(state.floorLocation, probeMap.parallax);
-  context.uniform1f(state.enabledLocation, probeMap.parallax ? 2 : 1);
 }
+
+// The liquid pass draws glass and water with its own program: a batch with a probe reflects that room, and the next batch
+// (and the lit program after the pass) gets the global environment back.
+const renderersWithLiquidProbe = new WeakSet();
+
+function restoreLiquidEnvironment(renderer, uniforms) {
+  if (!renderersWithLiquidProbe.delete(renderer)) {
+    return;
+  }
+  const globalMap = renderer.activeMap;
+  renderer.activateEnvironment(globalMap);
+  renderer.applyEnvironmentUniforms(globalMap, uniforms);
+  renderer.context.uniform1f(uniforms.probeEnabled, 0);
+}
+
+liquidProbeSupport.bind = (renderer, uniforms, batch) => {
+  if (!uniforms.probeEnabled) {
+    return;
+  }
+  const probeMap = batch.mapState?.[MAP_STATE_PROBE];
+  if (!probeMap) {
+    restoreLiquidEnvironment(renderer, uniforms);
+    return;
+  }
+  const context = renderer.context;
+  bindProbeSpecular(renderer, stateOf(renderer), probeMap, uniforms);
+  if (probeMap.parallax) context.uniform4fv(uniforms.probeFloor, probeMap.parallax);
+  context.uniform1f(uniforms.probeEnabled, probeEnabledState(probeMap));
+  renderersWithLiquidProbe.add(renderer);
+};
+
+liquidProbeSupport.finish = (renderer, uniforms) => {
+  if (uniforms.probeEnabled) {
+    restoreLiquidEnvironment(renderer, uniforms);
+  }
+};
 
 const previousBind = layerTextureSupport.bind;
 layerTextureSupport.bind = (renderer, mapState, layerState, batch) => {

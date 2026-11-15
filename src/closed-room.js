@@ -9,6 +9,11 @@ export const CLOSED_ROOM_SHARE = 0.9;
 export const CLOSED_ROOM_MAXIMUM_TRIANGLES = 150_000;
 const PARALLEL_EPSILON = 1e-9;
 
+/** The world matrix of each part, keyed by the part itself: a glTF file can hold many parts with one name. */
+export function partMatrixLookup(parts) {
+  return new Map(parts.map(part => [part, part.matrix]));
+}
+
 export function worldTriangles(parts, worldMatrices) {
   let triangleCount = 0;
   for (const part of parts) {
@@ -23,7 +28,7 @@ export function worldTriangles(parts, worldMatrices) {
   const partBounds = [];
   let write = 0;
   for (const part of parts) {
-    const matrix = worldMatrices.get(part.name);
+    const matrix = worldMatrices.get(part) ?? worldMatrices.get(part.name);
     const { positions, indices } = part.geometry;
     const partMinimum = [Infinity, Infinity, Infinity];
     const partMaximum = [-Infinity, -Infinity, -Infinity];
@@ -123,7 +128,7 @@ export function hitsFrontFace(corners, offset, origin, direction) {
 
 /**
  * The share of rays from the middle of the parts' bounds (or the first nearby point outside every part) that hit a part's
- * inner face, or null when the scene is empty, has more than CLOSED_ROOM_MAXIMUM_TRIANGLES triangles or has no free origin. `worldMatrices` maps a part's name to its world matrix.
+ * inner face, or null when the scene is empty, has more than CLOSED_ROOM_MAXIMUM_TRIANGLES triangles or has no free origin. `worldMatrices` maps each part (or its name) to its world matrix.
  */
 export function closedRoomShare(parts, worldMatrices) {
   const triangles = worldTriangles(parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode)), worldMatrices);
@@ -157,7 +162,7 @@ export const SKY_OPENNESS_RAYS = 32;
  * spiral, so the same scene gives the same share.
  */
 export function skyOpenness(parts, point) {
-  const worldMatrices = new Map(parts.map(part => [part.name, part.matrix]));
+  const worldMatrices = partMatrixLookup(parts);
   const triangles = worldTriangles(parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode)), worldMatrices);
   if (!triangles) {
     return null;
@@ -197,7 +202,7 @@ export function skyGridSize(minimum, maximum) {
  * centres, so the same scene gives the same bytes. `createSkyVisibility` (fog-sky-visibility.js) uploads it as a texture.
  */
 export function skyVisibilityGrid(parts, minimum, maximum) {
-  const worldMatrices = new Map(parts.map(part => [part.name, part.matrix]));
+  const worldMatrices = partMatrixLookup(parts);
   const triangles = worldTriangles(parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode)), worldMatrices);
   if (!triangles) {
     return null;

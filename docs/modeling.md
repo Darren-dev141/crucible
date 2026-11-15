@@ -87,7 +87,7 @@ in `splines`, never both. A spline is `{ points | shape, closed, kind, weights, 
   recursion written out from its definition.
 - `shape` replaces `points` with a primitive in the XY plane, and sets `closed` and `kind` itself:
   - `{ type: 'arc', radius = 1, startAngle = 0, sweep = 3.14159, segments = 8 }`: a Bezier arc, exact to about 1e-7 of the radius;
-    a sweep of 2 pi closes it. Angles are radians; circle segments are arcs.
+    a sweep of 2 pi closes it. Each segment spans at most half a turn (pi), so a full circle needs `segments` of 2 or more. Angles are radians; circle segments are arcs.
   - `{ type: 'spiral', rotations = 2, startRadius = 1, endRadius = 1, height = 2, pointsPerRotation = 12, reverse }`: a helix
     along +Z, smooth through its points (a spiral staircase rail is `height` over `rotations`).
   - `{ type: 'star', points = 5, innerRadius = 0.5, outerRadius = 1, innerTwist = 0 }`: a closed poly spline of `2 * points` vertices.

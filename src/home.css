@@ -195,7 +195,7 @@ td, th { text-align:left; padding:12px; border-bottom:0; vertical-align:top; }
   body:has(.navigation) { --window:#fff; --bg:#f7f7f8; --surface:#f1f1f1; --text:#1f1f1f; --muted:#555; --border:#e5e5e5; --focus:#576b99; color-scheme:light; color:var(--text); background:var(--window); }
   body:has(.navigation) { --dither:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Cpath fill='black' fill-opacity='.04' d='M0 0h1v1H0zM4 4h1v1H4zM2 6h1v1H2zM6 2h1v1H6z'/%3E%3C/svg%3E"); }
   .brand, .brand span { color:var(--text); }
-  .brand .brand-mark { filter:invert(1); }
+  body:has(.navigation) .brand .brand-mark { filter:invert(1); content:url("/brand/crucible-mark.svg"); }
   nav a:hover, nav a[aria-current] { background:#17171708; }
   .release-feedback p, .download > span { color:var(--muted); }
 }

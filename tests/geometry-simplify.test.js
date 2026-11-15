@@ -188,3 +188,8 @@ test('a dense scene gives levels to big parts that can take them, sharing them b
 test('addLodsToDenseParts says what to pass when the canvas size is missing', () => {
   assert.throws(() => addLodsToDenseParts([surfacePart('ball', sphere(8, 8))], {}), /canvas width times its height/);
 });
+
+test('addLodsToDenseParts rejects bad ratios on a sparse scene too', () => {
+  const parts = [surfacePart('ball', sphere(8, 8))];
+  assert.throws(() => addLodsToDenseParts(parts, { pixels: 1e9, ratios: [2] }), /ratios must be strictly decreasing/);
+});

@@ -48,7 +48,19 @@ export function terrainVertexEstimate(value) {
   if (value.holes !== undefined && (!Array.isArray(value.holes) || value.holes.length > TERRAIN_LIMITS.maximumHoles)) {
     throw invalidField('terrain.holes', value.holes, `a list of at most ${TERRAIN_LIMITS.maximumHoles} circles, such as [{ "center": [0, 0], "radius": 2 }]`);
   }
+  value.holes?.forEach(checkHole);
   return (resolution + 1) * (resolution + 1);
+}
+
+function checkHole(hole, index) {
+  const center = hole?.center;
+  const validCenter = Array.isArray(center) && center.length === 2 && center.every(Number.isFinite);
+  if (!validCenter) {
+    throw invalidField(`terrain.holes[${index}].center`, center, 'a position [x, z] in metres, such as [0, 0]');
+  }
+  if (!Number.isFinite(hole.radius) || hole.radius <= 0) {
+    throw invalidField(`terrain.holes[${index}].radius`, hole.radius, 'a positive number of metres, such as 2');
+  }
 }
 
 /** The terrain addon object of a terrain record: render parts plus heightAt, isHole and bounds. Vegetation scatters over the same ground. */

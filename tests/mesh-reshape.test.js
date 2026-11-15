@@ -291,3 +291,10 @@ test('circularize validates its fields and its loop', () => {
   assert.throws(() => run(cube(), [{ op: 'circularize', verts: { all: true } }]), /selected neighbours/);
   assert.throws(() => run(cube(), [{ op: 'circularize', verts: { vertices: [0, 1] } }]), /selected neighbours/);
 });
+
+test('unsubdivide hands each coarse face the tags of the quads it came from', () => {
+  const tagged = cube();
+  const subdivided = run(tagged, [{ op: 'subdivide', levels: 1 }]).mesh;
+  const { mesh } = run(subdivided, [{ op: 'unsubdivide' }]);
+  assert.deepEqual(tagCounts(mesh), tagCounts(tagged));
+});

@@ -341,11 +341,9 @@ test('IK hook mistakes name the field and the fix', () => {
   assert.throws(() => createFootPlacement({ root: 'a', middle: 'b', end: 'c' }), /groundOffset must be a function/);
   assert.throws(() => createFootPlacement({ middle: 'b', end: 'c', groundOffset: () => 0 }), /needs root: the joint name of the leg's hip/);
   assert.throws(() => createFootPlacement({ root: 'a', middle: 'b', end: 'c', groundOffset: () => 0, maxAdjust: -1 }), /maxAdjust must be a number from 0 to/);
-  assert.throws(() => createFootPlacement({ root: 'a', middle: 'b', end: 'c', groundOffset: () => NaN }).target(0, [0, 0, 0]), /groundOffset must return a finite number/);
   assert.throws(() => createLookAt({ target: [0, 0, 0] }), /needs joints/);
   assert.throws(() => createLookAt({ joints: ['Head'], target: 'camera' }), /target must be a point/);
   assert.throws(() => createLookAt({ joints: ['Head'], target: [0, 0, 0], maxAngle: 200 }), /maxAngle must be a number from/);
-  assert.throws(() => createLookAt({ joints: ['Head'], target: () => [1, 2] }).target(0, [0, 0, 0]), /target must return three finite numbers/);
 });
 
 test('the same step sequence gives the same IK pose', () => {

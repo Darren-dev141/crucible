@@ -4,7 +4,7 @@ import { MAX_RESAMPLE_COUNT, requireFiniteInRange } from './modeling-limits.js';
 // at equal arc length with the direction of travel at each one. Both are deterministic and bounded.
 
 export const MAX_CURVE_POINTS = 256;
-export const MAX_FILLET_ARC_SEGMENTS = 16;
+export const MAX_FILLET_ARC_SEGMENTS = 64;
 export const MAX_FILLETED_POINTS = 4096;
 export { MAX_RESAMPLE_COUNT };
 export const MAX_FILLET_RADIUS = 1e6;
@@ -111,6 +111,7 @@ function filletCorner(previous, corner, next, radius, arcSegments) {
  */
 export function filletCurve(points, radius, arcSegments, closed = false) {
   requireFiniteInRange('filletCurve', 'radius', radius, 1e-9, MAX_FILLET_RADIUS);
+  requireFiniteInRange('filletCurve', 'arcSegments', arcSegments, 1, MAX_FILLET_ARC_SEGMENTS, true);
   const result = [];
   const count = points.length;
   for (let index = 0; index < count; index++) {

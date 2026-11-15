@@ -96,7 +96,7 @@ function coarseFaceAround(mesh, facePoint, faceLists, roles) {
   } while (quad && quad !== quads[0] && polygon.length <= quads.length);
   if (quad !== quads[0] || polygon.length !== quads.length) return { error: `the quads around vertex ${facePoint} do not close into one ring` };
   if (polygon.length < 3 || new Set(polygon).size !== polygon.length) return { error: `vertex ${facePoint} would make a coarse face of fewer than 3 distinct vertices` };
-  return { polygon, quadCount: quads.length };
+  return { polygon, sourceFace: quads[0].face, quadCount: quads.length };
 }
 
 function tryRoles(mesh, piece, edgeClass, seedRole, faceLists, color) {
@@ -113,7 +113,7 @@ function tryRoles(mesh, piece, edgeClass, seedRole, faceLists, color) {
     if (roles[vertex] !== FACE_POINT) continue;
     const outcome = coarseFaceAround(mesh, vertex, faceLists, roles);
     if (outcome.error) return outcome;
-    polygons.push(outcome.polygon);
+    polygons.push({ vertices: outcome.polygon, sourceFace: outcome.sourceFace });
     quadsCovered += outcome.quadCount;
   }
   const quadsInPiece = new Set(piece.flatMap(vertex => faceLists[vertex])).size;
@@ -136,7 +136,8 @@ function coarsePolygonsOfPiece(mesh, piece, faceLists, color) {
 
 /**
  * Reverse one Catmull-Clark level. Needs a mesh made only of quads that came from one subdivision (every coarse face
- * becomes one face, every original vertex survives at its place). Throws a RangeError that names the quad that breaks it.
+ * becomes one face, every original vertex survives at its place). Each coarse face keeps the tags and face attributes
+ * of the quads it came from. Throws a RangeError that names the quad that breaks it.
  */
 export function unsubdivideMesh(mesh) {
   const triangleOrPolygon = Array.from({ length: mesh.faceCount }, (_, face) => face)
@@ -156,9 +157,10 @@ export function unsubdivideMesh(mesh) {
     if (polygons.error) throw new RangeError(`The mesh is not one level of Catmull-Clark subdivision: ${polygons.error}. Unsubdivide only reverses that exact pattern.`);
     allPolygons.push(...polygons);
   }
-  const survivors = [...new Set(allPolygons.flat())].sort((first, second) => first - second);
+  const survivors = [...new Set(allPolygons.flatMap(polygon => polygon.vertices))].sort((first, second) => first - second);
   const builder = new MeshBuilder(mesh);
   const remap = new Map(survivors.map(vertex => [vertex, builder.addVertex(mesh.positions[vertex * 3], mesh.positions[vertex * 3 + 1], mesh.positions[vertex * 3 + 2])]));
-  for (const polygon of allPolygons) builder.addFace(polygon.map(vertex => remap.get(vertex)));
+  // The quads around one face point all came from one coarse face, so any of them carries that face's tags and attributes.
+  for (const polygon of allPolygons) builder.addFace(polygon.vertices.map(vertex => remap.get(vertex)), { sourceFace: polygon.sourceFace });
   return { mesh: builder.build(), coarseFaces: allPolygons.length, removedVertices: mesh.vertexCount - survivors.length };
 }

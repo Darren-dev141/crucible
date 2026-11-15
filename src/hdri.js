@@ -63,6 +63,32 @@ function readRunLengthScanline(bytes, startPosition, width, scanline) {
   return position;
 }
 
+// Flat scanlines may use the pre-1991 run form: a pixel of 1,1,1 repeats the previous pixel by its exponent byte,
+// and each further repeat in a row shifts the count up by 8 bits.
+function readFlatScanline(bytes, startPosition, width, scanline) {
+  let position = startPosition;
+  let repeatShift = 0;
+  let column = 0;
+  while (column < width) {
+    if (position + 4 > bytes.length) throw new Error('Radiance HDR pixel data is truncated.');
+    const isRepeat = bytes[position] === 1 && bytes[position + 1] === 1 && bytes[position + 2] === 1;
+    if (!isRepeat) {
+      scanline.set(bytes.subarray(position, position + 4), column * 4);
+      position += 4;
+      column++;
+      repeatShift = 0;
+      continue;
+    }
+    const length = bytes[position + 3] << repeatShift;
+    if (column === 0 || length === 0 || column + length > width) throw new Error('Radiance HDR repeat run is invalid.');
+    for (let index = 0; index < length; index++) scanline.copyWithin((column + index) * 4, (column - 1) * 4, column * 4);
+    position += 4;
+    column += length;
+    repeatShift += 8;
+  }
+  return position;
+}
+
 function startsRunLengthScanline(bytes, position, width) {
   return width >= MINIMUM_RUN_LENGTH_WIDTH && width <= MAXIMUM_RUN_LENGTH_WIDTH
     && bytes[position] === 2 && bytes[position + 1] === 2
@@ -81,9 +107,7 @@ function* decodeRadianceRows(buffer) {
     if (startsRunLengthScanline(bytes, position, width)) {
       position = readRunLengthScanline(bytes, position, width, scanline);
     } else {
-      if (position + width * 4 > bytes.length) throw new Error('Radiance HDR pixel data is truncated.');
-      scanline.set(bytes.subarray(position, position + width * 4));
-      position += width * 4;
+      position = readFlatScanline(bytes, position, width, scanline);
     }
     for (let column = 0; column < width; column++) {
       const exponent = scanline[column * 4 + 3];

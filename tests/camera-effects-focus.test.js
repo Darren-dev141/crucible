@@ -30,3 +30,8 @@ test('a non-positive fStop throws and says what to pass', () => {
 test('a non-positive focusDistance throws', () => {
   assert.throws(() => effectsWithFStop(effects, { ...camera, focusDistance: -1 }), /Camera focusDistance must be a positive finite number/);
 });
+
+test('a camera without a target focuses at the distance to the renderer default target', () => {
+  const result = effectsWithFStop(effects, { eye: [0, 1.2, 8], fStop: 2.8 });
+  assert.equal(result.depthOfField.focusDistance, 8);
+});
