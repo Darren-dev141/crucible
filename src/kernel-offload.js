@@ -85,14 +85,15 @@ function mixText(hasher, text) {
 }
 
 function mixNamedValue(hasher, key, value) {
-  mixText(hasher, `${key}=`);
+  mixText(hasher, `${key.length}:${key}=`);
   return mixValue(hasher, value);
 }
 
 /** Feeds a value into the hasher; returns false for anything that is not plain, cloneable data. */
 function mixValue(hasher, value) {
   if (value === null || value === undefined || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
-    mixText(hasher, `${typeof value}:${String(value)};`);
+    const text = String(value);
+    mixText(hasher, `${typeof value}:${text.length}:${text};`);
     return true;
   }
   if (ArrayBuffer.isView(value)) {
@@ -117,11 +118,23 @@ function mixValue(hasher, value) {
   return false;
 }
 
+// A self-referencing object overflows the stack while hashing; it is not plain data for this purpose, so it runs inline.
+function mixesAsPlainData(hasher, args) {
+  try {
+    return mixValue(hasher, args);
+  } catch (error) {
+    if (error instanceof RangeError) {
+      return false;
+    }
+    throw error;
+  }
+}
+
 /** A key that identifies a kernel call by its name and the bytes of its input, or null when the input is not plain data. */
 export function kernelKey(name, args) {
   const hasher = createHasher();
   mixText(hasher, `${name}:`);
-  if (!mixValue(hasher, args)) {
+  if (!mixesAsPlainData(hasher, args)) {
     return null;
   }
   return `${name}:${hasher.length}:${hasher.states.map(state => state.toString(16)).join('')}`;
@@ -188,6 +201,10 @@ function requestKernel(worker, job, signal) {
     worker.onerror = event => {
       cleanUp();
       reject(new Error(`Kernel worker failed: ${event.message}`));
+    };
+    worker.onmessageerror = () => {
+      cleanUp();
+      reject(new Error('Kernel worker answered with data the page could not read.'));
     };
     try {
       worker.postMessage({ name: job.name, args: job.args });
