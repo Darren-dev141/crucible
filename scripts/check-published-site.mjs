@@ -41,7 +41,9 @@ function learnPages(root) {
 
 // The path a link asks the site for, or null for a link that leaves the site.
 function sitePathOf(link) {
-  if (link.startsWith(SITE_ORIGIN)) return link.slice(SITE_ORIGIN.length) || '/';
+  if (link === SITE_ORIGIN) return '/';
+  // The trailing slash keeps https://crucible.codepawl.com.other.host from counting as this site.
+  if (link.startsWith(`${SITE_ORIGIN}/`)) return link.slice(SITE_ORIGIN.length);
   if (externalPattern.test(link)) return null;
   return link;
 }
@@ -66,7 +68,7 @@ export function findUnpublishedLinks(root) {
       if (sitePath === null) continue;
       // A relative link is read from the served location of the file, which is the site root.
       const served = sitePath.startsWith('/') ? sitePath : posix.normalize(`/${sitePath}`);
-      if (served.startsWith('/..') || !siteServes(root, served)) missing.push(`${relative(root, file)} -> ${link}`);
+      if (!siteServes(root, served)) missing.push(`${relative(root, file)} -> ${link}`);
     }
   }
   return missing;
@@ -95,5 +97,8 @@ if (isMain) {
   const problems = [...findUnpublishedLinks(root), ...findMissingReleaseLinks(root)];
   console.log(`${problems.length} links to files or releases the site does not serve`);
   for (const problem of problems) console.log(problem);
+  if (problems.length > 0) {
+    console.log('Fix: add the guide to scripts/published-documents.mjs or link it on GitHub instead; for a release link use <version> and read it from release.json.');
+  }
   process.exitCode = problems.length === 0 ? 0 : 1;
 }

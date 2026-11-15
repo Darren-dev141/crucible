@@ -36,7 +36,7 @@ function withFixture(files, run) {
 }
 
 test('every guide that llms.txt links to by absolute URL is one the build publishes', () => {
-  const names = [...readText('public/llms.txt').matchAll(/https:\/\/crucible\.codepawl\.com\/([\w-]+\.md)/g)].map(match => match[1]);
+  const names = [...readText('public/llms.txt').matchAll(/(?<![\w.\/-])https:\/\/crucible\.codepawl\.com\/([\w-]+\.md)(?![\w.\/-])/g)].map(match => match[1]);
   assert.ok(names.length > 10);
   assert.deepEqual([...new Set(names)].filter(name => !served(name)), []);
 });
@@ -67,6 +67,15 @@ test('the link check reports a link to a file the site does not serve and accept
     const problems = findUnpublishedLinks(folder);
     assert.equal(problems.length, 1, problems.join('\n'));
     assert.match(problems[0], /llms\.txt -> https:\/\/crucible\.codepawl\.com\/game\.md$/);
+  });
+});
+
+test('a link to a host that only starts with the site address leaves the site', () => {
+  withFixture({
+    'public/release.json': '{}',
+    'public/llms.txt': '[a](https://crucible.codepawl.com.other.host/missing.md) [b](https://crucible.codepawl.com)',
+  }, folder => {
+    assert.deepEqual(findUnpublishedLinks(folder), []);
   });
 });
 
