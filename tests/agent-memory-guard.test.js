@@ -50,11 +50,25 @@ test('the Node limit is unchanged and still enforced', () => {
   assert.equal(exceedsMemoryGuard({ nodeBytes: NODE_RSS_LIMIT_BYTES, browserHeapBytes: BROWSER_HEAP_LIMIT_BYTES }), false);
 });
 
-test('a native job gets 256 MiB plus 1 KiB a pixel on top of the Node limit, capped at 2 GiB', () => {
-  assert.equal(nativeNodeAllowanceBytes({ width: 960, height: 540 }), 256 * MEBIBYTE + 960 * 540 * 1024);
-  assert.equal(nativeNodeAllowanceBytes({ width: 1, height: 1 }), 256 * MEBIBYTE + 1024);
+test('a native job gets 640 MiB plus 1 KiB a pixel on top of the Node limit, capped at 2 GiB', () => {
+  assert.equal(nativeNodeAllowanceBytes({ width: 960, height: 540 }), 640 * MEBIBYTE + 960 * 540 * 1024);
+  assert.equal(nativeNodeAllowanceBytes({ width: 1, height: 1 }), 640 * MEBIBYTE + 1024);
   assert.equal(nativeNodeAllowanceBytes({ width: 7680, height: 4320 }), 2048 * MEBIBYTE);
   assert.throws(() => nativeNodeAllowanceBytes({ width: 0, height: 540 }), /positive integer width and height/);
+});
+
+// Peak Node RSS of native + OIDN video jobs of the demo room, 24 frames at 16 samples, RTX 3060, Windows (#1186).
+const MEASURED_NATIVE_PEAKS = [
+  { width: 960, height: 540, peakMebibytes: 1224 },
+  { width: 1280, height: 720, peakMebibytes: 1360 },
+  { width: 1920, height: 1080, peakMebibytes: 2149 },
+];
+
+test('every measured native + OIDN video job fits its limit with at least 15 percent to spare', () => {
+  for (const { width, height, peakMebibytes } of MEASURED_NATIVE_PEAKS) {
+    const limitMebibytes = (NODE_RSS_LIMIT_BYTES + nativeNodeAllowanceBytes({ width, height })) / MEBIBYTE;
+    assert.ok(limitMebibytes >= peakMebibytes * 1.15, `${width} x ${height}: limit ${limitMebibytes} MiB, measured peak ${peakMebibytes} MiB`);
+  }
 });
 
 test('a native 960 x 540 job at 800 MiB of Node RSS passes while the same RSS stops a non-native job', () => {
