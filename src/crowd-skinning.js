@@ -222,6 +222,7 @@ function measureCrowdBounds(rig, palette) {
 
 /** The two frames and the blend between them for a clip time: [firstTexel, secondTexel, blend], as the shader reads them. */
 export function crowdFrameBlend(palette, seconds, output = [0, 0, 0]) {
+  if (!Number.isFinite(seconds)) throw new RangeError(`crowdFrameBlend seconds must be a finite number, got ${seconds}. Pass the clip time in seconds.`);
   const lastFrame = palette.frameCount - 1;
   let position;
   if (palette.loop) {
