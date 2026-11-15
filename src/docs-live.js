@@ -3,6 +3,7 @@
 // next one. The iframe imports `crucible` through an import map whose entries are small modules that re-export the engine
 // this page already loaded, so the docs run the same build as the site and need no published package.
 import { highlightCode } from './code-highlight.js';
+import { frameControlScript, frameControlStyle } from './docs-live-controls.js';
 
 // Every addon the package exports, loaded only when an example imports it (crucible/addons/<name>).
 const addonLoaders = import.meta.glob([
@@ -182,7 +183,7 @@ function frameDocument(source, imports, exampleId, capture) {
   const importMap = JSON.stringify({ imports }).replace(/</g, '\\u003c');
   const code = source.replace(/<\/script/gi, '<\\/script');
   return `<!doctype html><html><head><meta charset="utf-8">
-<style>html,body{margin:0;height:100%;overflow:hidden;background:#101014}#scene{display:block;width:100%;height:100%}</style>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#101014}#scene{display:block;width:100%;height:100%}${frameControlStyle}</style>
 <script type="importmap">${importMap}</script>
 <script>
   const report = message => parent.postMessage({ docsLive: ${JSON.stringify(exampleId)}, ...message }, parent.location.origin);
@@ -190,6 +191,7 @@ function frameDocument(source, imports, exampleId, capture) {
   addEventListener('unhandledrejection', event => report({ error: String(event.reason?.message ?? event.reason) }));
   ${typedArrayAliases}
   ${consoleRelay}
+  ${frameControlScript}
   ${capture ? captureClock : ''}
 </script></head><body><canvas id="scene"></canvas>
 <script type="module">${code}</script>
