@@ -14,7 +14,7 @@ npm install @dimforge/rapier3d-compat@0.21.0
 Use a package-aware development server such as Vite to resolve the solver import.
 
 ```js
-import { createPhysicsScene, planPhysicsScene } from '../src/physics.js';
+import { createPhysicsScene, planPhysicsScene } from 'crucible/addons/physics';
 
 const definition = {
   gravity: [0, -9.81, 0],
@@ -435,10 +435,10 @@ The boat code is part of the buoyancy chunk, so a scene without floating bodies 
 
 ## Fracture and breakable glue
 
-`src/fracture.js` splits a closed convex part (a box, cylinder, sphere or any convex mesh of at most 2048 triangles) into Voronoi fragments and describes the glue that holds them together. A concave part is rejected with a message to split it into convex parts first.
+`crucible/addons/fracture` splits a closed convex part (a box, cylinder, sphere or any convex mesh of at most 2048 triangles) into Voronoi fragments and describes the glue that holds them together. A concave part is rejected with a message to split it into convex parts first.
 
 ```js
-import { fractureMesh, fragmentPhysics } from './src/fracture.js';
+import { fractureMesh, fragmentPhysics } from 'crucible/addons/fracture';
 const fracture = fractureMesh(wallGeometry, { seed: 7, cells: 24, impact: [1.2, 0.5, 0], impactRadius: 0.6 });
 const parts = fragmentPhysics(fracture, { translation: [0, 2, 0], strength: 20, density: 100 });
 // parts.bodies, parts.colliders and parts.joints go into a physics definition next to a ball and a floor.

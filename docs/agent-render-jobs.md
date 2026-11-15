@@ -202,7 +202,8 @@ The controller never modifies the source scene or its revision.
 ## API
 
 ```js
-import { createAgentRenderJobs } from '../scripts/agent-render-jobs.mjs';
+// scripts/agent-render-jobs.mjs in a checkout of the repository; the npm package does not ship it.
+const { createAgentRenderJobs } = await import(pathToRepositoryScript);
 
 const jobs = await createAgentRenderJobs({
   root: absoluteJobDirectory,

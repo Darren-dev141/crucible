@@ -45,17 +45,25 @@ The client sends `initialize`. The server answers with its name, version and ins
 
 ### 2. Read the limits
 
-`scene_capabilities` returns the recipe format, the geometry types, the limits and what is unsupported. The result is about 24 KB, so the agent calls it once per session. These are some of its fields:
+`scene_capabilities` with no topic returns a small index, about 1.6 KB: the recipe format, the schema version, the phase, the version it is available in, a line on how to ask for more, and the topic names. The agent reads the index once per session and then passes a `topic` for the detail it needs:
 
 ```json
 {
-  "scene": {
-    "format": "crucible.scene",
-    "schemaVersion": 1,
-    "geometryTypes": ["box","cylinder","sphere","torus","lathe","extrude","tube","curve","text","grid","terrain","mesh"],
-    "...": "..."
-  },
-  "sceneLimits": {
+  "format": "crucible.scene",
+  "schemaVersion": 1,
+  "phase": "idle",
+  "availableIn": "0.20.0",
+  "how": "Call scene_capabilities with topic set to a name below. ...",
+  "topics": {"scene": ["..."], "runtime": ["sceneLimits", "preview", "review", "assets", "packs", "jobs", "addons", "unsupported"], "schemas": ["..."]}
+}
+```
+
+`topic: 'sceneLimits'` holds the recipe limits, `topic: 'preview'` the preview budget (4 open scenes within 96 MiB, 1024 by 1024 pixels at most) and `topic: 'unsupported'` the list of things the server refuses, such as remote asset providers and arbitrary code execution:
+
+```json
+{
+  "topic": "sceneLimits",
+  "value": {
     "maxNodes": 4096,
     "maxDepth": 256,
     "maxGeometries": 256,
@@ -65,41 +73,7 @@ The client sends `initialize`. The server answers with its name, version and ins
     "maxOperations": 256,
     "maxCheckpoints": 16,
     "maxRecipeBytes": 1048576
-  },
-  "preview": {
-    "backend": "cpu",
-    "memoryBudgetMiB": 192,
-    "maximumWidth": 1024,
-    "maximumHeight": 1024,
-    "maximumImageBytes": 1048576,
-    "maximumActiveScenes": 4,
-    "maximumQueuedCalls": 16,
-    "evaluationTimeoutMs": 30000
-  },
-  "review": {
-    "minimumShots": 1,
-    "maximumShots": 4,
-    "minimumDimension": 64,
-    "maximumDimension": 480,
-    "defaultWidth": 384,
-    "defaultHeight": 384,
-    "labelHeight": 24,
-    "maximumLabelLength": 48,
-    "maximumGridWidth": 960,
-    "maximumGridHeight": 1008,
-    "maximumImageBytes": 1048576,
-    "maximumPendingFrames": 1,
-    "backend": "cpu",
-    "memoryBudgetMiB": 192,
-    "evaluationTimeoutMs": 30000,
-    "totalTimeoutMs": 30000,
-    "sourcePreserved": true,
-    "defaultMotionTime": null,
-    "defaultRendererTime": 0,
-    "branches": {"maximumBranches":8,"maximumNameLength":24,"maximumLabels":24}
-  },
-  "jobs": {"configured":true,"kinds":["image","stills","video"],"passes":["albedo","normal","emission","depth","objectId"],"...":"..."},
-  "unsupported": ["remote asset providers","arbitrary code execution","imported morph track authoring"]
+  }
 }
 ```
 

@@ -148,6 +148,10 @@
     "./addons/game-rules": "./build/game-rules.js",
     "./addons/game": "./build/game.js",
     "./addons/update-part-vertices": "./build/update-part-vertices.js",
+    "./addons/reflection-probes": "./build/reflection-probes.js",
+    "./addons/fracture": "./build/fracture.js",
+    "./addons/morph": "./build/morph.js",
+    "./addons/skinning": "./build/skinning.js",
     "./package.json": "./package.json"
   },
   "scripts": {
