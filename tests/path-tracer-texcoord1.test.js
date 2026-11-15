@@ -217,3 +217,27 @@ cookTest('the native packer reads TEXCOORD_1 of a flattened scene', () => {
 cookTest('the native packer reads TEXCOORD_1 of an instanced scene', () => {
   assert.equal(secondSetCornerCount(buildTraceScene(sharedGeometryParts(true), undefined, { instancing: true })), 6);
 });
+
+const SECOND_UV_SET_SAMPLER_BIT = 1 << 21;
+const TEXTURE_SAMPLER_WORD_INDEX = 3;
+
+// Counts the packed texture descriptors whose sampler word asks the native kernel to read uv1s.
+function mapsOnSecondUvSet(scene) {
+  const { textureDescriptors, textureCount } = cook.buildNativeInputV2(scene, NATIVE_CAMERA, NATIVE_OPTIONS);
+  const words = new Uint32Array(textureDescriptors.buffer.slice(textureDescriptors.byteOffset, textureDescriptors.byteOffset + textureDescriptors.byteLength));
+  const wordsPerDescriptor = words.length / textureCount;
+  let count = 0;
+  for (let offset = TEXTURE_SAMPLER_WORD_INDEX; offset < words.length; offset += wordsPerDescriptor) {
+    if (words[offset] & SECOND_UV_SET_SAMPLER_BIT) count += 1;
+  }
+  return count;
+}
+
+cookTest('only the TEXCOORD_1 map of a flattened scene selects the second UV set in the native input', () => {
+  assert.equal(mapsOnSecondUvSet(buildTraceScene([mixedPart(1)])), 1);
+  assert.equal(mapsOnSecondUvSet(buildTraceScene([mixedPart(0)])), 0);
+});
+
+cookTest('only the TEXCOORD_1 map of an instanced scene selects the second UV set in the native input', () => {
+  assert.equal(mapsOnSecondUvSet(buildTraceScene(sharedGeometryParts(true), undefined, { instancing: true })), 1);
+});
