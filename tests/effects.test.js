@@ -2,6 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EFFECT_PRESETS, resolveEffects } from '../src/effects.js';
 
+test('object motion blur rejects a value outside 0 to 1 instead of ignoring it', () => {
+  for (const objects of [-1, NaN, 'strong', 2]) {
+    assert.throws(() => resolveEffects({ motionBlur: { objects } }), /Motion blur objects must be between 0 and 1/);
+  }
+  assert.deepEqual(resolveEffects({ motionBlur: { objects: 0 } }).motionBlur, { shutter: 0 });
+  assert.equal(resolveEffects({ motionBlur: { objects: 0.5 } }).motionBlur.objects, 0.5);
+});
+
 test('neutral effects preserve the existing image by default', () => {
   assert.deepEqual(resolveEffects(), EFFECT_PRESETS.neutral);
 });

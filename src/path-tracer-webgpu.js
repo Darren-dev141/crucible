@@ -2,6 +2,7 @@ import { buildMegakernelSource, PATH_STATE_VECTORS, WAVEFRONT_SOURCE, WAVEFRONT_
 import { resolveLightSelection } from './path-tracer-light-tree.js';
 import { gpuTriangleCapacity, packAtlas, packEnvironment, packLightTree, packLights, packMaterials, packNodes, packSubsurface, packTriangles, sceneUsesSubsurface } from './path-tracer-gpu-pack.js';
 import { MAX_GPU_TRACE_TRIANGLES, MAX_TRACE_TRIANGLES } from './path-tracer-scene.js';
+import { assertWebGpuLocalVolumes, packWebGpuLocalVolumes } from './path-tracer-webgpu-local-volumes.js';
 
 // The WebGPU backend of the path tracer (issue #625): the same scene tables, camera, options and random numbers as the
 // WebGL2 backend (path-tracer-gpu.js) go in, the same buffers come out. The tracer is WGSL compute, so a page needs
@@ -82,10 +83,10 @@ async function getSession() {
 }
 
 /** The WGSL and entry points of a kernel variant; a variant is one of the two kernels, with the optional parts a scene needs. */
-function describeVariant({ kernel, hasVolume, hasSubsurface, texelBake, realtime }) {
+function describeVariant({ kernel, hasVolume, hasLocalVolumes, hasSubsurface, texelBake, realtime }) {
   if (kernel === 'wavefront') return { code: WAVEFRONT_SOURCE, entryPoints: WAVEFRONT_ENTRY_POINTS };
-  if (realtime) return { code: buildMegakernelSource({ hasVolume, hasSubsurface, realtime }), entryPoints: ['traceRealtime'] };
-  return { code: buildMegakernelSource({ hasVolume, hasSubsurface, texelBake }), entryPoints: [texelBake ? 'bakeTexels' : 'main'] };
+  if (realtime) return { code: buildMegakernelSource({ hasVolume, hasLocalVolumes, hasSubsurface, realtime }), entryPoints: ['traceRealtime'] };
+  return { code: buildMegakernelSource({ hasVolume, hasLocalVolumes, hasSubsurface, texelBake }), entryPoints: [texelBake ? 'bakeTexels' : 'main'] };
 }
 
 async function compileKernel(current, variant) {
@@ -102,14 +103,14 @@ async function compileKernel(current, variant) {
 }
 
 async function getKernel(current, variant) {
-  const key = [variant.kernel, variant.hasVolume, variant.hasSubsurface, variant.texelBake, Boolean(variant.realtime)].join(':');
+  const key = [variant.kernel, variant.hasVolume, variant.hasLocalVolumes, variant.hasSubsurface, variant.texelBake, Boolean(variant.realtime)].join(':');
   if (!current.kernels.has(key)) current.kernels.set(key, compileKernel(current, variant));
   return current.kernels.get(key);
 }
 
 /** The optional parts the scene needs, as the kernel variant flags. */
 function sceneFeatures(scene) {
-  return { hasVolume: Boolean(scene.volume), hasSubsurface: sceneUsesSubsurface(scene.materials), texelBake: false };
+  return { hasVolume: Boolean(scene.volume), hasLocalVolumes: Boolean(scene.localVolumes), hasSubsurface: sceneUsesSubsurface(scene.materials), texelBake: false };
 }
 
 function createStorageBuffer(device, data, label) {
@@ -152,13 +153,19 @@ export function uploadScene(device, scene, requestedLightSelection = 'uniform') 
   const materialsWithSubsurface = new Float32Array(materialData.length + subsurfaceData.length);
   materialsWithSubsurface.set(materialData);
   materialsWithSubsurface.set(subsurfaceData, materialData.length);
+  // The local volume table follows the subsurface table in the same buffer; its first vector index goes to params.seedAndAtlas.w.
+  const localVolumeOffset = materialsWithSubsurface.length / 4;
+  const localVolumeData = scene.localVolumes ? packWebGpuLocalVolumes(scene.localVolumes, scene.environment) : new Float32Array(0);
+  const materialsWithTables = new Float32Array(materialsWithSubsurface.length + localVolumeData.length);
+  materialsWithTables.set(materialsWithSubsurface);
+  materialsWithTables.set(localVolumeData, materialsWithSubsurface.length);
   const triangleCount = scene.indices.length / 3;
   const largeScene = triangleCount > MAX_TRACE_TRIANGLES;
   if (largeScene) device.pushErrorScope('out-of-memory');
   const buffers = [
     createStorageBuffer(device, packNodes(scene.bvh).data, 'bvh nodes'),
     createStorageBuffer(device, packTriangles(scene, { secondUvSet: true }).data, 'triangles'),
-    createStorageBuffer(device, materialsWithSubsurface, 'materials'),
+    createStorageBuffer(device, materialsWithTables, 'materials'),
     createStorageBuffer(device, lightsWithTree, 'lights'),
     createStorageBuffer(device, atlasWords(atlas), 'texture atlas'),
     createStorageBuffer(device, environment?.colors ?? new Float32Array(4), 'environment colors'),
@@ -168,7 +175,7 @@ export function uploadScene(device, scene, requestedLightSelection = 'uniform') 
   const allocationCheck = largeScene ? device.popErrorScope().then((error) => {
     if (error) throw new Error(`The GPU ran out of memory while allocating the scene buffers for ${triangleCount} triangles. Simplify or drop meshes to stay near ${MAX_TRACE_TRIANGLES} triangles, or render the frame with the native Cook backend.`);
   }) : Promise.resolve();
-  return { allocationCheck, buffers, lightCount: lights.count, lightTreeBase, atlasWidth: atlas.width, subsurfaceOffset };
+  return { allocationCheck, buffers, lightCount: lights.count, lightTreeBase, atlasWidth: atlas.width, subsurfaceOffset, localVolumeOffset };
 }
 
 /** The words of one uniform block: the 12 vectors of the megakernel parameters, then the tile and shadow slot words. */
@@ -190,7 +197,7 @@ function createParameterTemplate(scene, camera, options, uploaded, emitterCount)
   floats.set([camera.halfWidth, camera.halfHeight, options.fireflyClamp, uploaded.lightTreeBase], 32);
   integers.set([options.width, options.height, options.bounces, uploaded.lightCount], 36);
   integers.set([emitterCount, sun ? 1 : 0, environment ? 1 : 0, 0], 40);
-  unsigned.set([options.seed >>> 0, uploaded.atlasWidth, uploaded.subsurfaceOffset, 0], 44);
+  unsigned.set([options.seed >>> 0, uploaded.atlasWidth, uploaded.subsurfaceOffset, uploaded.localVolumeOffset], 44);
   const { volume } = scene;
   floats.set([...(volume?.minimum ?? [0, 0, 0]), volume?.density ?? 0], 56);
   floats.set([...(volume?.maximum ?? [0, 0, 0]), volume?.anisotropy ?? 0], 60);
@@ -288,9 +295,10 @@ export async function traceOnWebGpu(scene, camera, options, shouldStop) {
   const kernel = options.kernel ?? DEFAULT_WEBGPU_KERNEL;
   if (!WEBGPU_KERNELS.includes(kernel)) throw new RangeError(`The WebGPU path tracer kernel must be one of ${WEBGPU_KERNELS.join(', ')}.`);
   const features = sceneFeatures(scene);
-  if (kernel === 'wavefront' && (features.hasVolume || features.hasSubsurface)) {
-    throw new RangeError('The WebGPU wavefront kernel does not trace volume fog or subsurface scattering. Use the megakernel, the default.');
+  if (kernel === 'wavefront' && (features.hasVolume || features.hasLocalVolumes || features.hasSubsurface)) {
+    throw new RangeError('The WebGPU wavefront kernel does not trace volume fog, local volumes or subsurface scattering. Use the megakernel, the default.');
   }
+  assertWebGpuLocalVolumes(scene);
   const current = await getSession();
   const { device } = current;
   const { pipelines, compileSeconds } = await getKernel(current, { kernel, ...features });

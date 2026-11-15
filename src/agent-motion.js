@@ -565,12 +565,16 @@ export function normalizeAgentMotion(input, recipe) {
     if (track.property === 'visible' && interpolation !== 'STEP') {
       throw invalidField(`motion.tracks[${index}].interpolation`, interpolation, 'STEP, or the field left out, since a visible track is 1 (shown) or 0 (hidden) and cannot blend between them');
     }
-    denseArray(track.keyframes, 64, 'Motion keyframes');
+    denseArray(track.keyframes, 64, `motion.tracks[${index}].keyframes`);
+    if (!track.keyframes.length) throw invalidField(`motion.tracks[${index}].keyframes`, [], 'one or more keyframes');
     keyframeCount += track.keyframes.length;
     if (keyframeCount > 2048) {
       throw invalidField(`motion.tracks[${index}].keyframes`, track.keyframes.length, `fewer keyframes, since a motion holds at most 2048 in total and this track reaches ${keyframeCount}`);
     }
     const keyframes = track.keyframes.map((keyframe, keyframeIndex) => withFieldPrefix(`motion.tracks[${index}].keyframes[${keyframeIndex}]`, () => normalizedKeyframe(keyframe, track, duration, interpolation)));
+    const times = keyframes.map(keyframe => keyframe.time);
+    const repeated = times.findIndex((time, position) => times.indexOf(time) !== position);
+    if (repeated >= 0) throw invalidField(`motion.tracks[${index}].keyframes[${repeated}].time`, times[repeated], 'distinct times');
     const clip = createAnimationClip({
       duration, loop,
       tracks: [{ target: String(index), property: coreProperty(track), interpolation, keyframes, extrapolation: track.extrapolation, modifiers: track.modifiers }],

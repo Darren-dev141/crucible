@@ -152,7 +152,7 @@ The pass is 8-bit like the others, works with `png16` and `exr` and packs into a
 
 The lighting passes hold linear values above 1, so write them as `exr` (a `png` or `png16` file clamps at 1). They add back to the lit image: `diffuse + glossy + emission * exposure` is the radiance before fog, and with an open world the lit image is that radiance mixed toward the fog colour by `mist`, then tone mapped. `tests/lighting-passes.test.js` checks the sum against the beauty frame (mean difference under 1.5 display levels, under 2% of samples off by more than 4). Not covered: unlit parts, the editor floor, parts that a probe or irradiance grid changes after the sky term, and anything the lit image adds after the shader (bloom, grading, depth of field).
 
-`scene_render_result` metrics carry `objectNames`, the part name for ID 1, 2 and so on (the first 1000, with `objectNamesTruncated`), and `depthRangeMetres`.
+`scene_render_result` metrics carry `objectNames`, the part name for ID 1, 2 and so on (the first 1000, with `objectNamesTruncated`), `objectNodes` (`{ "<node id>": [ids] }`: a placed asset with five parts is one node owning five IDs; the first 1000 nodes, with `objectNodesTruncated`), and `depthRangeMetres`.
 IDs follow draw order, which groups parts by shared geometry, so read the names list and not node order.
 Videos hold the lit image only.
 
@@ -202,7 +202,8 @@ The controller never modifies the source scene or its revision.
 ## API
 
 ```js
-import { createAgentRenderJobs } from '../scripts/agent-render-jobs.mjs';
+// scripts/agent-render-jobs.mjs in a checkout of the repository; the npm package does not ship it.
+const { createAgentRenderJobs } = await import(pathToRepositoryScript);
 
 const jobs = await createAgentRenderJobs({
   root: absoluteJobDirectory,
@@ -327,17 +328,17 @@ A lock whose process is alive, or a file that is not a recognized lock, is still
 
 A render or review job fails when its Node RSS passes 512 MiB or its browser heap passes 256 MiB. After each frame the browser heap is read, and when it is over the limit it is garbage collected and read again, so only memory the page still holds counts. A physics bake leaves tens of MiB of garbage after its first frame; a real leak survives the collection and still stops the job.
 
-A job that traces on the native path tracer holds more in the Node process, because the tracer tables, the OIDN denoiser, the frame planes and the temporal history all live there. Once a frame traces natively, the runtime adds an allowance on top of the 512 MiB: 256 MiB plus 1 KiB for each pixel of the frame, never more than 2 GiB (about 1.25 GiB of Node RSS in all for 960 x 540, 2.5 GiB at the cap). The allowance applies to every later render job and scene review of that server process, and it is kept when a job falls back to another backend, because the OIDN device stays loaded for the life of the process. It never shrinks, and it is one figure rather than separate parts for the tracer, OIDN and temporal history, on purpose. The numbers are estimates, not measurements: the RSS per resolution on Linux and Windows is still to be measured (#1186). A job over its limit still fails, and the error names the limit, the observed and allowed MiB and what to change.
+A job that traces on the native path tracer holds more in the Node process, because the tracer tables, the OIDN denoiser, the frame planes and the temporal history all live there. Once a frame traces natively, the runtime adds an allowance on top of the 512 MiB: 256 MiB plus 1 KiB for each pixel of the frame, never more than 2 GiB (about 1.25 GiB of Node RSS in all for 960 x 540, 2.5 GiB at the cap). The allowance applies to every later render job and scene review of that server process, and it is kept when a job falls back to another backend, because the OIDN device stays loaded for the life of the process. It never shrinks, and it is one figure rather than separate parts for the tracer, OIDN and temporal history, on purpose. The runner waits one event-loop turn after each native frame, because the addon's frame planes are freed from the event loop, so a film's memory stays flat per frame instead of growing about 9 MB a frame (480 x 360). The numbers are estimates, not measurements: the RSS per resolution on Linux and Windows is still to be measured (#1186). A job over its limit still fails, and the error names the limit, the observed and allowed MiB and what to change.
 
 | Budget | Default |
 | --- | --- |
 | Retained records | 32 |
 | Total store bytes | 512 MiB |
 | Combined output bytes per job | 128 MiB |
-| PNG artifact bytes | 12 MiB each (a 1920x1080 frame); 48 MiB each for `png16` and `exr` |
+| PNG artifact bytes | 12 MiB each (a 1920x1080 frame; the limit grows with the pixels above that, 48 MiB at 3840x2160); 48 MiB each for `png16` and `exr` |
 | Snapshot JSON | 1 MiB |
 | Asset bytes | 64 MiB |
-| Dimensions | 64 to 1920 pixels each, at most 1920x1080 pixels in all (1080x1920 fits) |
+| Dimensions | An `image` job: 64 to 3840 pixels each, at most 3840x2160 pixels in all (2880x1620 fits). `stills` and `video`: 64 to 1920 each, at most 1920x1080 in all (1080x1920 fits). A frame larger than 1920x1080 that `--memory` cannot hold is refused with the `--memory` it needs, never shrunk; `--memory` tops out at 384 MiB, which holds about 2880x1620 (measured: a plain scene asks for `--memory 373` on the GPU backend; textures add to that, so it only just fits) |
 | Video frame rate | 1 to 60 fps |
 | Duration | 0.1 to 60 seconds |
 | Maximum video frames | 900 |

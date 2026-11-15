@@ -14,7 +14,7 @@ npm install @dimforge/rapier3d-compat@0.21.0
 Use a package-aware development server such as Vite to resolve the solver import.
 
 ```js
-import { createPhysicsScene, planPhysicsScene } from '../src/physics.js';
+import { createPhysicsScene, planPhysicsScene } from 'crucible/addons/physics';
 
 const definition = {
   gravity: [0, -9.81, 0],
@@ -435,10 +435,10 @@ The boat code is part of the buoyancy chunk, so a scene without floating bodies 
 
 ## Fracture and breakable glue
 
-`src/fracture.js` splits a closed convex part (a box, cylinder, sphere or any convex mesh of at most 2048 triangles) into Voronoi fragments and describes the glue that holds them together. A concave part is rejected with a message to split it into convex parts first.
+`crucible/addons/fracture` splits a closed convex part (a box, cylinder, sphere or any convex mesh of at most 2048 triangles) into Voronoi fragments and describes the glue that holds them together. A concave part is rejected with a message to split it into convex parts first.
 
 ```js
-import { fractureMesh, fragmentPhysics } from './src/fracture.js';
+import { fractureMesh, fragmentPhysics } from 'crucible/addons/fracture';
 const fracture = fractureMesh(wallGeometry, { seed: 7, cells: 24, impact: [1.2, 0.5, 0], impactRadius: 0.6 });
 const parts = fragmentPhysics(fracture, { translation: [0, 2, 0], strength: 20, density: 100 });
 // parts.bodies, parts.colliders and parts.joints go into a physics definition next to a ball and a floor.
@@ -637,6 +637,7 @@ function frame(deltaSeconds) {
 - `setExtraMass(index, kilograms)` hangs mass on a particle on top of `cloth.particleMass` (density times area, shared evenly). A heavy particle moves less when the constraints pull, so the sheet sags around it.
 - Tearing: `tearStretch` (a stretch constraint breaks when its length passes this multiple of its rest length) and `tearForce` (it breaks when it carries more than this many newtons) are options; both default to never. The bend constraint across a broken edge breaks with it. `cloth.broken` lists them in order as `{ constraint, first, second, kind }`, where `first` and `second` are particle indices and `kind` is `'stretch'` or `'bend'`; `breakConstraint(edge)` tears one by hand. A broken constraint never heals, and the triangles are not removed: hide a triangle whose edge is in the list to show the tear.
 - A particle index is a welded particle (`weldVertices` maps mesh vertices to them), as in `bakeCloth`.
+- `step(deltaSeconds)` takes 0 to 1 second; 0 changes nothing, and a negative, NaN or longer step throws a `RangeError`. `bakeCloth` needs a whole `frameCount` of at least 1 and `framesPerSecond` of at least 1.
 
 ## Deforming a drawn part in place
 

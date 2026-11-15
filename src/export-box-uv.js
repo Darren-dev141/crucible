@@ -1,9 +1,11 @@
+import { requireOneOf } from './export-checks.js';
 // Pattern materials are box projected in the shader, which glTF cannot express. This writes the same projection as
 // TEXCOORD_0: every triangle takes the object axis its normal is closest to, as the shader's blend weights do on a
 // face, and vertices are split only where neighbouring triangles pick different axes.
 
 /** The lengths of a part matrix's three columns: the shader projects scaled object positions. */
 export function columnLengths(matrix) {
+  if (!matrix) return [1, 1, 1];
   return [0, 4, 8].map(offset => Math.hypot(matrix[offset], matrix[offset + 1], matrix[offset + 2]));
 }
 
@@ -45,6 +47,7 @@ function remapped(source, perVertex, sourceOf) {
 
 /** `scale` is the part matrix's column lengths: the shader projects scaled object positions. */
 export function boxProjectedGeometry(geometry, scale, boxMapScale, boxMapAxis) {
+  requireOneOf('GLB', 'material.boxMapAxis', boxMapAxis, [0, 1, 2]);
   const { positions, indices } = geometry;
   const triangleCount = indices.length / 3;
   const newIndexByKey = new Map();

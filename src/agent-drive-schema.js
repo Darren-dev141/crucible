@@ -58,6 +58,7 @@ function normalizeWheels(wheels, path) {
   return wheels.map((wheel, index) => {
     const wheelPath = `${path}[${index}]`;
     knownKeys(wheel, WHEEL_FIELDS, wheelPath);
+    if (wheel.node !== undefined && wheel.nodes !== undefined) throw invalidField(wheelPath, 'node and nodes', 'one of node or nodes; pass node or nodes, not both');
     const references = wheel.nodes ?? [wheel.node];
     if (!Array.isArray(references) || !references.length || references.length > DRIVE_LIMITS.maxNodeReferences) {
       throw invalidField(`${wheelPath}.${wheel.nodes === undefined ? 'node' : 'nodes'}`, wheel.nodes ?? wheel.node, 'a node, or nodes listing tire, hub and bolts, such as "wheel-0"', TypeError);

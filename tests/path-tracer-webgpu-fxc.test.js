@@ -11,6 +11,7 @@ async function compileKernels() {
   const variants = {
     'megakernel': { code: kernel.buildMegakernelSource({ hasVolume: false, hasSubsurface: false }), entries: ['main'] },
     'megakernel with a volume and subsurface': { code: kernel.buildMegakernelSource({ hasVolume: true, hasSubsurface: true }), entries: ['main'] },
+    'megakernel with local volumes, fog and subsurface': { code: kernel.buildMegakernelSource({ hasLocalVolumes: true, hasVolume: true, hasSubsurface: true }), entries: ['main'] },
     'wavefront': { code: kernel.WAVEFRONT_SOURCE, entries: ['generatePaths', 'extendPaths', 'shadePaths', 'shadowPaths', 'resolvePaths'] },
   };
   const failures = [];

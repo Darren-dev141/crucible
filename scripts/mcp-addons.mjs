@@ -11,7 +11,8 @@ const PACKAGE_NAME = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/;
 
 function isInside(folder, path) {
   const inside = relative(folder, path);
-  return inside !== '' && !inside.startsWith('..') && !isAbsolute(inside);
+  // A name that merely starts with two dots, such as "..lib", is inside; only ".." as a whole part leaves the folder.
+  return inside !== '' && inside !== '..' && !inside.startsWith(`..${sep}`) && !isAbsolute(inside);
 }
 
 // A broken package (a missing entry file, an unreadable folder) is skipped like any other failing addon: it never stops the server.

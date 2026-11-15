@@ -78,14 +78,17 @@ async function measureLag(sender, receiver, movingId, input) {
 async function measureBaseline(sender, receiver) {
   const samples = [];
   for (let ping = 0; ping < BASELINE_PINGS; ping += 1) {
-    const arriving = watchPage(receiver, 'a baseline message to reach the other page', () => new Promise(resolve => {
+    // A BroadcastChannel message posted before the receiver has a listener is lost, and then the receiver waits for the full
+    // deadline (#1501). So the sender posts only after the receiver reports, under this ping's token, that its listener is attached.
+    const arriving = watchPage(receiver, 'a baseline message to reach the other page', pingToken => new Promise(resolve => {
       const channel = new BroadcastChannel('crucible-netcode-baseline');
       channel.onmessage = event => requestAnimationFrame(() => {
         channel.close();
         resolve(Date.now() - event.data);
       });
-    }));
-    await pause(30);
+      window.baselineListeningToken = pingToken;
+    }), ping);
+    await withDeadline(receiver.waitForFunction(pingToken => window.baselineListeningToken === pingToken, ping, { timeout: STEP_DEADLINE_MILLISECONDS }), 'the receiving page to start listening for the baseline message');
     await withDeadline(sender.evaluate(() => {
       const channel = new BroadcastChannel('crucible-netcode-baseline');
       channel.postMessage(Date.now());

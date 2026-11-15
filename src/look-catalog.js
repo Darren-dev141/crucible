@@ -2,6 +2,8 @@
 // shipped in assets/looks, or the SHA-256 ID of a .hdr or .cube file in the MCP asset catalog. The host (the MCP runtime,
 // or an app that calls the register functions) decodes the file and registers it here before the scene builds.
 
+import { alignEnvironmentRows } from './environment-orientation.js';
+
 /** Environment maps shipped in assets/looks as 128 x 64 Radiance files (Poly Haven CC0, shrunk; THIRD-PARTY-NOTICES.md). */
 export const BUNDLED_ENVIRONMENT_NAMES = Object.freeze(['sky-clouds', 'studio-softbox']);
 
@@ -28,7 +30,7 @@ export function isCubeLookReference(reference) {
 /** Registers decoded Radiance data ({ width, height, data } from parseRadianceHdr) under a bundled name or catalog ID. */
 export function registerCatalogEnvironment(reference, decoded) {
   if (!isEnvironmentReference(reference)) throw new RangeError(`environment.hdri must be one of ${BUNDLED_ENVIRONMENT_NAMES.join(', ')} or the 64-character ID of a .hdr file in the asset catalog.`);
-  environmentSources.set(reference, decoded);
+  environmentSources.set(reference, alignEnvironmentRows(decoded));
   registrationCount++;
 }
 

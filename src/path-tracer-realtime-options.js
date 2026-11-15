@@ -8,9 +8,28 @@ const DEFAULT_RESOLUTION_DIVISOR = 2;
 const CACHE_CELLS_ACROSS_SCENE = 200;
 const CACHE_LEVEL_CELLS = 64;
 const SCENE_EXTENT_SCALE = 1e4;
+const MAX_FILTER_ITERATIONS = 16;
+
+function requirePositiveNumber(value, name) {
+  if (value === undefined) return;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new RangeError(`The real-time path tracer option ${name} must be a finite number above 0, got ${value}. Pass a positive value or leave it out for the default.`);
+  }
+}
+
+function requireFilterIterations(value) {
+  if (value === undefined) return;
+  if (!Number.isInteger(value) || value < 0 || value > MAX_FILTER_ITERATIONS) {
+    throw new RangeError(`The real-time path tracer option filterIterations must be a whole number from 0 to ${MAX_FILTER_ITERATIONS}, got ${value}. Leave it out for the default.`);
+  }
+}
 
 /** The output and tracing sizes and the normalized tracer options of `createRealtimeTracer`'s raw options. */
 export function resolveRealtimeOptions(rawOptions) {
+  requirePositiveNumber(rawOptions.resolutionDivisor, 'resolutionDivisor');
+  requirePositiveNumber(rawOptions.historyLimit, 'historyLimit');
+  requirePositiveNumber(rawOptions.cacheCellSize, 'cacheCellSize');
+  requireFilterIterations(rawOptions.filterIterations);
   const resolutionDivisor = rawOptions.resolutionDivisor ?? DEFAULT_RESOLUTION_DIVISOR;
   const outputWidth = rawOptions.width ?? 960;
   const outputHeight = rawOptions.height ?? 540;

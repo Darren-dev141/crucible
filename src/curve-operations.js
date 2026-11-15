@@ -1,9 +1,13 @@
+import { MAX_RESAMPLE_COUNT, requireFiniteInRange } from './modeling-limits.js';
+
 // Polyline curves as plain arrays of [x, y, z]: fillet rounds the corners with circular arcs and resample places points
 // at equal arc length with the direction of travel at each one. Both are deterministic and bounded.
 
 export const MAX_CURVE_POINTS = 256;
 export const MAX_FILLET_ARC_SEGMENTS = 16;
 export const MAX_FILLETED_POINTS = 4096;
+export { MAX_RESAMPLE_COUNT };
+export const MAX_FILLET_RADIUS = 1e6;
 const MINIMUM_LENGTH = 1e-9;
 const STRAIGHT_LIMIT = 1 - 1e-9;
 
@@ -50,6 +54,7 @@ export function curveLength(points, closed = false) {
  * An open curve puts the first and last sample on its ends (count at least 2); a closed one spreads them around the loop.
  */
 export function resampleCurve(points, count, closed = false) {
+  requireFiniteInRange('resampleCurve', 'count', count, closed ? 1 : 2, MAX_RESAMPLE_COUNT, true);
   const segments = segmentsOf(points, closed);
   const total = segments.reduce((sum, segment) => sum + segment.length, 0);
   if (!(total > MINIMUM_LENGTH)) throw new RangeError('The curve has no length.');
@@ -105,6 +110,7 @@ function filletCorner(previous, corner, next, radius, arcSegments) {
  * `arcSegments` straight pieces. A radius that does not fit between neighbouring corners is reduced to fit.
  */
 export function filletCurve(points, radius, arcSegments, closed = false) {
+  requireFiniteInRange('filletCurve', 'radius', radius, 1e-9, MAX_FILLET_RADIUS);
   const result = [];
   const count = points.length;
   for (let index = 0; index < count; index++) {
