@@ -12,7 +12,8 @@ import { simplifyGeometry } from './geometry-simplify.js';
 export const DEFAULT_LOD_RATIOS = Object.freeze([0.5, 0.25, 0.1]);
 export const MAX_LOD_LEVELS = 8;
 
-function checkRatios(ratios) {
+/** Throws a RangeError that says what to pass unless the ratios are 1 to 8 strictly decreasing numbers in (0, 1). */
+export function checkRatios(ratios) {
   if (!Array.isArray(ratios) || ratios.length < 1 || ratios.length > MAX_LOD_LEVELS) {
     throw new RangeError(`ratios needs 1 to ${MAX_LOD_LEVELS} numbers.`);
   }
@@ -44,7 +45,8 @@ export function generateMeshLods(mesh, { ratios = DEFAULT_LOD_RATIOS } = {}) {
   checkRatios(ratios);
   const surface = createSurfaceDistance(mesh);
   const bounds = meshBounds(mesh);
-  const diagonal = Math.hypot(...bounds.max.map((value, axis) => value - bounds.min[axis]));
+  // A mesh whose vertices all coincide has no extent; 1 keeps relativeError a number (0), like the attribute levels.
+  const diagonal = Math.hypot(...bounds.max.map((value, axis) => value - bounds.min[axis])) || 1;
   const levels = [{ level: 0, ratio: 1, mesh, triangles: surface.triangleCount, error: 0, relativeError: 0 }];
   let previousRatio = 1;
   let previous = mesh;
@@ -111,6 +113,12 @@ export function generateAssetLods(asset, options = {}) {
   if (!Array.isArray(parts) || !parts.length) throw new TypeError('An asset needs a parts array.');
   for (const part of parts) {
     if (part.skin || part.morph) throw new RangeError(`Part ${part.name ?? part.id ?? '?'} is skinned or morphed; LODs support static parts only.`);
+  }
+  for (const part of parts) {
+    const geometry = part.geometry;
+    if (!(geometry?.positions?.length > 0) || !(geometry.indices?.length > 0)) {
+      throw new TypeError(`Part ${part.name ?? part.id ?? '?'} needs a geometry with positions and indices; pass the geometry of the part.`);
+    }
   }
   const byGeometry = new Map();
   for (const part of parts) {
