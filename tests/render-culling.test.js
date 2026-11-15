@@ -118,7 +118,7 @@ function rigidPart(name, geometry, position, extra = {}) {
 }
 
 test('the renderer draws only the visible instances, each level from its own geometry', () => {
-  const geometry = sphere(24, 12);
+  const { uvs, ...geometry } = sphere(24, 12); // without uvs the levels come from the mesh decimator, whose surface-distance error the distances below were chosen for
   const lods = generateGeometryLods(geometry, { ratios: [0.25] });
   const positions = [[0, 0, 4], [0, 0, -80], [900, 0, 0]];
   const parts = positions.map((position, index) => rigidPart(`p${index}`, geometry, position, { lods }));
