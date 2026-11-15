@@ -9,6 +9,8 @@ export const NURBS_MAX_ORDER = 8;
 export const KNOT_MODES = ['clamped', 'uniform'];
 const DERIVATIVE_STEP = 1e-5;
 const MINIMUM_SEGMENT = 1e-9;
+// A cubic Bezier span fits an arc through at most a half turn; the handle length 4/3 tan(step / 4) grows without bound at a full turn.
+const MAXIMUM_ARC_STEP = Math.PI;
 
 export const SHAPE_TYPES = ['arc', 'spiral', 'star'];
 
@@ -44,6 +46,9 @@ function arcSpline(shape) {
   if (Math.abs(sweep) < 1e-6) throw new RangeError('shape.sweep must not be 0. Pass an angle in radians such as 3.14.');
   const closed = Math.abs(Math.abs(sweep) - TWO_PI) < 1e-9;
   const step = sweep / segments;
+  if (Math.abs(step) > MAXIMUM_ARC_STEP) {
+    throw new RangeError(`shape.segments ${segments} is too wide for a Bezier span. Pass shape.segments of ${Math.ceil(Math.abs(sweep) / MAXIMUM_ARC_STEP)} or more.`);
+  }
   const handleLength = 4 / 3 * Math.tan(step / 4) * radius;
   const knotCount = closed ? segments : segments + 1;
   const points = Array.from({ length: knotCount }, (_, index) => {
