@@ -72,7 +72,7 @@ A closed room or any scene lit by point lights is dark where light does not reac
 ] }
 ```
 
-`irradianceGrid` (true, or 8 to 48 nodes) replaces lightmaps with a baked grid of bounced diffuse light for every part.
+`irradianceGrid` (true, or 8 to 40 nodes) replaces lightmaps with a baked grid of bounced diffuse light for every part.
 `gridFog: true` adds the scene's volume fog to that grid, which fixes dark shafts and fog that looks too bright in a
 sunlit closed room. It needs `irradianceGrid`; without it the call fails with "bake.gridFog needs bake.irradianceGrid".
 
