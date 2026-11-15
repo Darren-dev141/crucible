@@ -145,6 +145,28 @@ test('steps while the world is rebuilt do nothing, and a second restart or a dis
   }
 });
 
+test('after a restart the first step writes every dynamic body back to the scene, even one the world leaves where it was sent last', async () => {
+  const restore = withAnimationFrameStubs();
+  try {
+    const recipe = await exportedRecipe();
+    recipe.nodes = recipe.nodes.map(node => (node.id === 'crate' ? { ...node, translation: [0, 0.5, 0] } : node));
+    const game = await playFor(recipe, 0.5);
+    const crateNode = () => game.scene.exportRecipe().nodes.find(node => node.id === 'crate');
+    // A fresh world steps the same way every time, so its first step lands exactly where the previous restart's first step did.
+    await game.restart();
+    game.runtime.step(STEP_MILLISECONDS);
+    const restingHeight = crateNode().translation[1];
+    // Something else moves the node away; the new world's body is exactly where it was last sent.
+    game.scene.apply([{ type: 'set-node', id: 'crate', translation: [0, 10, 0] }], { expectedRevision: game.scene.revision });
+    await game.restart();
+    game.runtime.step(STEP_MILLISECONDS);
+    assert.ok(Math.abs(crateNode().translation[1] - restingHeight) < 0.05, `the crate node was written back, y ${crateNode().translation[1]}`);
+    game.dispose();
+  } finally {
+    restore();
+  }
+});
+
 test('the kinematic player body pushes a dynamic crate', async () => {
   const restore = withAnimationFrameStubs();
   try {

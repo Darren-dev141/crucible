@@ -237,6 +237,8 @@ test('R and a tap do nothing while the game is playing, on a held key, on anothe
   globalThis.addEventListener = (name, listener) => {
     if (name === 'keydown') keyListeners.push(listener);
   };
+  // The keyboard input source also listens for keydown, so pick the restart handler by its name.
+  const restartOnKeyOf = () => keyListeners.filter(listener => listener.name === 'restartOnKey').at(-1);
   globalThis.removeEventListener = () => {};
   const taps = [];
   const canvas = { addEventListener: (name, listener) => taps.push([name, listener]), removeEventListener() {} };
@@ -250,7 +252,8 @@ test('R and a tap do nothing while the game is playing, on a held key, on anothe
   });
   try {
     const game = await startGame(canvas, scoringRecipe(), { showStatus: false, createRenderer: () => standInRenderer() });
-    const onKey = keyListeners.at(-1);
+    const onKey = restartOnKeyOf();
+    assert.ok(onKey, 'the restart handler is registered');
     stepFrames(game, 20);
     assert.equal(game.rules.state.status, 'playing');
     assert.equal(game.rules.state.variables.score, 5);
@@ -277,9 +280,18 @@ test('R and a tap do nothing while the game is playing, on a held key, on anothe
     const rulesFree = sceneRecipe([{ id: 'creature', geometry: 'block', material: 'paint' }], { player: { node: 'creature' } });
     const freeGame = await startGame(canvas, rulesFree, { showStatus: false, createRenderer: () => standInRenderer() });
     assert.equal(freeGame.rules, null);
-    keyListeners.at(-1)({ code: 'KeyR', repeat: false });
+    restartOnKeyOf()({ code: 'KeyR', repeat: false });
     stepFrames(freeGame, 1);
     freeGame.dispose();
+
+    const touchFree = sceneRecipe([{ id: 'creature', geometry: 'block', material: 'paint' }], { player: { node: 'creature' }, input: 'touch' });
+    taps.length = 0;
+    const touchFreeGame = await startGame(canvas, touchFree, { showStatus: false, createRenderer: () => standInRenderer() });
+    assert.equal(touchFreeGame.rules, null);
+    const onFreeTap = taps.find(([name]) => name === 'pointerdown')[1];
+    onFreeTap();
+    stepFrames(touchFreeGame, 1);
+    touchFreeGame.dispose();
   } finally {
     globalThis.addEventListener = previous.add;
     globalThis.removeEventListener = previous.remove;
