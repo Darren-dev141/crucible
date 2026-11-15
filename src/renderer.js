@@ -3,7 +3,7 @@ import { materialTags } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
 import { postFragment, createPostFragment, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
-import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing } from './gl-program.js';
+import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
 import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError } from './budget.js';
 import { applyProjection } from './camera.js';
@@ -954,12 +954,15 @@ export class CrucibleRenderer {
     setPreparing(context, true);
     try {
       for (;;) {
+        // dispose() may have run during any wait below: its programs are deleted and a draw would leak and raise GL errors.
+        if (this.disposed) return false;
         try {
           this.render(frame);
           return true;
         } catch (error) {
           if (!(error instanceof ProgramNotReady)) throw error;
-          while (!isLinkComplete(context, error.program) && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 8));
+          while (!this.disposed && !isLinkComplete(context, error.program) && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 8));
+          if (this.disposed) return false;
           if (performance.now() >= deadline) break;
         }
       }
@@ -2834,6 +2837,7 @@ export class CrucibleRenderer {
   dispose() {
     this.disposed = true;
     this.releasePendingConstruction();
+    releaseStartedPrograms(this.context);
     this.fogFieldTexture?.dispose();
     this.releaseFrameTargets();
     this.shadowCascades?.dispose(this.context, this.renderTargets);

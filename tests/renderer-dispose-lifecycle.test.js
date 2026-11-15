@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import { withDevServerPage } from './helpers/dev-server-browser.js';
 
 // Runs the scenario on a fresh deferred renderer whose context counts live objects per kind.
-async function liveObjectsAfter(page, scenarioSource, { withEnvironment = false } = {}) {
-  return page.evaluate(async ({ source, withEnvironment }) => {
+async function liveObjectsAfter(page, scenarioSource, { withEnvironment = false, rendererOptions = {} } = {}) {
+  return page.evaluate(async ({ source, withEnvironment, rendererOptions }) => {
     const { box } = await import('/src/geometry.js');
     const { CrucibleRenderer } = await import('/src/renderer.js');
     const { createEnvironmentMap } = await import('/src/environment.js');
@@ -31,7 +31,7 @@ async function liveObjectsAfter(page, scenarioSource, { withEnvironment = false 
         return remove(object);
       };
     }
-    const renderer = new CrucibleRenderer(canvas, [{ name: 'box', geometry: box(0, 1), matrix: identity, material }], { samples: 1, pixelRatio: 1, deferProgramLink: true, ...(withEnvironment ? { environment: { map: createEnvironmentMap({ width: 8, height: 4, data: new Float32Array(8 * 4 * 3).fill(0.5) }) } } : {}) });
+    const renderer = new CrucibleRenderer(canvas, [{ name: 'box', geometry: box(0, 1), matrix: identity, material }], { samples: 1, pixelRatio: 1, deferProgramLink: true, ...rendererOptions, ...(withEnvironment ? { environment: { map: createEnvironmentMap({ width: 8, height: 4, data: new Float32Array(8 * 4 * 3).fill(0.5) }) } } : {}) });
     const scenario = new Function('renderer', 'context', `return (async () => { ${source} })();`);
     let error = null;
     try {
@@ -42,7 +42,7 @@ async function liveObjectsAfter(page, scenarioSource, { withEnvironment = false 
     const counts = {};
     for (const kind of live.values()) counts[kind] = (counts[kind] ?? 0) + 1;
     return { counts, error };
-  }, { source: scenarioSource, withEnvironment });
+  }, { source: scenarioSource, withEnvironment, rendererOptions });
 }
 
 // SwiftShader has no KHR_parallel_shader_compile, so programsReady would finish at once. This stub makes the extension exist and every link report
@@ -52,6 +52,14 @@ const SIMULATE_SLOW_DRIVER = `
   context.getExtension = (name) => (name === 'KHR_parallel_shader_compile' ? { COMPLETION_STATUS_KHR: 0x91B1 } : realGetExtension(name));
   const realGetProgramParameter = context.getProgramParameter.bind(context);
   context.getProgramParameter = (program, parameter) => (parameter === 0x91B1 ? false : realGetProgramParameter(program, parameter));
+`;
+// The links finish at once until the scenario sets context.linksAreSlow = true, which lets a program the first draw starts report "still compiling".
+const SIMULATE_SLOW_LINKS_ON_DEMAND = `
+  context.linksAreSlow = false;
+  const realGetExtension = context.getExtension.bind(context);
+  context.getExtension = (name) => (name === 'KHR_parallel_shader_compile' ? { COMPLETION_STATUS_KHR: 0x91B1 } : realGetExtension(name));
+  const realGetProgramParameter = context.getProgramParameter.bind(context);
+  context.getProgramParameter = (program, parameter) => (parameter === 0x91B1 ? !context.linksAreSlow : realGetProgramParameter(program, parameter));
 `;
 // Resolves 'settled' when the promise finishes, or 'hung' when it is still waiting after the timeout.
 const SETTLES_OR_HANGS = `
@@ -95,6 +103,65 @@ test('dispose while prepareFrame is waiting resolves false without building', as
       renderer.dispose();
       if (await settlement(prepared) !== 'settled') throw new Error('prepareFrame kept waiting after dispose');
       if (await prepared !== false) throw new Error('prepareFrame must resolve false on a disposed renderer');
+    `);
+    assert.equal(result.error, null);
+    assert.deepEqual(result.counts, {});
+  });
+});
+
+// A frame with ambient occlusion compiles its program inside the first draw, so prepareFrame waits a second time after programsReady (#1266).
+const AMBIENT_OCCLUSION_FRAME = '{ eye: [3, 2, 3], effects: { ambientOcclusion: 0.5 } }';
+
+test('dispose while prepareFrame waits for a program started by its own draw resolves false without drawing', async (testContext) => {
+  await withDevServerPage(testContext, async (page) => {
+    const result = await liveObjectsAfter(page, `${SIMULATE_SLOW_LINKS_ON_DEMAND}${SETTLES_OR_HANGS}
+      await renderer.programsReady();
+      context.linksAreSlow = true;
+      const errorsBefore = context.getError();
+      const prepared = renderer.prepareFrame(${AMBIENT_OCCLUSION_FRAME});
+      await new Promise(resolve => setTimeout(resolve, 50));
+      if (await Promise.race([prepared, 'waiting']) !== 'waiting') throw new Error('the frame never waited for a program, got ' + await prepared);
+      renderer.dispose();
+      context.linksAreSlow = false;
+      if (await settlement(prepared) !== 'settled') throw new Error('prepareFrame kept waiting after dispose');
+      const outcome = await prepared;
+      if (outcome !== false) throw new Error('prepareFrame must resolve false on a disposed renderer, got ' + outcome);
+      const glError = context.getError();
+      if (glError !== 0) throw new Error('GL error ' + glError + ' after dispose during the second wait');
+    `, { rendererOptions: { depth: true } });
+    assert.equal(result.error, null);
+    assert.deepEqual(result.counts, {});
+  });
+});
+
+test('dispose right after prepareFrame starts resolves false without drawing', async (testContext) => {
+  await withDevServerPage(testContext, async (page) => {
+    const result = await liveObjectsAfter(page, `
+      const prepared = renderer.prepareFrame({});
+      renderer.dispose();
+      if (await prepared !== false) throw new Error('prepareFrame must resolve false on a disposed renderer');
+    `);
+    assert.equal(result.error, null);
+    assert.deepEqual(result.counts, {});
+  });
+});
+
+test('dispose reads the link status of every pending program before deleting it', async (testContext) => {
+  await withDevServerPage(testContext, async (page) => {
+    const result = await liveObjectsAfter(page, `
+      const linkStatusReads = new Set();
+      const realGetProgramParameter = context.getProgramParameter.bind(context);
+      context.getProgramParameter = (program, parameter) => {
+        if (parameter === context.LINK_STATUS) linkStatusReads.add(program);
+        return realGetProgramParameter(program, parameter);
+      };
+      const realDeleteProgram = context.deleteProgram.bind(context);
+      context.deleteProgram = (program) => {
+        if (program && !linkStatusReads.has(program)) throw new Error('a program was deleted before its link status was read');
+        return realDeleteProgram(program);
+      };
+      renderer.dispose();
+      if (linkStatusReads.size === 0) throw new Error('dispose read no link status');
     `);
     assert.equal(result.error, null);
     assert.deepEqual(result.counts, {});
