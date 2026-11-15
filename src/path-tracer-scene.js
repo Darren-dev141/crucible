@@ -241,16 +241,21 @@ function validateMatrix(part) {
 function validateGeometry(part, geometry) {
   const label = partLabel(part);
   requireFiniteNumbers(geometry.positions, undefined, `${label} positions`);
+  if (!geometry.indices) throw new TypeError(`${label} needs geometry.indices, three vertex numbers for every triangle. Pass a Uint32Array of indices.`);
   if (geometry.positions.length % 3 !== 0 || geometry.indices.length % 3 !== 0) throw new RangeError(`${label} positions and indices must come in threes.`);
   const vertexCount = geometry.positions.length / 3;
   if (geometry.normals?.length !== geometry.positions.length) throw new RangeError(`${label} needs one normal for every position.`);
   requireFiniteNumbers(geometry.normals, undefined, `${label} normals`);
   for (let slot = 0; slot < geometry.indices.length; slot++) {
-    if (!(geometry.indices[slot] < vertexCount)) throw new RangeError(`${label} has an index past its last vertex.`);
+    const index = geometry.indices[slot];
+    if (!Number.isInteger(index) || index < 0) throw new RangeError(`${label} has an index that is not a whole number from 0 up (got ${index}). Pass vertex numbers as non-negative integers.`);
+    if (!(index < vertexCount)) throw new RangeError(`${label} has an index past its last vertex.`);
   }
   if (geometry.uvs && geometry.uvs.length !== vertexCount * 2) throw new RangeError(`${label} needs one UV pair for every position.`);
   if (geometry.lightUvs && geometry.lightUvs.length !== vertexCount * 2) throw new RangeError(`${label} needs one lightUvs pair (TEXCOORD_1) for every position.`);
   if (geometry.colors && geometry.colors.length !== vertexCount * 3) throw new RangeError(`${label} needs one colour for every position.`);
+  if (geometry.uvs) requireFiniteNumbers(geometry.uvs, undefined, `${label} uvs`);
+  if (geometry.colors) requireFiniteNumbers(geometry.colors, undefined, `${label} colors`);
 }
 
 // The maps resolveMaterial reads: the emissive map only while the material emits, the clearcoat map among the layer maps.
