@@ -185,6 +185,24 @@ export function lastOperationPerKey(operations) {
   return [...byKey.values()];
 }
 
+function operationTarget(operation) {
+  return `${operation.type}:${operation.id}`;
+}
+
+/**
+ * The operations a frame must send. When any operation for a node changed, every operation for that node is sent again, in frame order:
+ * two operations that write overlapping fields with different field sets resolve by order, so sending only one of them could let an
+ * older write win over a newer one.
+ */
+export function operationsToSend(operations, lastSentOperations) {
+  const candidates = lastOperationPerKey(operations);
+  const changedTargets = new Set();
+  for (const operation of candidates) {
+    if (lastSentOperations.get(operationKey(operation)) !== JSON.stringify(operation)) changedTargets.add(operationTarget(operation));
+  }
+  return candidates.filter(operation => changedTargets.has(operationTarget(operation)));
+}
+
 async function buildGame(canvas, recipe, { replay, showStatus = true, assets: providedAssets, assetUrls, physicsUrl, createRenderer = (...rendererArguments) => new CrucibleRenderer(...rendererArguments) }, cleanups) {
   const setup = recipe.game;
   if (!setup) throw new Error('startGame needs a recipe with a game section. Add one with the set-game operation.');
@@ -276,7 +294,7 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
   let lastAppliedRevision = -1;
   function operationsChangedSinceLastFrame(operations) {
     if (scene.revision !== lastAppliedRevision) lastSentOperations.clear();
-    return lastOperationPerKey(operations).filter(operation => lastSentOperations.get(operationKey(operation)) !== JSON.stringify(operation));
+    return operationsToSend(operations, lastSentOperations);
   }
 
   const sceneSystem = {

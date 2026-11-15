@@ -149,6 +149,7 @@ function copiedJson(input, maximum) {
     charge(2);
     const result = array ? [] : {};
     const keys = Reflect.ownKeys(value);
+    let entryCount = 0;
     for (const key of keys) {
       if (array && key === 'length') continue;
       if (typeof key !== 'string' || key === '__proto__') {
@@ -161,7 +162,11 @@ function copiedJson(input, maximum) {
       if (array && key !== String(result.length)) {
         throw new TypeError('JSON arrays must be dense without extra fields.');
       }
-      charge(array ? 1 : jsonStringBytes(key) + 2);
+      // Commas are counted exactly (one between entries) so this running size equals the serialized size
+      // that normalizeRecipe checks after a field edit; both paths then accept and refuse the same recipes.
+      const separatorBytes = entryCount === 0 ? 0 : 1;
+      entryCount += 1;
+      charge(array ? separatorBytes : jsonStringBytes(key) + 1 + separatorBytes);
       result[key] = copy(descriptor.value, depth + 1);
     }
     if (array && result.length !== value.length) {

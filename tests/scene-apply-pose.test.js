@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
 import { worldBounds } from '../src/probe-trace.js';
 import { applyFloorSkyVisibility } from '../src/floor-sky-visibility.js';
-import { startGame, lastOperationPerKey } from '../src/game.js';
+import { startGame, lastOperationPerKey, operationsToSend } from '../src/game.js';
 
 const PART_COUNT = 60;
 
@@ -45,7 +45,8 @@ test('a pose edit of a grid of parts gives the scene a fresh build of the edited
 
 test('a field edit that grows the recipe past maxRecipeBytes is still refused', () => {
   const base = createAgentScene(gridRecipe(), { maxNodes: 200 }).exportRecipe();
-  const limit = smallestCreatableLimit(base);
+  // Room for a few labels beyond the unedited recipe, so the first edit fits and a later one is refused.
+  const limit = smallestCreatableLimit(base) + 500;
   const scene = createAgentScene(base, { maxNodes: 200, maxRecipeBytes: limit });
   // Label one node after another with a long label. Each label passes the field rules and fits the operation copy, so the
   // first refusal can only come from the recipe size check, and it must leave the scene as it was.
@@ -61,6 +62,12 @@ test('a field edit that grows the recipe past maxRecipeBytes is still refused', 
       assert.doesNotMatch(error.message, /label/);
       assert.equal(scene.revision, revisionBefore, 'the refused edit leaves the scene alone');
       assert.ok(applied > 0, 'a first label fits and only a later one is refused');
+      // Everything the fast path accepted is also accepted at creation, restore and by edits that shrink or keep the size.
+      const limits = { maxNodes: 200, maxRecipeBytes: limit };
+      assert.doesNotThrow(() => createAgentScene(scene.exportRecipe(), limits), 'the edited recipe re-creates under the same limits');
+      const checkpoint = scene.checkpoint();
+      assert.doesNotThrow(() => scene.restore(checkpoint, { expectedRevision: scene.revision }), 'checkpoint then restore of the unchanged scene works');
+      assert.doesNotThrow(() => scene.apply([{ type: 'remove-node', id: base.nodes[0].id }], { expectedRevision: scene.revision }), 'remove-node shrinks the recipe and is accepted');
       return;
     }
   }
@@ -140,6 +147,13 @@ test('worldBounds follows a part whose matrix changes in place', () => {
   assert.deepEqual(worldBounds(part).minimum, [4, -1, -1], 'a caller changing its answer does not change the next one');
 });
 
+test('worldBounds follows a part whose geometry positions array is replaced', () => {
+  const part = { geometry: { positions: Float32Array.from([-1, -1, -1, 1, 1, 1]) }, matrix: Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
+  assert.deepEqual(worldBounds(part), { minimum: [-1, -1, -1], maximum: [1, 1, 1] });
+  part.geometry.positions = Float32Array.from([-2, -2, -2, 2, 2, 2]);
+  assert.deepEqual(worldBounds(part), { minimum: [-2, -2, -2], maximum: [2, 2, 2] }, 'a new positions array gives new bounds');
+});
+
 const STEP_MILLISECONDS = 1000 / 60;
 const HOLD_FORWARD = { version: 1, samples: 600, events: [[1, 'keyboard/KeyW', 1]] };
 const EMPTY_RECORDING = { version: 1, samples: 0, events: [] };
@@ -182,6 +196,17 @@ test('a game frame that sends the same pose as the last one does not call scene.
 test('a game frame that moves the player still applies the pose', async () => {
   const revisions = await revisionsAfterFrames(HOLD_FORWARD, 30);
   assert.ok(revisions[29] > revisions[10], 'walking keeps bumping the scene revision');
+});
+
+test('operationsToSend resends every operation of a node when one of them changed', () => {
+  const both = { type: 'set-node', id: 'crate', translation: [1, 0, 0], rotation: [0, 0, 0, 1] };
+  const rotationOnly = { type: 'set-node', id: 'crate', rotation: [0, 0, 0, 1] };
+  const elsewhere = { type: 'set-node', id: 'ball', translation: [1, 0, 0] };
+  const sent = new Map();
+  for (const operation of [both, rotationOnly, elsewhere]) sent.set(`${operation.type}:${operation.id}:${Object.keys(operation).join(',')}`, JSON.stringify(operation));
+  assert.deepEqual(operationsToSend([both, rotationOnly, elsewhere], sent), [], 'nothing changed, nothing is sent');
+  const moved = { ...both, translation: [2, 0, 0] };
+  assert.deepEqual(operationsToSend([moved, rotationOnly, elsewhere], sent), [moved, rotationOnly], 'the unchanged rotation write follows the changed one, the other node stays out');
 });
 
 test('lastOperationPerKey keeps the last of two operations that write the same fields of one node', () => {
