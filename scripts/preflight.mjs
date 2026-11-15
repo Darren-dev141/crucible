@@ -27,6 +27,7 @@ const userFacingPattern = /^(src|bin|packages|skills)\//;
 const shippedCodePattern = /^(src|bin|packages)\/|^package(-lock)?\.json$|^(config\/)?vite\.lib\.config\.js$|^scripts\/(build-mcp|vite-cook-optional)\.mjs$/;
 const toolCodePattern = /^(src\/agent-|src\/mcp|bin\/)|^scripts\/(build-mcp|measure-tool-cost|check-tool-cost|mcp-server|mcp-input-errors|capabilities-topics|tool-examples)/;
 const linkedTextPattern = /\.(md|html)$/;
+const blenderAddonPattern = /^packages\/blender-addon\//;
 
 // Checks a GPU or a person's eyes must run. CONTRIBUTING.md lists them; these patterns only point out the ones that may apply.
 const MANUAL_CHECKS = Object.freeze([
@@ -111,6 +112,13 @@ export function planChecks(changedPaths, { skipTests = false, release = false, b
     command: ['npm', 'run', 'check:site-build'],
     skipped: changesSitePages(paths) ? null : 'no shipped code or page changed',
     fix: 'Fix the module or import error in the log; npm run deploy runs the same build.',
+  });
+
+  checks.push({
+    name: 'add-on python tests',
+    command: ['uv', 'run', '--no-project', '--with', 'numpy', '--with', 'pytest', 'python', '-m', 'pytest', 'packages/blender-addon/tests'],
+    skipped: paths.some(path => blenderAddonPattern.test(path)) ? null : 'no file under packages/blender-addon/ changed',
+    fix: 'Run the command above and fix the failing test; the add-on tests need no Blender.',
   });
 
   const testSkip = skipTests ? 'skipped with --skip-tests' : null;
