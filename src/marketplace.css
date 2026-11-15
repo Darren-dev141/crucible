@@ -34,7 +34,7 @@ body.marketplace > main { gap: 40px; }
 .addon-body { display: grid; gap: 8px; min-width: 0; }
 
 .market-trust, .market-state { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border-radius: var(--panel-radius); background: var(--bg); color: var(--muted); font-size: 15px; }
-.market-trust .market-icon { margin-top: 2px; color: var(--focus); }
+.market-trust .market-icon { margin-top: 2px; color: var(--text); }
 .market-state { align-items: center; flex-wrap: wrap; }
 .marketplace .market-state a { color: var(--text); text-decoration: underline; }
 .market-state-error .market-icon { color: var(--error); }
