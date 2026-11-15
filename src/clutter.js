@@ -9,6 +9,7 @@ import {
   FULL_TURN, addTube, clamp, createMeshBuilder, createRandom, crossProduct, lerp, lerpVectors, normalized, valueNoise,
 } from './vegetation-geometry.js';
 import { createTileField, hashTile, tileMatrix } from './tile-field.js';
+import { requireSeed } from './seeded-random.js';
 
 // Rocks draw their keep key below this value and everything else above it, so the farthest level keeps only rocks.
 const ROCK_KEY_LIMIT = 0.04;
@@ -291,6 +292,7 @@ function resolveSettings(options) {
     if (!(settings[name] >= 0 && settings[name] <= 1)) throw new RangeError(`Clutter ${name} must be between 0 and 1.`);
   }
   if (!(settings.tileSize > 0)) throw new RangeError('Clutter tileSize must be positive.');
+  requireSeed(settings.seed, 'Clutter seed');
   requireRange(settings.pebbleSize, 'pebbleSize');
   requireRange(settings.rockSize, 'rockSize');
   for (const name of ['stoneColor', 'mossColor', 'soilColor', 'twigColor']) requireColor(settings[name], name);
