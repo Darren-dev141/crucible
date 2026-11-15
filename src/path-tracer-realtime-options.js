@@ -37,6 +37,11 @@ export function cacheCellSizes(traceScene, cacheCellSize) {
   return { cellSize, levelDistance: cellSize * CACHE_LEVEL_CELLS };
 }
 
+/** Adds, once, the note that the real-time tracers start camera rays at the eye and so ignore camera.clipStart. */
+export function noteIgnoredClipStart(notes, view) {
+  if (view.clipStart > 0 && notes.length === 0) notes.push('camera.clipStart is ignored by the real-time tracers: camera rays start at the eye, so geometry between the eye and the clip start is drawn.');
+}
+
 /** True when two cameras (as `createCamera` returns them) look the same way. */
 export function viewsMatch(first, second) {
   if (!first || !second) return false;

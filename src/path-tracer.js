@@ -169,6 +169,7 @@ export function createCamera(camera, width, height) {
   const halfHeight = Math.tan(fov * Math.PI / 360);
   const clipStart = camera.clipStart ?? 0;
   if (typeof clipStart !== 'number' || !Number.isFinite(clipStart) || clipStart < 0 || clipStart > 1e5) throw new RangeError(`Path tracer camera clipStart must be a distance from 0 to 100000 scene units along the view axis, got ${JSON.stringify(camera.clipStart)}. Leave it out to start rays at the eye.`);
+  if (typeof camera.far === 'number' && clipStart >= camera.far) throw new RangeError(`Path tracer camera clipStart ${clipStart} is at or past the far plane ${camera.far}, so nothing would be drawn. Pass a clipStart below far, or raise far.`);
   const view = { eye, forward, right, above, halfHeight, halfWidth: halfHeight * width / height, ...(clipStart > 0 ? { clipStart } : {}) };
   // A camera with an fStop adds its thin lens (apertureRadius, focalDistance, apertureBlades, apertureRotation). Only the
   // native "cycles" kernel draws it; every other tracer ignores the extra fields, and a pinhole view is unchanged.
