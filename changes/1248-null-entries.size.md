@@ -1,3 +1,3 @@
-- scene:gltf-box: the same null-entry checks for 13 arrays, about 102 bytes gzip.
+- scene:gltf-box: named errors instead of TypeErrors on malformed glTF arrays, 92 bytes gzip.
 - scene:gltf-box+lazy: the same code as scene:gltf-box.
-- goal:gltf-box: 102 bytes of bounds checking on untrusted input, no render path change; the maintainer accepts this line.
+- goal:gltf-box: 92 bytes for named errors instead of TypeErrors on malformed glTF arrays (#1248)

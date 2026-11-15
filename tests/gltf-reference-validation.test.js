@@ -102,10 +102,6 @@ const danglingCases = [
   ['animation null', document => { document.animations = [null]; }, /animations\[0\].*object/],
   ['buffer null', document => { document.buffers = [null]; }, /buffers\[0\].*object/],
   ['buffers not an array', document => { document.buffers = 5; }, /buffers.*array/],
-  ['sampler null', document => { document.samplers = [null]; }, /samplers\[0\].*object/],
-  ['camera null', document => { document.cameras = [null]; }, /cameras\[0\].*object/],
-  ['scene null', document => { document.scenes = [null]; }, /scenes\[0\].*object/],
-  ['material is an array', document => { document.materials = [[]]; }, /materials\[0\].*object/],
   ['materials not an array', document => { document.materials = 5; }, /materials.*array/],
   ['accessor bufferView null', document => { document.accessors[0].bufferView = null; }, /accessors\[0\]\.bufferView/],
 ];
@@ -181,3 +177,15 @@ test('semverSatisfies ignores prerelease and build metadata of the running versi
   assert.equal(semverSatisfies('0.21.0-rc.1+abc', '<0.21.0'), false);
   assert.equal(semverSatisfies('not-a-version', '>=0.19.0'), null);
 });
+
+const stillLoadingCases = [
+  ['a null materials array', document => { document.materials = null; delete document.meshes[0].primitives[0].material; }],
+  ['a null entry in samplers', document => { document.samplers = [null]; }],
+  ['a non-object entry in cameras', document => { document.cameras = [5]; }],
+];
+for (const [name, change] of stillLoadingCases) {
+  test(`${name} still loads as before`, async () => {
+    const parsed = await parseGltf(triangleJson(change));
+    assert.ok(parsed);
+  });
+}

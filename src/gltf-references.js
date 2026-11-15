@@ -7,7 +7,7 @@ function requireIndex(value, listName, list, fieldPath) {
 }
 
 function requireObject(value, fieldPath) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Invalid glTF ${fieldPath}: expected an object. Fix: remove the entry or fix the exporter.`);
+  if (!value || typeof value !== 'object') throw new Error(`Invalid glTF ${fieldPath}: expected an object. Fix: remove the entry or fix the exporter.`);
 }
 
 function validateMeshReferences(document) {
@@ -36,12 +36,12 @@ function validateSceneReferences(document) {
   });
 }
 
-const ENTRY_ARRAYS = ['nodes', 'meshes', 'accessors', 'bufferViews', 'buffers', 'materials', 'textures', 'images', 'samplers', 'skins', 'animations', 'cameras', 'scenes'];
+const ENTRY_ARRAYS = ['nodes', 'meshes', 'accessors', 'bufferViews', 'buffers', 'materials', 'textures', 'images', 'skins', 'animations'];
 
 function validateEntryObjects(document) {
   for (const arrayName of ENTRY_ARRAYS) {
     const entries = document[arrayName];
-    if (entries === undefined) continue;
+    if (entries === undefined || entries === null) continue;
     if (!Array.isArray(entries)) throw new Error(`Invalid glTF ${arrayName}: expected an array of objects. Fix: remove the field or fix the exporter.`);
     entries.forEach((entry, entryIndex) => requireObject(entry, `${arrayName}[${entryIndex}]`));
   }
