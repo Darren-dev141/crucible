@@ -137,7 +137,7 @@ test('a glowing volume blooms: the ring around it is brighter with bloom on, and
     context.diagnostic(`the ring around the glow averages ${haloOff.toFixed(4)} without bloom and ${haloOn.toFixed(4)} with it; a volume that does not glow ${haloMean(darkOff).toFixed(4)} and ${haloMean(darkOn).toFixed(4)}`);
     if (process.env.LOCAL_VOLUME_BLOOM_ARTIFACTS) {
       mkdirSync(process.env.LOCAL_VOLUME_BLOOM_ARTIFACTS, { recursive: true });
-      writeStill(join(process.env.LOCAL_VOLUME_BLOOM_ARTIFACTS, 'volume-bloom-before-after.png'), [glowOff, glowOn]);
+      writeStill(join(process.env.LOCAL_VOLUME_BLOOM_ARTIFACTS, 'volume-bloom.png'), [glowOn]);
     }
     assert.ok(haloOn - haloOff > 0.005, `bloom lifts the ring around a glowing volume (display values): ${haloOff} to ${haloOn}`);
     assert.ok(haloMean(darkOn) - haloMean(darkOff) < 0.001, 'a volume that does not glow adds no halo');
