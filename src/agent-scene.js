@@ -23,6 +23,19 @@ export { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS };
  */
 export const REVISION_HISTORY_LIMIT = 4;
 const FIELD_EDIT_OPERATIONS = new Set(['set-node', 'set-material', 'set-camera']);
+// Fields of a set-node operation that move or show a node without changing the graph's shape, the geometry or the materials.
+const POSE_EDIT_FIELDS = new Set(['type', 'id', 'translation', 'rotation', 'scale', 'visible']);
+const TRANSFORM_FIELDS = ['translation', 'rotation', 'scale'];
+
+/** The IDs of the nodes a batch of set-node operations moves, or null when the batch edits anything besides pose and visibility. */
+function poseEditNodeIds(operations) {
+  const movedNodes = new Set();
+  for (const operation of operations) {
+    if (operation.type !== 'set-node' || Object.keys(operation).some(field => !POSE_EDIT_FIELDS.has(field))) return null;
+    if (TRANSFORM_FIELDS.some(field => Object.hasOwn(operation, field))) movedNodes.add(operation.id);
+  }
+  return movedNodes;
+}
 export { normalizeAgentLook, resolveAgentShadow } from './agent-look.js';
 import { OWN_SECTIONS as NULLABLE_SECTION_OPERATIONS } from './agent-apply-report.js';
 export { describeApplication } from './agent-apply-report.js';
@@ -215,19 +228,35 @@ function identifier(value, label = 'id') {
   return value;
 }
 
-function resources(values, maximum, label, validate) {
+/**
+ * Checks a list of records and returns the normalized copies. A record in `alreadyNormalized` came out of `validate` before
+ * and nobody has changed it since, so it is kept as it is; `validate` adds the records it returns when `isShareable` says
+ * no later stage rewrites them in place.
+ */
+function resources(values, maximum, label, validate, { alreadyNormalized = null, isShareable = null } = {}) {
   if (!Array.isArray(values) || values.length > maximum) {
     throw invalidField(label, Array.isArray(values) ? `${values.length} entries` : values, `an array of at most ${maximum} entries, such as []`);
   }
   const seen = new Set();
-  return values.map((value, index) => withFieldPrefix(`${label}[${index}]`, () => {
-    identifier(value?.id);
-    if (seen.has(value.id)) {
-      throw invalidField('id', value.id, `an ID no other ${label} entry uses; rename one, or remove the other`);
+  return values.map((value, index) => {
+    if (alreadyNormalized?.has(value)) {
+      if (seen.has(value.id)) {
+        throw invalidField(`${label}[${index}].id`, value.id, `an ID no other ${label} entry uses; rename one, or remove the other`);
+      }
+      seen.add(value.id);
+      return value;
     }
-    seen.add(value.id);
-    return validate(value);
-  }));
+    return withFieldPrefix(`${label}[${index}]`, () => {
+      identifier(value?.id);
+      if (seen.has(value.id)) {
+        throw invalidField('id', value.id, `an ID no other ${label} entry uses; rename one, or remove the other`);
+      }
+      seen.add(value.id);
+      const normalized = validate(value);
+      if (alreadyNormalized && isShareable(normalized)) alreadyNormalized.add(normalized);
+      return normalized;
+    });
+  });
 }
 
 function copyMaterialLayers(value, result) {
@@ -951,6 +980,9 @@ function linkedMaterial(liveMaterial, lightMask, wrappers) {
   return byMask.get(lightMask);
 }
 
+// Nodes the normalizer returned that nothing rewrites afterwards; a staged recipe is read-only, so a later edit that shares them skips checking them again.
+const NORMALIZED_NODES = new WeakSet();
+
 function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
   let recipe = alreadyCopied ? input : copiedJson(input, limits.maxRecipeBytes);
   knownKeys(recipe, ['format', 'schemaVersion', 'geometries', 'materials', 'nodes', 'armatures', 'camera', 'environment', 'effects', 'shadow', 'motion', 'physics', 'cloth', 'timeline', 'particles', 'bake', 'postPasses', 'game'], 'recipe');
@@ -994,7 +1026,7 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
       return generateGeometry(definition, Math.min(limits.maxVertices, 1_000_000), cutterScopeOf(recipe.geometries));
     },
   }, recipe.geometries);
-  recipe.nodes = resources(recipe.nodes, limits.maxNodes, 'nodes', nodeFrom);
+  recipe.nodes = resources(recipe.nodes, limits.maxNodes, 'nodes', nodeFrom, { alreadyNormalized: NORMALIZED_NODES, isShareable: node => NODE_KEYS_NEEDING_OWN_COPY.every(key => node[key] === undefined) });
   addArmatures(recipe, limits);
   if (recipe.nodes.some(node => node.relations !== undefined)) {
     recipe.nodes = agentSceneModule('relations').normalizeRelations(recipe.nodes);
@@ -1481,6 +1513,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   let lightBake = null;
   let lightLinkCache = null;
   let objectReflectionCache = null;
+  // Puts the staged graph's matrices back when an edit that moved them in place is refused after the move.
+  let pendingGraphRestore = null;
   const skinCache = new Map();
   const checkpoints = new Map();
   // The states before the last edits, oldest first, each with the revision number it had.
@@ -1519,7 +1553,25 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     return records;
   }
 
-  function stage(inputRecipe, preferred = null, removedNodes = new Set(), removedMaterials = new Set(), inputIsOwnedJson = false) {
+  // The edit only moves nodes of a plain scene (no relations, placed assets, armatures or motion) and every geometry is
+  // resident: the committed state's graph is moved in place instead of being built again.
+  function canMoveStagedGraph(recipe, movedNodeIds, assetRuntime) {
+    return Boolean(movedNodeIds && state && !state.poseGraph && assetRuntime === NO_ASSETS && !recipe.armatures &&
+      state.recipe.nodes.length === recipe.nodes.length && !recipe.nodes.some(node => node.relations?.length || node.assetPart || node.asset || node.vegetation));
+  }
+
+  function graphWithMovedNodes(recipe, movedNodeIds, localBounds) {
+    if (movedNodeIds.size === 0) return state.graph;
+    const matrices = new Map();
+    for (const node of recipe.nodes) {
+      if (movedNodeIds.has(node.id)) matrices.set(node.id, mat4.fromRotationTranslationScale(mat4.create(), node.rotation, node.translation, node.scale));
+    }
+    pendingGraphRestore = state.graph.replaceLocalMatrices(matrices);
+    validateGraph(state.graph, localBounds);
+    return state.graph;
+  }
+
+  function stage(inputRecipe, preferred = null, removedNodes = new Set(), removedMaterials = new Set(), inputIsOwnedJson = false, movedNodeIds = null) {
     releasedRevisionCount = 0;
     const recipe = normalizeRecipe(inputRecipe, limits, { alreadyCopied: inputIsOwnedJson });
     const placedRuntime = recipe.nodes.some(node => node.asset)
@@ -1580,8 +1632,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       placeholderBounds.set(geometry, plan.existing?.bounds ?? { min: [0, 0, 0], max: [0, 0, 0] });
     }
     // With every geometry resident and no relations to solve, the compile below sees the same inputs and checks the same things.
-    const compiledBelow = plans.every(plan => plan.existing) && !recipe.nodes.some(node => node.relations?.length);
-    if (!compiledBelow) compile(recipe, placeholders, placeholderBounds, limits);
+    const everyGeometryResident = plans.every(plan => plan.existing);
+    const compiledBelow = everyGeometryResident && !recipe.nodes.some(node => node.relations?.length);
+    const reusesGraph = everyGeometryResident && canMoveStagedGraph(recipe, movedNodeIds, assetRuntime);
+    if (!compiledBelow && !reusesGraph) compile(recipe, placeholders, placeholderBounds, limits);
 
     const geometryRecords = new Map();
     for (const plan of plans) {
@@ -1627,7 +1681,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         return boundsFor(regionGeometry, worldMatrix);
       });
     }
-    const graph = compile(recipe, geometries, localBounds, limits);
+    const graph = (reusesGraph ? graphWithMovedNodes(recipe, movedNodeIds, localBounds) : compile(recipe, geometries, localBounds, limits));
     const skinBindings = bindSkins({ recipe, graph, geometryRecords, cache: skinCache });
     const materialHandles = new Map();
     for (const material of recipe.materials) {
@@ -2164,7 +2218,14 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         }
       }
       // Plain field edits put only values the operation copy already checked into the candidate, so the recipe is not copied and checked a second time.
-      return commit(stage(candidate, null, removedNodes, removedMaterials, onlyFieldEdits), true);
+      try {
+        return commit(stage(candidate, null, removedNodes, removedMaterials, onlyFieldEdits, onlyFieldEdits ? poseEditNodeIds(operations) : null), true);
+      } catch (error) {
+        pendingGraphRestore?.();
+        throw error;
+      } finally {
+        pendingGraphRestore = null;
+      }
     },
     inspect(options = {}) {
       knownKeys(options, ['ids', 'limit', 'includeBounds', 'path'], 'inspection');
