@@ -11,3 +11,11 @@ export function hashCell(cellX, cellY, cellZ, seed) {
 export function seededRandom(key, channel, seed) {
   return hashCell(key, channel, 0, seed);
 }
+
+/** Returns `value` when it is a finite number, else throws an error that names the field. NaN and Infinity would silently hash like seed 0. */
+export function requireSeed(value, label) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new TypeError(`${label} must be a finite number such as 1, not ${String(value)}.`);
+  }
+  return value;
+}
