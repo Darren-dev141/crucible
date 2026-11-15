@@ -1,4 +1,4 @@
-import { CLOSED_ROOM_MAXIMUM_TRIANGLES, CLOSED_ROOM_SHARE, closedRoomShare } from './closed-room.js';
+import { CLOSED_ROOM_MAXIMUM_TRIANGLES, CLOSED_ROOM_SHARE, CLOSED_ROOM_WALL_SHARE, closedRoomShare, closedRoomWallShare } from './closed-room.js';
 
 // A closed-room test for rooms with a garden outside the window and heavy props inside. closedRoomShare (which the inspect
 // diagnostic uses) shoots from the middle of the bounds, so a lawn beside the room moves the start out of it, and it gives up
@@ -60,4 +60,14 @@ export function fittedClosedRoomShare(parts, worldMatrices) {
     return share;
   }
   return Math.max(share, closedRoomShare(partsNearTheRest(kept, worldMatrices), worldMatrices) ?? 0);
+}
+
+/**
+ * Whether the scene has walls all round (closedRoomWallShare of at least CLOSED_ROOM_WALL_SHARE), tested on the same parts as fittedClosedRoomShare:
+ * all of them, or the ones near the rest when a lawn beside the room moves the origin out of it. False when nothing can be tested.
+ */
+export function fittedRoomHasWalls(parts, worldMatrices) {
+  const kept = lightestParts(parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode)));
+  const share = Math.max(closedRoomWallShare(kept, worldMatrices) ?? 0, closedRoomWallShare(partsNearTheRest(kept, worldMatrices), worldMatrices) ?? 0);
+  return share >= CLOSED_ROOM_WALL_SHARE;
 }

@@ -97,3 +97,36 @@ test('a lone wall beside a floor in the open keeps the whole sky', () => {
   const share = wall.geometry.skyVisibility ? faceMean(wall, 0, 1) : 1;
   assert.ok(share > 0.6, `an open wall keeps ${share.toFixed(3)} of the sky`);
 });
+
+// A floor under a roof on columns: the rays up and down hit the roof and the floor, so the ray test for a closed room says closed, but there are no walls.
+function canopy({ side, height, columns }) {
+  const parts = [
+    slab('floor', [0, -WALL / 2, 0], [side, WALL, side]),
+    slab('roof', [0, height + WALL / 2, 0], [side, WALL, side]),
+  ];
+  for (let column = 0; column < columns; column++) {
+    const x = (column % 2 === 0 ? -1 : 1) * (side / 2 - 1);
+    const z = (column < 2 ? -1 : 1) * (side / 2 - 1);
+    parts.push(slab(`column-${column}`, [x, height / 2, z], [0.5, height, 0.5]));
+  }
+  return parts;
+}
+
+for (const shape of [{ side: 30, height: 3, columns: 4 }, { side: 60, height: 3, columns: 4 }, { side: 30, height: 2.5, columns: 4 }, { side: 30, height: 4, columns: 4 }]) {
+  test(`a ${shape.side} m canopy ${shape.height} m high on columns is not treated as a closed room: its columns are not traced and its floor keeps the sky`, () => {
+    const { parts } = applyDefaultFloorSky(canopy(shape), SUN, { maximumTexels: 4000 });
+    for (const part of parts.filter(candidate => candidate.name.startsWith('column'))) {
+      assert.equal(part.geometry.skyVisibility, undefined, `${part.name} is not traced`);
+    }
+    const floor = parts.find(part => part.name === 'floor');
+    // A colonnade that the ray test already calls open comes back untouched; a canopy it calls closed keeps most of its sky.
+    if (!floor.geometry.skyVisibility) return;
+    assert.ok(faceMean(floor, 1, 1) > 0.75, `the floor under the canopy keeps ${faceMean(floor, 1, 1).toFixed(3)} of the sky, as it did before`);
+  });
+}
+
+test('the ray budget stops a scene that asks for more rays than allowed', () => {
+  const { parts, report } = applyDefaultFloorSky(room({ window: false }), SUN, { maximumTexels: 4000, maximumRays: 100 });
+  assert.equal(report.reason, 'too many rays');
+  assert.equal(parts.find(part => part.name === 'ceiling').geometry.skyVisibility, undefined);
+});
