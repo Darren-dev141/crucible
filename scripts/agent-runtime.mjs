@@ -83,6 +83,9 @@ const MAXIMUM_KEPT_WEB_BUILDS = 4;
 const EXPORTED_GLB_NAME = /^[0-9a-f-]{36}\.glb$/;
 const EXPORTED_WEB_BUILD_NAME = /^web-[0-9a-f-]{36}$/;
 const EVALUATION_TIMEOUT_MS = 30000;
+// Handing the scene page to a render job or review and bringing it back gets longer than an ordinary call. A job cut short by its deadline usually ran
+// while another process held the GPU, and the page can need that long to draw again once the card is free (#1256).
+const PAGE_HANDOFF_TIMEOUT_MS = 4 * EVALUATION_TIMEOUT_MS;
 const QUERY_ONLY_TIMEOUT_MS = 120000;
 /** A bake runs on a worker for up to its own limit, so a call that bakes gets that much more than a plain call. */
 const BAKE_EVALUATION_TIMEOUT_MS = EVALUATION_TIMEOUT_MS + BAKE_WORKER_MAXIMUM_SECONDS * 1000;
@@ -650,7 +653,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     try {
       signal.throwIfAborted();
       await enqueue(async () => {
-        await invoke('suspend', { sessionId });
+        await invoke('suspend', { sessionId }, PAGE_HANDOFF_TIMEOUT_MS);
         suspended = true;
       });
       signal.throwIfAborted();
@@ -936,7 +939,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         finally {
           if (suspended && !closing) {
             try {
-              await enqueue(() => invoke('resume', { sessionId }));
+              await enqueue(() => invoke('resume', { sessionId }, PAGE_HANDOFF_TIMEOUT_MS));
               phase = 'ready';
             } catch (error) {
               phase = 'failed';
@@ -1223,7 +1226,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           return result;
         }
         try {
-          await invoke('suspend', { sessionId: settings.sessionId });
+          await invoke('suspend', { sessionId: settings.sessionId }, PAGE_HANDOFF_TIMEOUT_MS);
           suspended = true;
           phase = 'reviewing';
           requireReviewOpen();
@@ -1298,7 +1301,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             reviewPage = undefined;
             await session?.detach().catch(() => {});
             if (suspended && !closing && phase !== 'failed') {
-              try { await invoke('resume', { sessionId: settings.sessionId }); }
+              try { await invoke('resume', { sessionId: settings.sessionId }, PAGE_HANDOFF_TIMEOUT_MS); }
               catch (error) {
                 phase = 'failed';
                 throw new Error(`Preview recovery failed after review: ${error.message}`);
