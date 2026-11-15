@@ -124,6 +124,14 @@ test('a dent tilts the normals around the hit and leaves the rest of the panel a
   assert.ok(tilted);
 });
 
+test('an unmoved vertex beside the dent gets a new normal because its faces changed shape', () => {
+  const panel = frontPanel();
+  const dented = dentGeometry(panel, { radius: 0.4, impacts: [{ point: [0, 0, 0], direction: [0, 0, -1], impulse: 600 }] });
+  const rimVertex = 20 * 41 + 28;
+  assert.equal(dented.positions[rimVertex * 3 + 2], 0);
+  assert.ok(Math.abs(dented.normals[rimVertex * 3]) > 0.01, `normal x ${dented.normals[rimVertex * 3]}`);
+});
+
 test('a bumper comes off above its threshold and stays on below it', () => {
   const impulse = crashImpulse({ mass: CAR_MASS, speed: 10 });
   const parts = [{ id: 'front-bumper', threshold: 9000 }, { id: 'mirror', threshold: 20000 }, { id: 'hood', threshold: 14000 }];

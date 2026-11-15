@@ -102,7 +102,13 @@ function nearestVertices(positions, point, radius) {
 function recomputeNormals(geometry, movedVertices) {
   const { positions, normals, indices } = geometry;
   const sums = new Map();
-  for (const vertex of movedVertices) sums.set(vertex, [0, 0, 0]);
+  const moved = new Set(movedVertices);
+  // A face that shares a moved vertex changes shape, so its unmoved corners get new normals too.
+  for (let corner = 0; corner < indices.length; corner += 3) {
+    const triangle = [indices[corner], indices[corner + 1], indices[corner + 2]];
+    if (!triangle.some(vertex => moved.has(vertex))) continue;
+    for (const vertex of triangle) sums.set(vertex, [0, 0, 0]);
+  }
   for (let corner = 0; corner < indices.length; corner += 3) {
     const triangle = [indices[corner], indices[corner + 1], indices[corner + 2]];
     if (!triangle.some(vertex => sums.has(vertex))) continue;
