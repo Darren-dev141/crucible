@@ -89,3 +89,11 @@ test('a scene with the trace switched off keeps its parts as they are', () => {
   const sealed = room({ window: false });
   assert.equal(applyDefaultFloorSky(sealed, { ...SUN, floorSkyTrace: false }).parts, sealed);
 });
+
+test('a lone wall beside a floor in the open keeps the whole sky', () => {
+  const open = [room({ window: false })[0], room({ window: false })[2]];
+  const { parts } = applyDefaultFloorSky(open, SUN, { maximumTexels: 4000 });
+  const wall = parts.find(part => part.name === 'wall-left');
+  const share = wall.geometry.skyVisibility ? faceMean(wall, 0, 1) : 1;
+  assert.ok(share > 0.6, `an open wall keeps ${share.toFixed(3)} of the sky`);
+});
