@@ -323,7 +323,7 @@ The script prints calls, errors, error rate and median duration per tool, most c
 
 | Budget | Limit |
 | --- | --- |
-| Active render scenes | 1 |
+| Open scenes | 4, within 96 MiB of resident geometry |
 | Nodes | 4096 |
 | Geometries and materials | 256 each |
 | Operations per batch | 256 |

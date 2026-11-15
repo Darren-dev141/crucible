@@ -13,7 +13,7 @@ geometry.uvs = new Float32Array(geometry.positions.length / 3 * 2);
 const part = {
   name: 'Editable surface',
   geometry,
-  matrix: mat4.create(),
+  matrix: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
   material: {
     color: [0.2, 0.4, 0.6],
     metallic: 0,
@@ -116,6 +116,10 @@ A track with eased keyframes (`easing`) is written as LINEAR with 32 samples per
 A track on another property, or on a node that is not exported, fails with the fix.
 
 ```js
+import { exportGlb } from 'crucible';
+import { parseGltf } from 'crucible/addons/gltf';
+import { clipFromGltfAnimation } from 'crucible/addons/skeleton-pose';
+
 const asset = await parseGltf(bytes);
 const clips = asset.animations.map(clipFromGltfAnimation);
 const glb = exportGlb(asset.parts, { nodes: asset.nodes, clips });
