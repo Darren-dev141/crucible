@@ -276,8 +276,8 @@ test('required material extensions, bad layer values and missing decoders are re
   await assert.rejects(parseGltf(badTransmission), /transmission must be between 0 and 1.*Use a number inside that range/);
   const badIor = triangleDocument({ edit: document => { document.materials[0].extensions = { KHR_materials_ior: { ior: 0.5 } }; } });
   await assert.rejects(parseGltf(badIor), /ior must be between 1 and 2.5/);
-  const noIor = triangleDocument({ edit: document => { document.materials[0].extensions = { KHR_materials_ior: { ior: 0 } }; } });
-  await assert.rejects(parseGltf(noIor), /ior must be between 1 and 2.5/);
+  const textIor = triangleDocument({ edit: document => { document.materials[0].extensions = { KHR_materials_ior: { ior: '1000' } }; } });
+  await assert.rejects(parseGltf(textIor), /ior must be between 1 and 2.5/);
   for (const [extension, decoder] of [['KHR_draco_mesh_compression', 'draco'], ['KHR_texture_basisu', 'ktx2']]) {
     const data = triangleDocument({ edit: document => { document.extensionsRequired = [extension]; } });
     await assert.rejects(parseGltf(data), new RegExp(`options\\.decoders\\.${decoder}`));
@@ -556,4 +556,15 @@ test('an ior above the supported range loads at the top of the range and says so
   }));
   assert.equal(inRange.parts[0].material.ior, 2.5);
   assert.deepEqual(inRange.warnings, []);
+});
+
+test('an ior of 0, which glTF allows, loads as 1 without a warning (#1347)', async () => {
+  const asset = await parseGltf(triangleDocument({
+    edit: document => {
+      document.extensionsUsed = ['KHR_materials_ior'];
+      document.materials[0].extensions = { KHR_materials_ior: { ior: 0 } };
+    },
+  }));
+  assert.equal(asset.parts[0].material.ior, 1);
+  assert.deepEqual(asset.warnings, []);
 });

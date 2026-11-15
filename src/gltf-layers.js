@@ -55,7 +55,7 @@ export function clampedIorWarnings(document) {
   const warnings = [];
   document.materials?.forEach((definition, index) => {
     const ior = definition?.extensions?.KHR_materials_ior?.ior;
-    if (ior > MAXIMUM_IOR) warnings.push(`The ior of material ${index} is ${ior}; it was set to ${MAXIMUM_IOR}.`);
+    if (typeof ior === 'number' && ior > MAXIMUM_IOR) warnings.push(`The ior of material ${index} is ${ior}; it was set to ${MAXIMUM_IOR}.`);
   });
   return warnings;
 }
@@ -70,7 +70,7 @@ export function materialLayersFromGltf(definition) {
       if (extension[property] !== undefined) layers[field] = extension[property];
     }
   }
-  if (layers.ior > MAXIMUM_IOR) layers.ior = MAXIMUM_IOR;
+  if (typeof layers.ior === 'number') layers.ior = layers.ior === 0 ? 1 : Math.min(layers.ior, MAXIMUM_IOR);
   validateMaterialLayers(layers);
   return layers;
 }
