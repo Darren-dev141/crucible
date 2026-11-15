@@ -6,7 +6,7 @@ import { basename, isAbsolute, join, resolve } from 'node:path';
 import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, VIDEO_ENCODERS, AUDIO_FILE_PATTERN, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS } from '../src/agent-scene-capabilities.js';
 import { parseQuality } from './agent-render-quality.mjs';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
-import { normalizeFilmTimeline, filmTimelineDuration } from '../src/film-timeline.js';
+import { normalizeFilmTimeline, filmTimelineDuration, videoFrameCount } from '../src/film-timeline.js';
 import { OIDN_DEFAULT_SAMPLES, PATH_TRACER_DENOISERS, PATH_TRACER_JOB_LIMITS } from '../src/path-tracer-capabilities.js';
 import { AGENT_ASSET_LIMITS, describeAssetBytes } from '../src/agent-asset-limits.js';
 
@@ -119,7 +119,7 @@ function settingsFrom(input, clips, recipe) {
   const bakeDefault = bakeSeconds && input.kind !== 'image' && input.motion ? Math.max(0.1, bakeSeconds - (Number(input.motion.start) || 0)) : undefined;
   const defaultDuration = timelineStart === undefined || input.kind === 'image' ? bakeDefault ?? 1 : filmTimelineDuration(recipe.timeline) - timelineStart;
   const duration = boundedNumber(input.duration ?? defaultDuration, 0.1, MAXIMUM_VIDEO_SECONDS, 'duration');
-  const frameCount = input.kind === 'image' ? 1 : input.kind === 'stills' ? 8 : Math.ceil(fps * duration);
+  const frameCount = input.kind === 'image' ? 1 : input.kind === 'stills' ? 8 : videoFrameCount(fps, duration);
   if (frameCount > MAXIMUM_JOB_FRAMES) throw new RangeError(`Job exceeds ${MAXIMUM_JOB_FRAMES} frames. Lower fps or duration.`);
   const result = { kind: input.kind, width, height, fps, duration, frameCount };
   if (input.passes !== undefined) result.passes = passesFrom(input.passes, input.kind);

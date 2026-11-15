@@ -382,7 +382,8 @@ export function retargetClip(sourceRig, targetRig, clip, options = {}) {
   const sourcePrepared = prepareRig(sourceRig, 'Source', sourceOverrides);
   const targetPrepared = prepareRig(targetRig, 'Target', targetOverrides);
   const driven = selectedBones(sourcePrepared, targetPrepared, bones);
-  const sampler = compileAnimationSampler(clip);
+  // Sampled as a clip that does not wrap: a looping sampler maps the final frame at `duration` back to time 0 and ends on the first pose.
+  const sampler = compileAnimationSampler({ ...clip, loop: false });
   const sourceBindings = bindSourceTracks(sampler, sourcePrepared);
   const retargetFrame = createRetargeter(sourcePrepared, targetPrepared, driven, { rootMotion, scale });
   const drivenTargetIndices = driven.map(bone => targetPrepared.indexByBone[bone]);
@@ -489,6 +490,12 @@ export function createCrowd({ count, clip, seed = 1, layout = 'grid', spacing = 
   if (!['grid', 'scatter'].includes(layout)) throw new RangeError(`Unknown crowd layout: ${layout}`);
   if (!Number.isFinite(spacing) || spacing <= 0) throw new RangeError('Crowd spacing must be positive.');
   if (!Number.isFinite(rateJitter) || rateJitter < 0 || rateJitter >= 1) throw new RangeError('rateJitter must be at least 0 and below 1.');
+  if (columns !== undefined && (!Number.isInteger(columns) || columns < 1)) {
+    throw new RangeError(`Crowd columns must be a positive integer, got ${columns}.`);
+  }
+  if (size !== undefined && (!Number.isFinite(size) || size <= 0)) {
+    throw new RangeError(`Crowd size must be a positive finite number, got ${size}.`);
+  }
   const nextRandom = createRandomGenerator(seed);
   const columnCount = columns ?? Math.ceil(Math.sqrt(count));
   const positions = layout === 'grid'

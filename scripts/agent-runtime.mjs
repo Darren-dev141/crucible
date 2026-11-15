@@ -41,7 +41,7 @@ import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, 
 import { encodeRenderOutput, encodeMultilayerExr } from './render-output-encoders.mjs';
 import { createFrameEncoder } from './frame-encoder.mjs';
 import { DEFAULT_PAGE_ENCODER_QUANTIZER, createFrameReceiver, startVideoEncoderInPage } from './gpu-frame-reader.mjs';
-import { audioInputArguments, createAudioLibrary, measureStreamSeconds } from './job-audio.mjs';
+import { SYNC_TOLERANCE_SECONDS, assertAudioCoversVideo, audioInputArguments, createAudioLibrary, measureStreamSeconds } from './job-audio.mjs';
 import { filmTimelineDuration, filmTimelineShotStarts, sampleFilmTimeline } from '../src/film-timeline.js';
 import { isPreviewHost } from './preview-host.mjs';
 import { runAnnotateSession } from './annotate-session.mjs';
@@ -85,8 +85,6 @@ function bakeAfterOperations(operations) {
   const lastBake = setBakes[setBakes.length - 1].bake;
   return lastBake !== null && lastBake !== undefined;
 }
-// Decoded audio and video lengths of a finished file may differ by the encoder delay; more than this fails the job.
-const SYNC_TOLERANCE_SECONDS = 0.05;
 // The preview page imports engine chunks that sit beside the package entries, one folder above preview.js.
 const ENGINE_CHUNK_URL = /^\/[\w.-]+\.js$/;
 const pageHtml = importMapScript => '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#182126}canvas{display:block;width:100vw;height:100vh}</style></head><body><canvas></canvas>' + importMapScript + '<script type="module" src="/preview.js"></script></body></html>';
@@ -947,10 +945,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     const path = await audioLibrary.resolve(settings.audio.file);
     const fileSeconds = await measureStreamSeconds(ffmpeg, path, 'audio');
     const videoSeconds = settings.frameCount / settings.fps;
-    const availableSeconds = fileSeconds - settings.audio.offset;
-    if (availableSeconds + SYNC_TOLERANCE_SECONDS < videoSeconds) {
-      throw new RangeError(`Audio has ${availableSeconds.toFixed(2)} s after its offset but the video lasts ${videoSeconds.toFixed(2)} s.`);
-    }
+    const availableSeconds = assertAudioCoversVideo(fileSeconds, settings.audio.offset, videoSeconds);
     return { path, availableSeconds };
   }
 

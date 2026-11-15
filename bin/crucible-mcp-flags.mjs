@@ -1,0 +1,36 @@
+// The startup flags of crucible-mcp, in one place so --help and the parse error list the same ones.
+export const MCP_OPTION_FLAGS = Object.freeze([
+  { name: '--addons', value: '<absolute folder with node_modules>', note: 'with one --allow-addon <package name> for each allowed addon' },
+  { name: '--allow-addon', value: '<package name>', note: 'repeatable, chosen only here' },
+  { name: '--backend', value: 'cpu|gpu', note: 'default gpu' },
+  { name: '--browser', value: '<local Chrome/Chromium executable path>', note: 'default is the installed Chrome' },
+  { name: '--memory', value: '<32..384 MiB>', note: 'default 192' },
+  { name: '--assets', value: '<absolute GLB directory>' },
+  { name: '--packs', value: '<absolute folder of data-only packs>' },
+  { name: '--jobs', value: '<absolute private output directory>', note: 'required for render jobs' },
+  { name: '--ffmpeg', value: '<absolute executable>', note: 'default is ffmpeg on PATH' },
+  { name: '--audio', value: '<absolute folder of .wav, .mp3, .ogg or .flac files for video jobs>' },
+  { name: '--branches', value: 'on|off', note: 'default on' },
+  { name: '--relations', value: 'on|off', note: 'default on' },
+  { name: '--findings', value: 'on|off', note: 'default on; off hides the findings in scene_look for benchmark controls' },
+]);
+
+export const MCP_OPTION_NAMES = Object.freeze(MCP_OPTION_FLAGS.map(flag => flag.name));
+
+export function mcpOptionSummary() {
+  return MCP_OPTION_FLAGS.map(flag => `${flag.name} ${flag.value}${flag.note ? ` (${flag.note})` : ''}`).join(', ');
+}
+
+export function mcpHelpText(version) {
+  const lines = MCP_OPTION_FLAGS.map(flag => `  ${flag.name} ${flag.value}${flag.note ? `  -- ${flag.note}` : ''}`);
+  return `crucible-mcp ${version}
+Usage: crucible-mcp [options]
+       crucible-mcp --version | --check-update | --help
+
+Options:
+${lines.join('\n')}
+
+Connect an MCP client over stdin/stdout. Chrome starts on the first scene.
+Render jobs require --jobs; MP4 encoding uses FFmpeg on PATH unless --ffmpeg is supplied.
+Documentation: https://crucible.codepawl.com/mcp.md`;
+}

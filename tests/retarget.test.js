@@ -308,3 +308,40 @@ test('crowd grid layout is centred and scatter layout keeps instances apart', ()
   assert.throws(() => createCrowd({ count: 0, clip }), /positive integer/);
   assert.throws(() => createCrowd({ count: 2, clip, layout: 'ring' }), /Unknown crowd layout/);
 });
+
+function createLoopingWalkClip(loop) {
+  return createAnimationClip({
+    duration: 1,
+    loop,
+    tracks: [
+      { target: MIXAMO_NAMES.leftUpperArm, property: 'rotation', keyframes: [{ time: 0, value: [0, 0, 0, 1] }, { time: 1, value: rotationAbout([0, 0, 1], 90) }] },
+      { target: MIXAMO_NAMES.hips, property: 'translation', keyframes: [{ time: 0, value: [0, 1, 0] }, { time: 1, value: [0, 1, 4] }] },
+    ],
+  });
+}
+
+test('a looping clip retargeted onto the same rig ends on its end pose, not its first pose', () => {
+  const rig = createHumanoidRig(MIXAMO_NAMES);
+  for (const loop of [true, false]) {
+    const retargeted = retargetClip(rig, rig, createLoopingWalkClip(loop));
+    assert.equal(retargeted.loop, loop);
+    const hipsTrack = retargeted.tracks.find(track => track.target === MIXAMO_NAMES.hips && track.property === 'translation');
+    const lastKey = hipsTrack.keyframes[hipsTrack.keyframes.length - 1];
+    assert.equal(lastKey.time, 1);
+    assertVectorsClose(lastKey.value, [0, 1, 4]);
+    const armTrack = retargeted.tracks.find(track => track.target === MIXAMO_NAMES.leftUpperArm);
+    assertVectorsClose(armTrack.keyframes[armTrack.keyframes.length - 1].value, rotationAbout([0, 0, 1], 90));
+  }
+});
+
+test('createCrowd rejects columns and size that would give NaN or lopsided placement', () => {
+  const clip = createRaisedArmClip();
+  for (const columns of [0, -2, 1.5, NaN, '3']) {
+    assert.throws(() => createCrowd({ count: 4, clip, columns }), /columns must be a positive integer/, String(columns));
+  }
+  for (const size of [-5, 0, NaN, Infinity, '4']) {
+    assert.throws(() => createCrowd({ count: 4, clip, layout: 'scatter', size }), /size must be a positive finite number/, String(size));
+  }
+  assert.equal(createCrowd({ count: 4, clip, columns: 2 }).instances.length, 4);
+  assert.equal(createCrowd({ count: 4, clip, layout: 'scatter', size: 6 }).instances.length, 4);
+});
