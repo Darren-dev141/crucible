@@ -170,7 +170,8 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
   }
   const sourcePage = new FakePage(false);
   let pageCount = 0;
-  const browser = { isConnected: () => true,
+  let browserConnected = true;
+  const browser = { isConnected: () => browserConnected,
     newPage: async () => {
       if (++pageCount === 1) return sourcePage;
       resolveAcquisitionStarted();
@@ -191,7 +192,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     runAnnotateSession: async () => ({ outcome: 'timeout' }), openInDefaultBrowser: async () => {},
     createNativeTracerLocator: () => ({ find: async () => ({ reason: 'no native tracer in tests' }) }),
     createAgentRenderJobs: async () => ({ list: () => [], close: async () => {} }), resolveJobRoot: path => path,
-    chromium: { launch: async () => browser }, URL, Buffer, AbortController, process, performance, clearTimeout, runtimeOptions, ...contextOverrides,
+    chromium: { launch: async () => { browserConnected = true; return browser; } }, URL, Buffer, AbortController, process, performance, clearTimeout, runtimeOptions, ...contextOverrides,
     setTimeout: (callback, delay) => {
       deadlines.push(delay);
       const timer = setTimeout(callback, delay);
@@ -203,7 +204,8 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
   const runtime = context.runtime;
   openHarnesses.push({ runtime, sandboxTimers, releasePages: () => { resolvePrivatePage(); privatePage?.rejectShot?.(new Error('Harness cleanup')); } });
   const created = await runtime.create({ recipe });
-  return { runtime, sessionId: created.sessionId, deadlines, events, viewports, shotStarted, acquisitionStarted, resolvePrivatePage };
+  const disconnectBrowser = () => { browserConnected = false; };
+  return { runtime, sessionId: created.sessionId, disconnectBrowser, deadlines, events, viewports, shotStarted, acquisitionStarted, resolvePrivatePage };
 }
 
 function boundedResult(promise) {
@@ -384,6 +386,21 @@ runTest('a slow suspend at job start does not fail the runtime (#1256)', async (
       settings: { kind: 'image', width: 64, height: 64 }, signal: abortController.signal, progress: async () => {} }));
     assert.ok(events.includes('source:suspend'));
     assert.equal((await runtime.capabilities()).phase, 'ready');
+  } finally { await runtime.close(); }
+});
+
+runTest('a failed runtime starts fresh for the next scene, while other calls still say it is failed (#1256)', async () => {
+  const { runtime, sessionId, disconnectBrowser } = await reviewRuntimeHarness();
+  try {
+    disconnectBrowser();
+    await assert.rejects(runtime.inspect({ sessionId }), /browser disconnected/);
+    assert.equal((await runtime.capabilities()).phase, 'failed');
+    await assert.rejects(runtime.inspect({ sessionId }), /The agent runtime is failed/);
+    const fresh = await runtime.create({ recipe: { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] } });
+    assert.notEqual(fresh.sessionId, sessionId);
+    assert.equal((await runtime.capabilities()).phase, 'ready');
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+    await assert.rejects(runtime.apply({ sessionId }), /session|scene/i);
   } finally { await runtime.close(); }
 });
 

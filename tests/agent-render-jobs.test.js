@@ -182,7 +182,8 @@ test('cancel acknowledges immediately and blocks output publication after runner
 
 test('deadline aborts a cooperative callback and close detects an uncooperative callback without releasing its lock', async context => {
   const root = await temporary(context);
-  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 10 }, async run({ signal }) {
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 10 }, async run({ signal, startRenderClock }) {
+    startRenderClock();
     await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
     throw signal.reason;
   } });
@@ -634,6 +635,45 @@ test('a path tracer job runs on the cpu unless it asks for the gpu, and film job
   const film = await submitWith({ backend: 'gpu', samples: 16 }, 'video');
   assert.equal(controller.status(film.jobId).settings.renderer.samples, 16);
   await terminal(controller, film.jobId);
+  await controller.close();
+});
+
+test('the elapsed deadline starts when rendering starts, so queue wait does not count against it (#1256)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 100, queueWaitMs: 2000 }, async run(argumentsValue) {
+    await new Promise(resolve => setTimeout(resolve, 300));
+    argumentsValue.startRenderClock();
+    return writeImage(argumentsValue);
+  } });
+  const { jobId } = await controller.submit(request());
+  assert.equal((await terminal(controller, jobId)).state, 'completed');
+  await controller.close();
+});
+
+test('a job that waits past the queue bound fails with its own message (#1256)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 5000, queueWaitMs: 30 }, async run({ signal }) {
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    throw signal.reason;
+  } });
+  const { jobId } = await controller.submit(request());
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.reason, /queue wait deadline/);
+  await controller.close();
+});
+
+test('rendering that outlasts the elapsed deadline after the clock started still fails (#1256)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 40, queueWaitMs: 2000 }, async run({ signal, startRenderClock }) {
+    startRenderClock();
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    throw signal.reason;
+  } });
+  const { jobId } = await controller.submit(request());
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.reason, /elapsed deadline/);
   await controller.close();
 });
 

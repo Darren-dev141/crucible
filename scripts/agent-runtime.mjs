@@ -339,15 +339,24 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     return { sources };
   }
 
-  function enqueue(task) {
-    if (closing || phase === 'closing' || phase === 'closed' || phase === 'failed') {
+  // A failed runtime has lost its scene page and every scene in it. A call that starts a new scene may bring up a fresh runtime
+  // instead of repeating the failure until the server restarts (#1256); every other call still says the runtime is failed.
+  async function restartFailedRuntime() {
+    forgetAllSessions();
+    await shutdownResources().catch(() => {});
+    phase = 'idle';
+  }
+
+  function enqueue(task, { recoversFailedRuntime = false } = {}) {
+    if (closing || phase === 'closing' || phase === 'closed' || (phase === 'failed' && !recoversFailedRuntime)) {
       return Promise.reject(new Error(`The agent runtime is ${phase}.`));
     }
     if (queuedCalls >= MAXIMUM_QUEUED_CALLS) {
       return Promise.reject(new Error('The preview call queue is full. Retry after pending calls finish.'));
     }
     queuedCalls++;
-    const result = queue.then(() => {
+    const result = queue.then(async () => {
+      if (phase === 'failed' && recoversFailedRuntime && !closing) await restartFailedRuntime();
       if (closing || phase === 'closed' || phase === 'failed') {
         throw new Error(`The agent runtime is ${closing ? 'closing' : phase}.`);
       }
@@ -611,7 +620,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     }
   }
 
-  async function runJob({ jobId, sessionId, directory, snapshot, settings, signal, progress }) {
+  async function runJob({ jobId, sessionId, directory, snapshot, settings, signal, progress, startRenderClock = () => {} }) {
     let jobPage;
     let session;
     let encoder;
@@ -645,6 +654,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         await invoke('suspend', { sessionId }, PAGE_HANDOFF_TIMEOUT_MS);
         suspended = true;
       });
+      // The wait behind other calls and the handoff of the scene page are over: from here the deadline counts render time only (#1256).
+      startRenderClock();
       signal.throwIfAborted();
       jobPage = await browserInstance.newPage({ viewport: { width: settings.width, height: settings.height }, deviceScaleFactor: 1 });
       signal.throwIfAborted();
@@ -1011,7 +1022,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         const result = await evaluate('create', { recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) }, page, recipe?.bake ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
         registerCreatedScene(sessionId, result, Boolean(recipe?.bake));
         return result;
-      });
+      }, { recoversFailedRuntime: true });
     },
     /** The catalog with the installed packs; `{ pack, recipe }` or `{ pack, material }` reads one pack item's JSON instead. */
     assetCatalog({ pack, recipe, material } = {}) {
@@ -1037,7 +1048,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         const result = await evaluate('createAsset', { recipe, data: bytes.toString('base64'), sessionId, memoryBudgetMiB: memory, backend, ...(await motionSources([recipe.motion])) });
         registerCreatedScene(sessionId, result, false);
         return result;
-      });
+      }, { recoversFailedRuntime: true });
     },
     inspect(input) {
       return enqueue(() => invoke('inspect', input));
