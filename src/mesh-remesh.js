@@ -137,16 +137,16 @@ function sampleDistances(mesh, surface, grid) {
 
 /**
  * Rebuild a closed mesh as a quad surface on a grid of `voxelSize` (or `resolution` cells along the longest side).
- * Returns the mesh and the grid it used.
+ * Returns the mesh and the grid it used. `buildQuads` replaces the quad builder so a test can feed it a broken surface.
  */
-export function remeshMesh(mesh, options) {
+export function remeshMesh(mesh, options, buildQuads = quadsAroundEdges) {
   assertClosed(mesh);
   assertOutward(mesh);
   const grid = remeshGridSize(mesh, options);
   const surface = triangulatedSurface(mesh);
   const { distances, origin } = sampleDistances(mesh, surface, grid);
   const { cellVertex, positions } = placeCellVertices(distances, grid, origin);
-  const quads = quadsAroundEdges(distances, grid, cellVertex);
+  const quads = buildQuads(distances, grid, cellVertex);
   if (!quads.length) throw new RangeError('remesh found no surface: the voxel size is larger than the mesh.');
   const faceOffsets = Uint32Array.from({ length: quads.length + 1 }, (value, index) => index * 4);
   const remeshed = createMeshData({ positions: Float32Array.from(positions), faceOffsets, cornerVertices: Uint32Array.from(quads.flat()) });

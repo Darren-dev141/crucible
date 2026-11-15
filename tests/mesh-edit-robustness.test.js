@@ -5,7 +5,7 @@ import { box } from '../src/geometry.js';
 import { applyMeshEdits, createMeshData, lintMesh, meshFromGeometry } from '../src/mesh.js';
 import { MESH_EDIT_OPERATIONS } from '../src/mesh-operations.js';
 import { GEOMETRY_PROBLEMS, MESH_PROBLEMS } from '../src/mesh-lint.js';
-import { assertNoHoles } from '../src/mesh-remesh.js';
+import { assertNoHoles, remeshMesh } from '../src/mesh-remesh.js';
 import { loadMeshBooleans, meshBoolean } from '../src/mesh-boolean.js';
 
 await loadMeshBooleans();
@@ -87,4 +87,9 @@ test('assertNoHoles rejects a surface with a one-quad edge and accepts a closed 
   });
   assert.throws(() => assertNoHoles(quad), /could not close the surface/);
   assert.doesNotThrow(() => assertNoHoles(cube()));
+});
+
+test('remeshMesh throws instead of returning a surface with a hole', () => {
+  const oneQuadOnly = () => [[0, 1, 2, 3]];
+  assert.throws(() => remeshMesh(cube(), { resolution: 8 }, oneQuadOnly), /could not close the surface/);
 });
