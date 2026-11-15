@@ -23,7 +23,7 @@ An addon package:
 }
 ```
 
-`range` is the Crucible versions it was tested with (comparators such as `>=0.19.0 <1.0.0`, or `^0.19.0`). `extensionPoints` lists every point it uses. `bundleBytes` is the size of the entry file named by `main` or `exports`.
+`range` is the Crucible versions it was tested with (comparators such as `>=0.19.0 <1.0.0`, or `^0.19.0`). `extensionPoints` lists every point it uses. `bundleBytes` is the size of the entry file: the `"."` entry of `exports` (a string, or its `import` or `default` condition), else `main`. The MCP server runs the same check and skips an addon whose entry is missing or larger than `bundleBytes`.
 
 The manifest lives in `package.json` rather than a separate `crucible-addon.json` because the npm registry returns the whole `package.json` of each version, so a listing can read the range and points without unpacking the tarball, and there is no second file to forget to publish.
 
@@ -67,7 +67,7 @@ Run your own tests with `@codepawlhq/crucible` installed as a dev dependency nex
 npx crucible-addon-check . --version 0.19.0
 ```
 
-The check says what failed and what to pass instead. It tests the keyword, the peer dependency, the license, the `crucible` field, the entry size, and that the range allows the version you pass.
+The check says what failed and what to pass instead. It tests the keyword, the peer dependency, the license, the `crucible` field, the entry file and its size, that neither range is unsatisfiable, and that both the `crucible` range and the peer range allow the version you pass (`--version 0.19.0` or `--version=0.19.0`). Exit codes: 0 ok, 1 the contract fails, 2 a bad command line (unknown flag, `--version` without a value, extra folder). `--help` prints the usage and exits 0.
 
 ## Publish one
 

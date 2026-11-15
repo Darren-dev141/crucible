@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { checkAddon, CORE_PACKAGE } from '../bin/crucible-addon-check.mjs';
+import { checkAddon, CORE_PACKAGE, entryOf } from '../bin/crucible-addon-check.mjs';
 
 // Addons the person who starts the MCP server allows. Only startup options choose them (--addons, --allow-addon); no tool
 // call can name one. Each is looked up in <folder>/node_modules/<name> and must pass the addon contract (docs/addons.md).
@@ -12,18 +12,6 @@ const PACKAGE_NAME = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/;
 function isInside(folder, path) {
   const inside = relative(folder, path);
   return inside !== '' && !inside.startsWith('..') && !isAbsolute(inside);
-}
-
-// The ES module entry of a package: a string `exports`, its "." entry, or the import/default condition of either; else `main`.
-function entryOf(pack) {
-  const exportsField = pack.exports;
-  const root = exportsField && typeof exportsField === 'object' && '.' in exportsField ? exportsField['.'] : exportsField;
-  if (typeof root === 'string') return root;
-  if (root && typeof root === 'object') {
-    const conditional = root.import ?? root.default;
-    if (typeof conditional === 'string') return conditional;
-  }
-  return typeof pack.main === 'string' ? pack.main : null;
 }
 
 // A broken package (a missing entry file, an unreadable folder) is skipped like any other failing addon: it never stops the server.

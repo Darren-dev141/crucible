@@ -409,12 +409,16 @@ export function rigReport(recipe, bindings) {
   });
 }
 
-function bakedTracks(motionSampler, duration, frameRate) {
+/** A looping sampler wraps `duration` to time 0, so the last frame is read this far before the end to get the end pose. */
+const LOOP_END_SAMPLE_OFFSET_SECONDS = 1e-9;
+
+function bakedTracks(motionSampler, duration, frameRate, loop) {
   const frameCount = Math.max(1, Math.ceil(duration * frameRate));
   const keyframesByTrack = new Map();
   for (let frame = 0; frame <= frameCount; frame++) {
     const time = Math.min(duration, frame / frameRate);
-    for (const [id, patch] of motionSampler.sample(time).nodes) {
+    const sampleTime = loop && time >= duration ? duration - LOOP_END_SAMPLE_OFFSET_SECONDS : time;
+    for (const [id, patch] of motionSampler.sample(sampleTime).nodes) {
       for (const property of ['rotation', 'translation']) {
         if (!patch[property]) continue;
         const key = `${id}\u0000${property}`;
@@ -443,7 +447,7 @@ export function bakeRigExport(recipe, restGraph, motionSampler, { frameRate = 30
     };
   });
   const boneIds = new Set(nodes.map(node => node.id));
-  const tracks = motionSampler ? bakedTracks(motionSampler, recipe.motion.duration, frameRate).filter(track => boneIds.has(track.target)) : [];
+  const tracks = motionSampler ? bakedTracks(motionSampler, recipe.motion.duration, frameRate, recipe.motion.loop).filter(track => boneIds.has(track.target)) : [];
   const clip = tracks.length ? { ...createAnimationClip({ duration: recipe.motion.duration, loop: recipe.motion.loop, tracks }), name: 'motion' } : null;
   return { nodes, clips: clip ? [clip] : [] };
 }
