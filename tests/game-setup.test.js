@@ -134,3 +134,10 @@ test('the web export refuses what it cannot play and says how to fix it', async 
   await writeFile(join(big, 'chunk-a.js'), `${'/'.repeat(WEB_EXPORT_LIMITS.maxEngineBytes)}\nexport {};`);
   await assert.rejects(async () => writeWebBuild({ recipe: recipeWith(game), buildDirectory: big, outputDirectory: await out() }), /above the \d+ byte limit/);
 });
+
+test('a rules input trigger on an action the game does not bind is refused with the actions to use', () => {
+  const rules = { ...RULES, rules: [{ when: { type: 'input', action: 'fire' }, do: [{ type: 'win' }] }] };
+  assert.throws(() => normalizeGameSetup({ player: { node: 'creature' }, rules }, NODE_IDS), /rules\.rules\[0\]\.when\.action is "fire".*Use one of: jump, run/);
+  const jumpRules = { ...RULES, rules: [{ when: { type: 'input', action: 'jump' }, do: [{ type: 'win' }] }] };
+  assert.doesNotThrow(() => normalizeGameSetup({ player: { node: 'creature' }, rules: jumpRules }, NODE_IDS));
+});

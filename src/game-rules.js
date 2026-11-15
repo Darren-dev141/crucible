@@ -35,11 +35,16 @@ const COMPARISONS = {
   '!=': (left, right) => left !== right,
 };
 
+// A result that overflows or is not a number gives 0, like division by zero, so a state never turns Infinity or NaN.
+function finiteOrZero(value) {
+  return Number.isFinite(value) ? value : 0;
+}
+
 const ARITHMETIC = {
-  '+': (left, right) => left + right,
-  '-': (left, right) => left - right,
-  '*': (left, right) => left * right,
-  '/': (left, right) => (right === 0 ? 0 : left / right), // division by zero gives 0, so a state never turns NaN
+  '+': (left, right) => finiteOrZero(left + right),
+  '-': (left, right) => finiteOrZero(left - right),
+  '*': (left, right) => finiteOrZero(left * right),
+  '/': (left, right) => (right === 0 ? 0 : finiteOrZero(left / right)),
 };
 
 function fail(path, problem, fix) {
@@ -480,7 +485,7 @@ export function createGameRules(document, options = {}) {
       case 'set':
       case 'add': {
         const value = evaluate(action.value, variables);
-        variables[action.variable] = action.type === 'set' ? value : variables[action.variable] + value;
+        variables[action.variable] = action.type === 'set' ? value : ARITHMETIC['+'](variables[action.variable], value);
         record({ ...base, variable: action.variable, value: variables[action.variable] });
         return;
       }

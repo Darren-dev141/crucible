@@ -76,7 +76,7 @@ A rule with `once: true` fires at most once per play. `if` is an optional expres
 
 ## Expressions
 
-A number, a variable name, or `[operator, left, right]` with `+ - * /` or `< <= > >= == !=`, nested at most 4 levels. A comparison gives 1 or 0, and an expression counts as true when it is not 0. Dividing by 0 gives 0, so a variable never turns `NaN`. Booleans are 0 and 1.
+A number, a variable name, or `[operator, left, right]` with `+ - * /` or `< <= > >= == !=`, nested at most 4 levels. A comparison gives 1 or 0, and an expression counts as true when it is not 0. Dividing by 0 gives 0, and so does any result that overflows or is not a number, so a variable never turns `Infinity` or `NaN`. Booleans are 0 and 1.
 
 ## Order and determinism
 
