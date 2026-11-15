@@ -29,6 +29,16 @@ const KIND_RADIUS_SCALES = [1, 1.5, 0.6];
 const OCTAHEDRON_DIRECTIONS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 const OCTAHEDRON_TRIANGLES = [0, 2, 4, 4, 2, 1, 1, 2, 5, 5, 2, 0, 4, 3, 0, 1, 3, 4, 5, 3, 1, 0, 3, 5];
 
+const FLOAT16_EXPONENT_MASK = 0x7c00;
+
+// A float16 whose exponent bits are all set is NaN or infinity.
+function hasFiniteFloat16Values(data, base) {
+  for (let component = 0; component < SPRAY_FLOATS_PER_POINT; component++) {
+    if ((data[base + component] & FLOAT16_EXPONENT_MASK) === FLOAT16_EXPONENT_MASK) return false;
+  }
+  return true;
+}
+
 export function float16ToFloat32(bits) {
   const sign = bits & 0x8000 ? -1 : 1;
   const exponent = (bits >> 10) & 0x1f;
@@ -226,7 +236,9 @@ export function buildSprayGeometry(cache, frameIndex, { radius = 0.014, shutter 
   }));
   const selected = [];
   for (let point = first; point < first + count; point++) {
-    if (allowedKinds.has(spray.kinds ? spray.kinds[point] : SPRAY_KINDS.spray)) selected.push(point);
+    const wanted = allowedKinds.has(spray.kinds ? spray.kinds[point] : SPRAY_KINDS.spray);
+    // A point a corrupt cache left as NaN or infinity would make NaN corners, so it is dropped.
+    if (wanted && hasFiniteFloat16Values(spray.data, point * SPRAY_FLOATS_PER_POINT)) selected.push(point);
   }
   if (selected.length === 0) return null;
   // Thin evenly instead of keeping the first points, so a capped frame still covers the whole plume.
@@ -291,7 +303,9 @@ export function createSpumePlayer(cache, {
     return Math.min(Math.max(frame, 0), frameCount - 1);
   }
 
-  function partsForFrame(frameIndex) {
+  // Frame paths stay lenient: an index outside the cache plays the nearest frame instead of throwing mid-film.
+  function partsForFrame(requestedIndex) {
+    const frameIndex = Number.isNaN(requestedIndex) ? 0 : Math.min(Math.max(Math.floor(requestedIndex), 0), frameCount - 1);
     const remembered = recent.get(frameIndex);
     if (remembered) {
       recent.delete(frameIndex);
