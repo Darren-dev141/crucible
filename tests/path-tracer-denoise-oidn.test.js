@@ -115,3 +115,12 @@ test('the job capability text says the OIDN package is not on npm and what runs 
   assert.match(setting, /npm run fetch --prefix packages\/denoise-oidn/);
   assert.match(setting, /wavelet filter.*denoiserNote/s);
 });
+
+test('denoiseWithOidn refuses buffers that do not match width x height and missing guide images', async () => {
+  const image = new Float32Array(2 * 2 * 3);
+  const good = { width: 2, height: 2, color: image, albedo: image, normal: image };
+  await assert.rejects(denoiseWithOidn({ ...good, width: 3 }), /color holds 12 floats.*3 x 2 pixels need 18/);
+  await assert.rejects(denoiseWithOidn({ ...good, normal: new Float32Array(9) }), /normal holds 9 floats/);
+  await assert.rejects(denoiseWithOidn({ ...good, albedo: undefined }), /albedo must be a Float32Array/);
+  await assert.rejects(denoiseWithOidn({ ...good, height: 0 }), /height must be a whole number/);
+});

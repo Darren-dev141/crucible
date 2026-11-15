@@ -20,3 +20,9 @@ test('createCameraSampler rejects malformed frames and a non-finite sample time 
   assert.throws(() => createCameraSampler({ frames: [[[0, 0], [0, 0, 0]]] }), /frames\[0\]/);
   assert.throws(() => createCameraSampler({ frames: twoFrames }).sample(NaN), /finite number of seconds/);
 });
+
+test('createCameraSampler rejects frames whose eye equals the target and an fps that gives an infinite duration (#1574)', async () => {
+  const sameEyeAndTarget = [[[0, 0, 1], [0, 0, 0]], [[2, 3, 4], [2, 3, 4]]];
+  assert.throws(() => createCameraSampler({ frames: sameEyeAndTarget }), /frames\[1\] eye and target are the same point/);
+  assert.throws(() => createCameraSampler({ fps: 1e-320, frames: twoFrames }), /too small for 2 frames to have a finite duration/);
+});

@@ -1,7 +1,7 @@
 import { createMeshData, DOMAINS } from './mesh-data.js';
 import { faceNormals } from './mesh-normals.js';
 import { cornerCycles, edgeCornerTable, UnionFind } from './mesh-topology.js';
-import { bounds2d, packIslands } from './mesh-uv.js';
+import { bounds2d, packIslands, requireUvMargin } from './mesh-uv.js';
 
 // Projected UVs: cube, cylinder and sphere mapping, and packing of the islands that already exist in the corner
 // attribute `uv`. Both are deterministic and keep one texel density across all islands.
@@ -12,6 +12,10 @@ const TWO_PI = Math.PI * 2;
 const SAME_UV = 1e-6;
 // A cylinder face whose normal leans more than 45 degrees along the axis is a cap and projects flat.
 const CAP_THRESHOLD = Math.SQRT1_2;
+
+function requireOneOf(field, value, allowed) {
+  if (!allowed.includes(value)) throw new RangeError(`projectUv: ${field} was ${value}; pass one of ${allowed.join(', ')}.`);
+}
 
 function withCornerUv(mesh, uv) {
   const attributes = {};
@@ -153,6 +157,7 @@ function uvIslands(mesh, uv) {
  * Returns the new mesh and the island count.
  */
 export function packUvIslands(mesh, { margin = 0.01, rotate = true } = {}) {
+  requireUvMargin('packUvIslands', margin);
   const uv = mesh.attributes.corner.uv?.data;
   if (!uv) throw new RangeError('the mesh has no uv to pack. Put uv_unwrap, or uv_project with pack false, before uv_pack.');
   const islands = uvIslands(mesh, uv);
@@ -180,6 +185,9 @@ export function packUvIslands(mesh, { margin = 0.01, rotate = true } = {}) {
  * pack lays the islands into the unit square; without it uv stays in mesh units.
  */
 export function projectUv(mesh, { mode = 'cube', axis = 'y', pack = true, margin = 0.01, rotate = true } = {}) {
+  requireOneOf('mode', mode, UV_PROJECTION_MODES);
+  requireOneOf('axis', axis, Object.keys(AXIS_INDEX));
+  requireUvMargin('projectUv', margin);
   const projected = withCornerUv(mesh, projectCorners(mesh, mode, AXIS_INDEX[axis]));
   if (!pack) return { mesh: projected, islands: uvIslands(projected, projected.attributes.corner.uv.data).length };
   return packUvIslands(projected, { margin, rotate });

@@ -178,6 +178,7 @@ function capPolygon(loop, tag) {
  */
 export function bisectPlane(mesh, { point, normal, distance = 1e-4, clearInner = false, clearOuter = false, fill = false, name = 'bisect' }) {
   requireFiniteInRange('bisectPlane', 'point and normal', [point, normal], -1e6, 1e6);
+  requireFiniteInRange('bisectPlane', 'distance', distance, 0, 1e6);
   const planeNormal = unit(normal);
   const { signs, offsets } = planeSigns(mesh, point, planeNormal, distance);
   const extraPositions = [];

@@ -1888,7 +1888,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       return [];
     }
     if (closedRoomCache?.revision !== revision) {
-      const worldMatrices = new Map(state.parts.map(part => [part.name, state.graph.getNode(part.name).worldMatrix]));
+      const worldMatrices = new Map(state.parts.map(part => [part, state.graph.getNode(part.name).worldMatrix]));
       closedRoomCache = { revision, share: closedRoomShare(state.parts, worldMatrices) };
     }
     const { share } = closedRoomCache;

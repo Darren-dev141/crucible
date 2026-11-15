@@ -239,3 +239,31 @@ test('limits are bounded and errors say what to pass', () => {
   assert.throws(() => toThreeObject(parts, THREE, { maxParts: 2 }), /4 parts is above the limit of 2/);
   assert.throws(() => toThreeObject([{ ...parts[0], matrix: [1] }], THREE), /matrix of 16 finite numbers/);
 });
+
+function trianglePart(geometryChanges) {
+  const geometry = {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    indices: new Uint32Array([0, 1, 2]),
+    ...geometryChanges,
+  };
+  const matrix = new THREE.Matrix4().toArray();
+  return { name: 'triangle', geometry, matrix, material: { color: [1, 1, 1], metallic: 0, roughness: 1 } };
+}
+
+test('toThreeObject refuses attribute arrays that do not match the vertex count and indices past the last vertex', () => {
+  assert.ok(toThreeObject([trianglePart({})], THREE).object);
+  assert.throws(() => toThreeObject([trianglePart({ normals: new Float32Array(6) })], THREE), /6 values in geometry\.normals.*3 vertices need 9/);
+  assert.throws(() => toThreeObject([trianglePart({ uvs: new Float32Array(4) })], THREE), /4 values in geometry\.uvs.*3 vertices need 6/);
+  assert.throws(() => toThreeObject([trianglePart({ colors: new Float32Array(12) })], THREE), /12 values in geometry\.colors.*3 vertices need 9/);
+  assert.throws(() => toThreeObject([trianglePart({ indices: new Uint32Array([0, 1, 3]) })], THREE), /indices entry 3.*0 to 2/);
+});
+
+test('an InstancedMesh count above its matrix array is clamped with a warning, not NaN', () => {
+  const instanced = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial(), 3);
+  instanced.count = 5;
+  const { parts, warnings } = fromThreeObject(instanced);
+  assert.equal(parts.length, 3, 'one part per matrix in the array');
+  for (const part of parts) assert.ok(part.matrix.every(Number.isFinite), 'every matrix is finite');
+  assert.ok(warnings.some(warning => /count 5 is above the 3 matrices instanceMatrix holds/.test(warning)), 'the clamp is reported');
+});

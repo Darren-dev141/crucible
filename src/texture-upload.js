@@ -52,6 +52,9 @@ const ignoresFlip = image => typeof ImageBitmap === 'function' && image instance
 export async function uploadTextureInSlices(context, texture, internalFormat, image, { flipY: requestedFlipY = false, maximumBytes = TEXTURE_SLICE_BYTES, checkpoint = async () => {} } = {}) {
   const width = image.naturalWidth ?? image.width;
   const height = image.naturalHeight ?? image.height;
+  // Refuse, before any GL call, a size that allocates nothing or data shorter than the image.
+  const bytes = width * height * 4;
+  if (!(width > 0 && height > 0) || image.data?.length < bytes) throw new RangeError(`Texture image width x height x 4 must be data bytes > 0: ${width}x${height}, ${image.data?.length}`);
   const flipY = requestedFlipY && !ignoresFlip(image);
   const target = context.TEXTURE_2D;
   const previousAllocationBinding = context.getParameter(context.TEXTURE_BINDING_2D);

@@ -9,6 +9,12 @@ import { edgeCornerTable, cornerFaces, UnionFind } from './mesh-topology.js';
 
 const SHARP_TOLERANCE = 1e-6;
 
+function requireNumberInRange(name, value, minimum, maximum) {
+  if (typeof value !== 'number' || !(value >= minimum && value <= maximum)) {
+    throw new RangeError(`${name} must be a number from ${minimum} to ${maximum}, got ${value}.`);
+  }
+}
+
 function nextCornerInFace(mesh, corner, face) {
   return corner + 1 === mesh.faceOffsets[face + 1] ? mesh.faceOffsets[face] : corner + 1;
 }
@@ -48,6 +54,7 @@ function addTriangle(builder, mesh, face, triangleCorners) {
  * ear clipping), keeping winding, tags and corner attributes. Throws before allocating when the result would pass `maxFaces`.
  */
 export function triangulateFaces(mesh, { minVertices = 4, maxFaces = Infinity } = {}) {
+  requireNumberInRange('minVertices', minVertices, 3, Infinity);
   let triangleTotal = 0;
   for (let face = 0; face < mesh.faceCount; face++) {
     const size = mesh.faceOffsets[face + 1] - mesh.faceOffsets[face];
@@ -111,6 +118,7 @@ function smoothCornerGroups(mesh, angleDegrees) {
  * Throws before allocating when the vertex count would pass `maxVertices`.
  */
 export function splitSharpEdges(mesh, { angle = 30, maxVertices = Infinity } = {}) {
+  requireNumberInRange('angle', angle, 0, 180);
   const groups = smoothCornerGroups(mesh, angle);
   const vertexOfGroup = new Map();
   const firstGroupOfVertex = new Uint8Array(mesh.vertexCount);

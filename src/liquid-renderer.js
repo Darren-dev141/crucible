@@ -1,6 +1,6 @@
 import { compileProgram } from './gl-program.js';
 import { resolveLiquidOptics } from './liquid-optics.js';
-import { liquidWaterSupport } from './shader-registry.js';
+import { liquidProbeSupport, liquidWaterSupport } from './shader-registry.js';
 
 // The renderer's liquid and foam pass, kept apart from renderer.js so a scene without liquid or foam does not carry it.
 // liquid-shader.js registers drawLiquidPass; the renderer calls it with the frame state it needs.
@@ -9,7 +9,7 @@ const LIQUID_UNIFORMS = [
   'viewProjection', 'lightProjection', 'eye', 'sceneColor', 'resolution', 'exposure', 'hdrEnabled', 'worldMode', 'daylight', 'lightDirection',
   'keyColor', 'ambientIntensity', 'fogColor', 'fogDensity', 'glassState', 'glassTint', 'liquidOptics', 'foamShape',
   'environmentSpecular', 'environmentEnabled', 'environmentIntensity', 'environmentRotation', 'environmentLevelMax',
-  'time', 'waterReflection', 'waterReflectionMatrix', 'waterClip', 'waterReflectionEnabled', 'wind', 'explosionProgress', 'explosionCenter', 'assemblyAmount',
+  'time', 'probeEnabled', 'probeFloor', 'waterReflection', 'waterReflectionMatrix', 'waterClip', 'waterReflectionEnabled', 'wind', 'explosionProgress', 'explosionCenter', 'assemblyAmount',
   'skinEnabled', 'skinInfluences', 'jointPalette',
   'morphEnabled', 'morphVertexCount', 'morphTargetCount', 'morphWeights[0]', 'morphSlotTargets[0]', 'morphTargets',
 ];
@@ -74,9 +74,11 @@ export function drawLiquidPass(renderer, { frame, environment, assemblyAmount, e
     context.uniform4f(uniforms.glassState, layers[9], layers[10], layers[11], Math.min(layers[12], maximumDistance));
     context.uniform3f(uniforms.glassTint, layers[13], layers[14], layers[15]);
     liquidWaterSupport.bind?.(renderer, uniforms, batch);
+    liquidProbeSupport.bind?.(renderer, uniforms, batch);
     context.bindVertexArray(batch.vertexArray);
     context.drawElementsInstanced(context.TRIANGLES, batch.indexCount, context.UNSIGNED_INT, 0, batch.instanceCount);
   }
+  liquidProbeSupport.finish?.(renderer, uniforms);
   if (foams.length > 0) {
     context.enable(context.BLEND);
     context.blendFuncSeparate(context.SRC_ALPHA, context.ONE_MINUS_SRC_ALPHA, context.ONE, context.ONE_MINUS_SRC_ALPHA);

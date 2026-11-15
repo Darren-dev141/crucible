@@ -74,10 +74,19 @@ export function checkVolumeGridShape(resolution, channelCount, label) {
   return bytes;
 }
 
+function checkGridSize(size, label) {
+  if (size !== undefined && (!Array.isArray(size) || size.length !== 3 || !size.every(extent => Number.isFinite(extent) && extent > 0))) {
+    throw new TypeError(`${label} header size must be three positive numbers`);
+  }
+}
+
 /** Packs channels (Float32Array of numbers, or Uint16Array of half float bits) into a grid file. `size` is optional, in scene units. */
 export function encodeVolumeGrid({ resolution, channels, size }) {
   const names = Object.keys(channels);
   checkVolumeGridShape(resolution, names.length, 'encodeVolumeGrid');
+  const unknownName = names.find(name => !VOLUME_GRID_CHANNELS.includes(name));
+  if (unknownName !== undefined) throw new TypeError(`encodeVolumeGrid: channel "${unknownName}" is not one of ${VOLUME_GRID_CHANNELS.join(', ')}`);
+  checkGridSize(size ?? undefined, 'encodeVolumeGrid');
   if (!names.includes('density')) throw new TypeError('encodeVolumeGrid: channels needs a "density" channel');
   const voxels = resolution[0] * resolution[1] * resolution[2];
   const header = JSON.stringify({ resolution, channels: names, ...(size ? { size } : {}) });
@@ -112,6 +121,7 @@ export function decodeVolumeGrid(source, label = 'volume grid') {
   } catch {
     throw new TypeError(`${label} has a header that is not JSON`);
   }
+  if (header === null || typeof header !== 'object' || Array.isArray(header)) throw new TypeError(`${label} header must be a JSON object with resolution and channels`);
   const names = header.channels;
   if (!Array.isArray(names) || names.length === 0 || names.some(name => !VOLUME_GRID_CHANNELS.includes(name)) || new Set(names).size !== names.length) {
     throw new TypeError(`${label} header channels must be a list of ${VOLUME_GRID_CHANNELS.join(', ')}`);
@@ -123,9 +133,7 @@ export function decodeVolumeGrid(source, label = 'volume grid') {
   if (bytes.length !== dataStart + voxels * 2 * names.length) {
     throw new RangeError(`${label} holds ${bytes.length - dataStart} bytes of data, expected ${voxels * 2 * names.length} for ${header.resolution.join('x')} and ${names.length} channels`);
   }
-  if (header.size !== undefined && (!Array.isArray(header.size) || header.size.length !== 3 || !header.size.every(extent => Number.isFinite(extent) && extent > 0))) {
-    throw new TypeError(`${label} header size must be three positive numbers`);
-  }
+  checkGridSize(header.size, label);
   const channels = Object.create(null);
   names.forEach((name, index) => {
     const values = new Uint16Array(voxels);

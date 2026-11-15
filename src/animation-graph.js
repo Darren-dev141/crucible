@@ -31,6 +31,8 @@ const NUMBER_COMPARATORS = {
   notEquals: (value, limit) => value !== limit,
 };
 const FADE_EPSILON = 1e-9;
+// Clips wrap when sampled within 1e-10 s of their end (animation.js), so a held last frame sits just before it.
+const HOLD_END_MARGIN_SECONDS = 2e-10;
 
 function describe(value) {
   return value === null ? 'null' : typeof value;
@@ -393,8 +395,10 @@ function addRootTravel(runtime, stateWeight, total) {
 
 function motionTime(runtime, motion) {
   const { phase, state } = runtime;
-  const cycle = state.loop ? phase - Math.floor(phase) : Math.min(phase, 1);
-  return cycle * motion.clip.duration;
+  if (state.loop) return (phase - Math.floor(phase)) * motion.clip.duration;
+  const time = Math.min(phase, 1) * motion.clip.duration;
+  // A looping clip sampled exactly at its end wraps to its first frame; a one-shot state must hold the last frame instead.
+  return motion.clip.loop ? Math.min(time, motion.clip.duration - HOLD_END_MARGIN_SECONDS) : time;
 }
 
 function conditionsHold(transition, currentRuntime) {

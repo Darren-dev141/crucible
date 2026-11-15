@@ -39,7 +39,7 @@ function partCentre(part, matrix) {
 // The parts whose centre lies within 1.5 times the widest spread of the middle 60 percent of the centres (20th to 80th
 // percentile) from that spread, on every axis. A lawn or a hedge beside a room is farther out than that.
 function partsNearTheRest(parts, worldMatrices) {
-  const centres = parts.map(part => partCentre(part, worldMatrices.get(part.name)));
+  const centres = parts.map(part => partCentre(part, worldMatrices.get(part) ?? worldMatrices.get(part.name)));
   const spreads = [0, 1, 2].map(axis => {
     const values = centres.map(centre => centre[axis]).sort((first, second) => first - second);
     return [values[Math.floor((values.length - 1) * 0.2)], values[Math.ceil((values.length - 1) * 0.8)]];
@@ -86,7 +86,7 @@ function closedRoomWallShare(parts, worldMatrices) {
 /**
  * The share of rays from the middle of the bounds that hit a part's inner face (closedRoomShare), or, when that is not a room,
  * the same test on the parts near the rest, if that is larger. The heaviest parts are left out when the scene has more than
- * CLOSED_ROOM_MAXIMUM_TRIANGLES triangles. Null when nothing is left to test. `worldMatrices` maps a part's name to its world matrix.
+ * CLOSED_ROOM_MAXIMUM_TRIANGLES triangles. Null when nothing is left to test. `worldMatrices` maps each part (or its name) to its world matrix.
  */
 export function fittedClosedRoomShare(parts, worldMatrices) {
   const kept = lightestParts(parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode)));

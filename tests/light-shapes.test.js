@@ -91,3 +91,28 @@ test('the path tracer reads the same sun disk and profile samples as the raster'
   assert.equal(soft.lights.sun.angularRadius, 0.05);
   assert.equal(soft.lights.areas[0].profile, null);
 });
+
+test('a profile whose axis value is tiny against its peak stays finite', () => {
+  for (const axis of [5e-324, 1e-300, 1e-30]) {
+    const samples = profileSamples(resolveIesProfile({ angles: [0, 90], candela: [axis, 1e7] }));
+    assert.ok(Array.from(samples).every(value => Number.isFinite(value) && value <= 1), `axis ${axis}`);
+  }
+});
+
+test('an IES file with a fractional angle count says so instead of blaming the candela', () => {
+  const text = ['TILT=NONE', '1 1000 1 2.5 1 1 2 0 0 0', '1 1 100', '0 90', '0', '100 50 7'].join('\n');
+  assert.throws(() => parseIesPhotometry(text), /whole numbers/);
+});
+
+test('a GPU light bake of a spot cone too narrow to change its cosine keeps a finite edge', async () => {
+  const { bakeLightmapsAsync } = await import('../src/light-bake-gpu.js');
+  const floor = { name: 'floor', geometry: box(0, 1), matrix: new Float32Array([4, 0, 0, 0, 0, 0.1, 0, 0, 0, 0, 4, 0, 0, 0, 0, 1]), material: { tag: 'surface', color: [0.7, 0.7, 0.7], metallic: 0, roughness: 0.8, emission: 0 } };
+  let spotBlend;
+  const texelTracer = async (scene, texels) => {
+    spotBlend = scene.lights.spots[0].blend;
+    return { radiance: new Float32Array(texels.count * 3), escaped: new Float32Array(texels.count), gpu: 'fake', compileSeconds: 0 };
+  };
+  const spot = { position: [0, 2, 0], direction: [0, -1, 0], intensity: 4, angle: 1e-9, penumbra: 0.5 };
+  await bakeLightmapsAsync([floor], { spotLights: [spot], keyColor: [0, 0, 0] }, { samples: 2, bounces: 1, texelsPerUnit: 2, maxResolution: 8, backend: 'native', texelTracer });
+  assert.ok(Number.isFinite(spotBlend), `blend ${spotBlend}`);
+});

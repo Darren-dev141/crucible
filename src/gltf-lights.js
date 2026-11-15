@@ -11,6 +11,11 @@ function lightLabel(definition, index) {
   return definition.name ? `"${definition.name}"` : `light ${index}`;
 }
 
+function unitVector(vector) {
+  const length = Math.hypot(...vector);
+  return length > 0 && Number.isFinite(length) ? vector.map(value => value / length) : null;
+}
+
 function validColor(color) {
   return Array.isArray(color) && color.length === 3 && color.every(value => Number.isFinite(value) && value >= 0 && value <= 1);
 }
@@ -55,7 +60,12 @@ export function readPunctualLights(document, lightNodes) {
       continue;
     }
     const position = [matrix[12], matrix[13], matrix[14]];
-    const towardLight = [matrix[8], matrix[9], matrix[10]];
+    // A scaled node stretches the matrix column, so the direction is rebuilt as a unit vector.
+    const towardLight = unitVector([matrix[8], matrix[9], matrix[10]]);
+    if (!towardLight && (definition.type === 'spot' || definition.type === 'directional')) {
+      warnings.push(`Skipped ${label}: node ${nodeIndex} scales the light's direction to zero, so it points nowhere.`);
+      continue;
+    }
     const clampedIntensity = Math.min(intensity, MAX_LIGHT_INTENSITY);
     if (clampedIntensity !== intensity) warnings.push(`Clamped the intensity of ${label} to ${MAX_LIGHT_INTENSITY}.`);
     if (definition.type === 'directional') {
@@ -71,7 +81,10 @@ export function readPunctualLights(document, lightNodes) {
       warnings.push(`Skipped ${label}: light type ${definition.type} is not point, spot or directional.`);
       continue;
     }
-    const range = definition.range === undefined ? 0 : Math.max(definition.range, MIN_LIGHT_RANGE);
+    if (definition.range !== undefined && !Number.isFinite(definition.range)) {
+      warnings.push(`Ignored the range of ${label}: it is not a number.`);
+    }
+    const range = Number.isFinite(definition.range) ? Math.max(definition.range, MIN_LIGHT_RANGE) : 0;
     const light = { position, color, intensity: clampedIntensity, range };
     if (definition.type === 'point') {
       if (pointLights.length >= MAX_POINT_LIGHTS) {
