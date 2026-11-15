@@ -1035,7 +1035,7 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
   const hasSoftFalloff = [...(environment?.pointLights ?? []), ...(environment?.spotLights ?? [])].some(light => light.softFalloff === true);
   if (hasSoftFalloff && !kernelMaterials) notes.add('softFalloff is ignored: only the native cycles kernel draws a light as an oriented disk, the other tracers draw a sphere.');
   const hasPortal = (environment?.areaLights ?? []).some(light => light.portal === true);
-  if (hasPortal && !kernelMaterials && backend !== 'cpu') notes.add('Light portals (areaLights with portal: true) are ignored: only the native cycles kernel and the CPU tracer sample the environment through them, the other tracers draw no light from a portal.');
+  if (hasPortal && !kernelMaterials && backend === 'gpu') notes.add('Light portals (areaLights with portal: true) are ignored: only the native cycles kernel, the CPU tracer and the WebGPU tracer sample the environment through them, the other tracers draw no light from a portal.');
   if (!environment?.map) notes.add('There is no environment map, so the sky is black and only the lights shine.');
   if (environment?.cameraIntensity !== undefined && !kernelMaterials) notes.add('cameraIntensity is ignored: only the native cycles kernel draws the sky a camera ray sees at its own strength, the other tracers use the map intensity.');
   for (const part of parts) {

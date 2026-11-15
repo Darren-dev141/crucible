@@ -127,8 +127,9 @@ test('a portal keeps the mean of a room lit through a window and cuts the change
   assert.ok(differenceWithout / differenceWith >= 2, `seed difference ${differenceWithout} without, ${differenceWith} with a portal`);
 });
 
-test('only the WebGL and WebGPU tracers are told that a portal draws nothing', () => {
+test('only the WebGL tracer is told that a portal draws nothing', () => {
   const environment = { areaLights: [WINDOW_PORTAL] };
   assert.doesNotMatch(describeIgnoredFeatures([], environment, 'cpu').join(' '), /portal/);
-  for (const backend of ['gpu', 'webgpu']) assert.match(describeIgnoredFeatures([], environment, backend).join(' '), /Light portals .* are ignored/);
+  assert.doesNotMatch(describeIgnoredFeatures([], environment, 'webgpu').join(' '), /portal/);
+  assert.match(describeIgnoredFeatures([], environment, 'gpu').join(' '), /Light portals .* are ignored/);
 });

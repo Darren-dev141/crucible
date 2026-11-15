@@ -10,6 +10,13 @@ import { MAX_GPU_TRACE_TRIANGLES, MAX_TRACE_TRIANGLES } from './path-tracer-scen
 // entry of the light bake (light-bake-gpu.js). The wavefront kernel traces neither fog nor subsurface.
 
 /** `megakernel`: one invocation per path (the default, faster on the demo room). `wavefront`: generate, extend, shade, shadow kernels with the path state in a buffer. */
+const PORTAL_FLOATS = 16;
+
+// One portal as the kernel reads it: position, width, normal, height, across, along, each vector padded to four floats.
+function packPortal(portal) {
+  return Float32Array.of(...portal.position, portal.width, ...portal.normal, portal.height, ...portal.across, 0, ...portal.along, 0);
+}
+
 export const WEBGPU_KERNELS = ['megakernel', 'wavefront'];
 export const DEFAULT_WEBGPU_KERNEL = 'megakernel';
 /** Whether the wavefront bins the hits by material before shading them (decided by the measurement in docs/webgpu-decision.md). */
@@ -128,10 +135,15 @@ export function uploadScene(device, scene, requestedLightSelection = 'uniform') 
   lightsWithTree.set(lightTableData);
   lightsWithTree.set(lightTreeData, lightTableData.length);
   const environment = packEnvironment(scene.environment);
-  const environmentTables = new Float32Array(environment ? environment.height + environment.width * environment.height : 4);
+  // The portals follow the map's tables, with their count in the last float (path-tracer-webgpu-kernel.js, light portals).
+  const portals = environment ? scene.lights.portals ?? [] : [];
+  const mapTableLength = environment ? environment.height + environment.width * environment.height : 0;
+  const environmentTables = new Float32Array(environment ? mapTableLength + portals.length * PORTAL_FLOATS + 1 : 4);
   if (environment) {
     environmentTables.set(environment.rows.data.subarray(0, environment.height), 0);
     environmentTables.set(environment.pixels.data.subarray(0, environment.width * environment.height), environment.height);
+    portals.forEach((portal, index) => environmentTables.set(packPortal(portal), mapTableLength + index * PORTAL_FLOATS));
+    environmentTables[environmentTables.length - 1] = portals.length;
   }
   // The subsurface table (two vectors per material) follows the material table in the same buffer.
   const materialData = packMaterials(scene.materials, atlas, scene.shadowOnlyParts).data;
