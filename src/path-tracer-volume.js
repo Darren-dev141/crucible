@@ -1,5 +1,5 @@
 import { resolveVolumeFog } from './volumetric.js';
-import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_SURFACE_SHADOW_TAPS } from './local-volumes.js';
+import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY } from './local-volumes.js';
 import { countOpenEdges } from './local-volume-parts.js';
 import { blackbodyRadiance } from './volume-grid.js';
 import { buildTriangleBvh } from './triangle-bvh.js';
@@ -173,6 +173,24 @@ const SKY_DEPTH_TAPS = 1;
 const SKY_DIRECTIONS = [[0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]];
 
 /**
+ * The phase function times the light left after `depth`, summed over the octaves of a volume's `scatterOctaves` (the octave sum of the rasterizer's localVolumeInScatter):
+ * octave n weighs MULTI_SCATTER^n, sees MULTI_EXTINCTION^n of the depth and has MULTI_ANISOTROPY^n of the anisotropy. One octave is the single scatter.
+ */
+function scatterOctaveSum(volume, cosine, depth) {
+  let total = 0;
+  let weight = 1;
+  let extinction = 1;
+  let anisotropy = volume.anisotropy ?? 0;
+  for (let octave = 0; octave < (volume.scatterOctaves ?? 1); octave++) {
+    total += weight * henyeyGreensteinPhase(anisotropy, cosine) * Math.exp(-depth * extinction);
+    weight *= LOCAL_VOLUME_MULTI_SCATTER;
+    extinction *= LOCAL_VOLUME_MULTI_EXTINCTION;
+    anisotropy *= LOCAL_VOLUME_MULTI_ANISOTROPY;
+  }
+  return total;
+}
+
+/**
  * The optical depth per colour channel between a point inside a volume and the volume's far side along a direction, from midpoint
  * taps of its profile: the rasterizer's `localVolumeDepth`, so the lit side of a volume is brighter than the shaded side.
  */
@@ -229,9 +247,8 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
       const detailShadow = volume.shadowDetail === true && volume.shape !== 'grid';
       writeOpticalDepth(volume, x, y, z, flattenedDirection, detailShadow ? LOCAL_VOLUME_DETAIL_SHADOW_TAPS : SUN_DEPTH_TAPS, span, sunDepth, detailShadow);
       const cosine = sun.direction[0] * directionX + sun.direction[1] * directionY + sun.direction[2] * directionZ;
-      const phase = henyeyGreensteinPhase(volume.anisotropy ?? 0, cosine);
       for (let channel = 0; channel < 3; channel++) {
-        sunLight[channel] = sun.color[channel] * phase * LOCAL_VOLUME_KEY_GAIN * Math.exp(-sunDepth[channel] * LOCAL_VOLUME_SHADOW_STRENGTH);
+        sunLight[channel] = sun.color[channel] * LOCAL_VOLUME_KEY_GAIN * scatterOctaveSum(volume, cosine, sunDepth[channel] * LOCAL_VOLUME_SHADOW_STRENGTH);
       }
     }
     for (let channel = 0; channel < 3; channel++) {

@@ -52,7 +52,8 @@ export function packLocalVolumes(volumes, buffers) {
       buffers.grid.set([1, volume.temperatureScale, volume.blackbodyIntensity * volume.emissionStrength, volume.anisotropy], at);
     }
     const axes = volume.axes ?? IDENTITY_AXES;
-    for (let axis = 0; axis < 3; axis++) buffers.axes.set([axes[axis * 3], axes[axis * 3 + 1], axes[axis * 3 + 2], 0], (index * 3 + axis) * 4);
+    // The free fourth component of the first axis row carries the number of scatter octaves.
+    for (let axis = 0; axis < 3; axis++) buffers.axes.set([axes[axis * 3], axes[axis * 3 + 1], axes[axis * 3 + 2], axis === 0 ? volume.scatterOctaves ?? 1 : 0], (index * 3 + axis) * 4);
   });
   return buffers;
 }
@@ -77,6 +78,14 @@ export const LOCAL_VOLUME_LIGHT_DEPTH_SATURATION = 6;
  * side of the smoke clearly darker than the sunlit side, the way the many scatters of a real smoke take the light from its shade.
  */
 export const LOCAL_VOLUME_SHADOW_STRENGTH = 1.2;
+
+/**
+ * The octave sum that approximates multiple scattering in a volume with `scatterOctaves` above 1 (Wrenninge et al. 2015, "Oz: the great and volumetric"), the one `volumeFog` has:
+ * octave n scatters MULTI_SCATTER^n as much, sees MULTI_EXTINCTION^n of the light's optical depth and has MULTI_ANISOTROPY^n of the anisotropy.
+ */
+export const LOCAL_VOLUME_MULTI_SCATTER = 0.5;
+export const LOCAL_VOLUME_MULTI_EXTINCTION = 0.5;
+export const LOCAL_VOLUME_MULTI_ANISOTROPY = 0.5;
 
 /** How many taps along the key light measure the optical depth a volume puts between a surface and the sun (#1047). */
 export const LOCAL_VOLUME_SURFACE_SHADOW_TAPS = 8;

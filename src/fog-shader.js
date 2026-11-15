@@ -1,5 +1,5 @@
 import { registerShaderFeatureCode } from './shader-registry.js';
-import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, LOCAL_VOLUME_SURFACE_SHADOW_TAPS } from './local-volumes.js';
+import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY } from './local-volumes.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
@@ -337,7 +337,21 @@ vec3 localVolumeInScatter(int index, vec3 position, vec3 direction) {
     vec3 lightDirection = normalize(vec3(towardSun.x, towardSun.y * ${LOCAL_VOLUME_SUN_FLATTEN.toFixed(3)}, towardSun.z));
     bool detailShadow = localVolumeGrid[index].y > 0.5 && localVolumeGrid[index].x < 0.5;
     vec3 lightDepth = localVolumeDepth(index, position, lightDirection, detailShadow ? ${LOCAL_VOLUME_DETAIL_SHADOW_TAPS} : 3, detailShadow) * ${LOCAL_VOLUME_SHADOW_STRENGTH.toFixed(3)};
-    sunLight = volumeLightColor * (henyeyGreenstein(dot(direction, towardSun), localVolumeGrid[index].w) * visibility * ${LOCAL_VOLUME_KEY_GAIN.toFixed(3)}) * exp(-lightDepth);
+    // The octave sum of multiple scattering (scatterOctaves, in the free fourth component of the first axis row); one octave is the single scatter.
+    float cosine = dot(direction, towardSun);
+    int octaves = int(localVolumeAxes[index * 3].w + 0.5);
+    vec3 phaseSum = vec3(0.0);
+    float weight = 1.0;
+    float extinction = 1.0;
+    float anisotropy = localVolumeGrid[index].w;
+    for (int octave = 0; octave < ${LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES}; octave++) {
+      if (octave >= octaves) break;
+      phaseSum += weight * henyeyGreenstein(cosine, anisotropy) * exp(-lightDepth * extinction);
+      weight *= ${LOCAL_VOLUME_MULTI_SCATTER.toFixed(3)};
+      extinction *= ${LOCAL_VOLUME_MULTI_EXTINCTION.toFixed(3)};
+      anisotropy *= ${LOCAL_VOLUME_MULTI_ANISOTROPY.toFixed(3)};
+    }
+    sunLight = volumeLightColor * (visibility * ${LOCAL_VOLUME_KEY_GAIN.toFixed(3)}) * phaseSum;
   }
   return localVolumeSkyLight(index, position) + sunLight;
 }
