@@ -85,6 +85,14 @@ async function startDevServer() {
     stdio: 'ignore',
   });
   const origin = `http://127.0.0.1:${port}`;
+  // Ctrl+C or a kill must not leave the dev server running after the driver is gone.
+  const stopOnSignal = () => {
+    child.kill();
+    process.exit(130);
+  };
+  process.once('SIGINT', stopOnSignal);
+  process.once('SIGTERM', stopOnSignal);
+  process.once('exit', () => child.kill());
   const deadline = Date.now() + SERVER_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`The Vite dev server exited with code ${child.exitCode} before it answered.`);
@@ -105,19 +113,24 @@ async function openFeature(feature, flags, origin) {
   const route = requirePage(feature);
   const { chromium } = await import('playwright');
   const browser = await chromium.launch({ executablePath: CHROME_PATH, headless: true, args: GPU_ARGUMENTS });
-  const width = Number(flags.width ?? 1440);
-  const height = Number(flags.height ?? 900);
-  const page = await browser.newPage({ viewport: { width, height } });
-  await page.addInitScript(FAKE_POINTER_LOCK_SCRIPT);
-  const problems = [];
-  page.on('console', message => {
-    if (message.type() === 'error') problems.push(`console error: ${message.text()}`);
-  });
-  page.on('pageerror', error => problems.push(`page error: ${error.message}`));
-  page.on('requestfailed', request => problems.push(`request failed: ${request.url()} (${request.failure()?.errorText})`));
-  await page.goto(origin + route, { waitUntil: 'load', timeout: 120000 });
-  await waitUntilRendered(page, feature, Number(flags.settle ?? 1500));
-  return { browser, page, problems };
+  try {
+    const width = Number(flags.width ?? 1440);
+    const height = Number(flags.height ?? 900);
+    const page = await browser.newPage({ viewport: { width, height } });
+    await page.addInitScript(FAKE_POINTER_LOCK_SCRIPT);
+    const problems = [];
+    page.on('console', message => {
+      if (message.type() === 'error') problems.push(`console error: ${message.text()}`);
+    });
+    page.on('pageerror', error => problems.push(`page error: ${error.message}`));
+    page.on('requestfailed', request => problems.push(`request failed: ${request.url()} (${request.failure()?.errorText})`));
+    await page.goto(origin + route, { waitUntil: 'load', timeout: 120000 });
+    await waitUntilRendered(page, feature, Number(flags.settle ?? 1500));
+    return { browser, page, problems };
+  } catch (error) {
+    await browser.close();
+    throw error;
+  }
 }
 
 async function waitUntilRendered(page, feature, settleMilliseconds) {
