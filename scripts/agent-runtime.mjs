@@ -64,7 +64,7 @@ const MAXIMUM_JOB_FRAME_BYTES = 12 * 1024 * 1024;
 const MAXIMUM_OBJECT_NAMES = 1000;
 
 // The part behind each object ID, and the IDs of each node (a prop made of several parts is one node), cut at the limit.
-function objectIdMetrics(passInfo) {
+export function objectIdMetrics(passInfo) {
   const nodeEntries = Object.entries(passInfo.objectNodes ?? {});
   return {
     objectNames: passInfo.objectNames.slice(0, MAXIMUM_OBJECT_NAMES),

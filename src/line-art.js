@@ -176,7 +176,8 @@ export function resolveLineArt(input = {}) {
       throw new RangeError(`lines.polylines hold ${segments} segments; the limit is ${LINE_ART_LIMITS.maxPolylineSegments}.`);
     }
   }
-  if (input.nodes !== undefined) resolved.nodes = nodesFrom(input.nodes, resolved.color);
+  // null clears the per-node settings, the same as leaving the field out.
+  if (input.nodes !== undefined && input.nodes !== null) resolved.nodes = nodesFrom(input.nodes, resolved.color);
   return resolved;
 }
 
@@ -276,7 +277,7 @@ bool ringHasEdge(ivec2 center, int ring, vec3 centerPart, vec3 centerNormal, flo
   for (int index = 0; index < 4; index++) {
     ivec2 offset = offsets[index];
     if (differs(center, center + offset, centerPart, centerNormal, centerNode) || differs(center, center - offset, centerPart, centerNormal, centerNode)) return true;
-    if (depthJump > 0.0 && centerNode.mode == 0.0 && nodeAt(partAt(center + offset)).mode != 1.0 && nodeAt(partAt(center - offset)).mode != 1.0 && depthEdge(center, offset, centerDepth)) return true;
+    if (depthJump > 0.0 && centerNode.mode == 0.0 && (nodeCount == 0 || (nodeAt(partAt(center + offset)).mode != 1.0 && nodeAt(partAt(center - offset)).mode != 1.0)) && depthEdge(center, offset, centerDepth)) return true;
   }
   return false;
 }
