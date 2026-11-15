@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { checkAddon, entryOf, parseArguments, rangeIsSatisfiable } from '../bin/crucible-addon-check.mjs';
-import { MCP_OPTION_NAMES, mcpHelpText } from '../bin/crucible-mcp-flags.mjs';
+import { MCP_OPTION_FLAGS, MCP_OPTION_NAMES, mcpHelpText, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
+import { MAXIMUM_MEMORY_MIB } from '../src/agent-scene-capabilities.js';
 import { resolveAddons } from '../scripts/mcp-addons.mjs';
 
 const checkScript = resolve('bin/crucible-addon-check.mjs');
@@ -138,13 +139,42 @@ test('--help exits 0 and prints the usage', () => {
   assert.deepEqual(parseArguments(['-h']), { help: true });
 });
 
+const EXPECTED_MCP_FLAGS = [
+  '--addons', '--allow-addon', '--backend', '--browser', '--memory', '--assets', '--packs',
+  '--jobs', '--ffmpeg', '--audio', '--branches', '--relations', '--findings',
+];
+
+test('the flag table names exactly the 13 flags crucible-mcp accepts', () => {
+  assert.deepEqual([...MCP_OPTION_NAMES], EXPECTED_MCP_FLAGS);
+});
+
+test('the help text and the parse error summary name every flag', () => {
+  const helpText = mcpHelpText('0.0.0');
+  const summary = mcpOptionSummary();
+  for (const name of EXPECTED_MCP_FLAGS) {
+    assert.ok(helpText.includes(name), name + ' missing from help text');
+    assert.ok(summary.includes(name), name + ' missing from the error summary');
+  }
+});
+
+test('the --memory range in the flag table follows MAXIMUM_MEMORY_MIB', () => {
+  const memoryFlag = MCP_OPTION_FLAGS.find(flag => flag.name === '--memory');
+  assert.ok(memoryFlag.value.includes('..' + MAXIMUM_MEMORY_MIB + ' '), memoryFlag.value);
+});
+
 test('crucible-mcp --help lists every accepted flag and combines with other flags', () => {
   for (const argumentsList of [['--help'], ['--help', '--backend', 'cpu'], ['--version', '--help']]) {
     const result = spawnSync(process.execPath, [mcpScript, ...argumentsList], { encoding: 'utf8' });
     assert.equal(result.status, 0, argumentsList.join(' '));
-    for (const name of MCP_OPTION_NAMES) assert.ok(result.stdout.includes(name), `${name} missing from help`);
+    for (const name of EXPECTED_MCP_FLAGS) assert.ok(result.stdout.includes(name), name + ' missing from help');
   }
-  for (const flag of ['--addons', '--allow-addon', '--audio', '--branches', '--relations', '--findings']) {
-    assert.ok(mcpHelpText('0.0.0').includes(flag));
-  }
+});
+
+test('runMcpCli rejects an unknown flag with an error that names the flags and --help', async () => {
+  const { runMcpCli } = await import('../scripts/mcp-server.mjs');
+  await assert.rejects(runMcpCli({ argumentsValue: ['--bogus', 'x'] }), error => {
+    for (const name of EXPECTED_MCP_FLAGS) assert.ok(error.message.includes(name), name);
+    assert.match(error.message, /crucible-mcp --help/);
+    return true;
+  });
 });
