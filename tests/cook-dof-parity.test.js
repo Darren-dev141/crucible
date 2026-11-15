@@ -84,7 +84,7 @@ test('focus distance, blades and rotation come through; rotation turns from degr
   );
   assert.equal(lens.focalDistance, 2.5);
   assert.equal(lens.apertureBlades, 6);
-  assert.ok(Math.abs(lens.apertureRotation - Math.PI / 3) < 1e-12, 'a hexagon at 30 degrees is the kernel at 30 degrees plus half a corner step (30)');
+  assert.ok(Math.abs(lens.apertureRotation - Math.PI / 6) < 1e-12, 'a hexagon at 30 degrees reaches the kernel as 30 degrees, as in Cycles');
   assert.equal(resolveThinLens({ ...LENS_OF_50_MM, apertureRotation: 0 }, { aspect: 1, eye: [0, 0, 4], target: [0, 0, 0] }).apertureRotation, 0, 'a round aperture has no offset');
 });
 
