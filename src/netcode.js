@@ -375,18 +375,22 @@ function validateNetcodeOptions(options) {
 // ----- The authority side -----
 
 const SESSION_ID_LENGTH_LIMIT = 64;
-const RETIRED_SESSION_HISTORY = 8;
 
 function isValidSession(session) {
   return typeof session === 'string' && session.length <= SESSION_ID_LENGTH_LIMIT;
 }
 
-// A random id for one run of a client or authority. A restart on the same peer id gets a new one, so the other side
-// can tell a new run from a late message of the old one.
+// An id for one run of a client or authority. A restart on the same peer id gets a new one, so the other side can tell
+// a new run from a late message of the old one. The start time comes first and has a fixed width, so a plain string
+// comparison orders the runs: a message of an older run is stale even when no message of the newer run came before it.
+let lastSessionTimestamp = 0;
+
 function createSessionId() {
+  // Two runs started in the same millisecond still get ordered times.
+  lastSessionTimestamp = Math.max(Date.now(), lastSessionTimestamp + 1);
   // Fixed width, so the byte count of a run does not depend on the draw.
   const randomPart = Math.floor(Math.random() * 0xffffffff).toString(36).padStart(7, '0');
-  return `${Date.now().toString(36)}-${randomPart}`;
+  return `${lastSessionTimestamp.toString(36).padStart(9, '0')}-${randomPart}`;
 }
 
 function highestInputSequence(inputs) {
@@ -444,8 +448,15 @@ function createAuthority(settings, stats) {
       // The client holds no snapshot (it reset on a restart), so the base we remember is gone.
       record.acknowledgedTick = null;
     }
-    // An ack beyond this run's tick belongs to an earlier run of the authority and cannot name a base it has.
-    if (Number.isInteger(message.acknowledgedTick) && message.acknowledgedTick <= tick && message.acknowledgedTick >= (record.acknowledgedTick ?? -1)) {
+    // An ack from an earlier run of the authority cannot name a base this run has: by the run id the client says it is
+    // tracking, or, for a client that does not send one, by a tick beyond this run's tick.
+    const trackedRun = message.authoritySession;
+    if (trackedRun !== undefined && trackedRun !== null && !isValidSession(trackedRun)) {
+      stats.rejectedMessages += 1;
+      return;
+    }
+    const ackBelongsToThisRun = trackedRun === undefined ? message.acknowledgedTick <= tick : trackedRun === sessionId;
+    if (Number.isInteger(message.acknowledgedTick) && ackBelongsToThisRun && message.acknowledgedTick >= (record.acknowledgedTick ?? -1)) {
       record.acknowledgedTick = message.acknowledgedTick;
     }
     for (const entry of inputs) {
@@ -592,7 +603,6 @@ function createClient(settings, stats) {
   let stepSeconds = null;
   const sessionId = createSessionId();
   let authoritySession = null;
-  const retiredAuthoritySessions = [];
   let latestTick = -1;
   let inputSequence = 0;
   let predicted = null;
@@ -646,16 +656,13 @@ function createClient(settings, stats) {
         stats.rejectedMessages += 1;
         return;
       }
-      // A snapshot of an earlier run that was still in flight must not reset the new run's state again.
-      if (retiredAuthoritySessions.includes(message.session)) {
+      // A snapshot of an earlier run that was still in flight must not reset the new run's state, even when it arrives
+      // before any snapshot of the run it came from, so it is told apart by the run order and not by a list.
+      if (authoritySession !== null && message.session < authoritySession) {
         stats.staleSnapshots += 1;
         return;
       }
-      if (authoritySession !== null && authoritySession !== message.session) {
-        retiredAuthoritySessions.push(authoritySession);
-        if (retiredAuthoritySessions.length > RETIRED_SESSION_HISTORY) retiredAuthoritySessions.shift();
-        resetForNewAuthority();
-      }
+      if (authoritySession !== null && message.session > authoritySession) resetForNewAuthority();
       authoritySession = message.session;
     }
     if (message.tick <= latestTick) {
@@ -716,6 +723,7 @@ function createClient(settings, stats) {
     transport.send(settings.serverId, {
       type: 'input',
       session: sessionId,
+      authoritySession,
       acknowledgedTick: latestTick >= 0 ? latestTick : null,
       inputs: pendingInputs.slice(-settings.inputRedundancy).map(({ sequence, input: pending }) => ({ sequence, input: pending })),
     });

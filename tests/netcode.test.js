@@ -425,3 +425,126 @@ test('a jittered authority restart leaves the client within a few ticks after ab
     }
   }
 });
+
+test('an authority restarted within its first frames still resyncs its client, across seeds', () => {
+  for (const lossRate of [0, 0.1]) {
+    for (let framesBeforeRestart = 1; framesBeforeRestart <= 8; framesBeforeRestart += 1) {
+      for (let seed = 1; seed <= 40; seed += 1) {
+        const label = `restart after ${framesBeforeRestart} frames, seed ${seed}, loss ${lossRate}`;
+        const network = createLoopbackNetwork({ seed, latencyMilliseconds: 40, jitterMilliseconds: 30, lossRate });
+        const serverTransport = network.createTransport('server');
+        const firstServer = createPeer({ role: 'authority', authority: 'server', transport: serverTransport });
+        firstServer.netcode.addEntity('a', { owner: 'client-a', tag: 'player' });
+        const client = createPeer({ role: 'client', serverId: 'server', transport: network.createTransport('client-a'), localEntityId: 'a', readInput: () => ({ moveX: 1, moveZ: 0 }) });
+        runFrames(network, [firstServer, client], framesBeforeRestart);
+        firstServer.netcode.dispose();
+        const secondServer = createPeer({ role: 'authority', authority: 'server', transport: serverTransport });
+        secondServer.netcode.addEntity('a', { owner: 'client-a', tag: 'player' });
+        runFrames(network, [secondServer, client], 60);
+        const gap = secondServer.netcode.tick - client.netcode.tick;
+        assert.ok(Math.abs(gap) <= 8, `${label}: client ${client.netcode.tick} vs server ${secondServer.netcode.tick}`);
+        assert.ok(client.netcode.stats.authorityRestarts <= 1, `${label}: the client reset ${client.netcode.stats.authorityRestarts} times`);
+        const serverX = secondServer.netcode.getEntityState('a').position[0];
+        const clientX = client.netcode.getEntityState('a').position[0];
+        assert.ok(Math.abs(serverX - clientX) < 1, `${label}: client x ${clientX} vs server x ${serverX}`);
+      }
+    }
+  }
+});
+
+test('a jittered client restart leaves the new client in step with the authority, across seeds', () => {
+  for (const lossRate of [0, 0.1]) {
+    for (let seed = 1; seed <= 40; seed += 1) {
+      const label = `seed ${seed}, loss ${lossRate}`;
+      const network = createLoopbackNetwork({ seed, latencyMilliseconds: 40, jitterMilliseconds: 30, lossRate });
+      const server = createPeer({ role: 'authority', authority: 'server', transport: network.createTransport('server') });
+      server.netcode.addEntity('a', { owner: 'client-a', tag: 'player' });
+      const clientTransport = network.createTransport('client-a');
+      const moveRight = () => ({ moveX: 1, moveZ: 0 });
+      const firstClient = createPeer({ role: 'client', serverId: 'server', transport: clientTransport, localEntityId: 'a', readInput: moveRight });
+      runFrames(network, [server, firstClient], 60 + (seed % 7));
+      firstClient.netcode.dispose();
+      const secondClient = createPeer({ role: 'client', serverId: 'server', transport: clientTransport, localEntityId: 'a', readInput: moveRight });
+      runFrames(network, [server, secondClient], 60);
+      const gap = server.netcode.tick - secondClient.netcode.tick;
+      assert.ok(Math.abs(gap) <= 8, `${label}: client ${secondClient.netcode.tick} vs server ${server.netcode.tick}`);
+      assert.ok(secondClient.netcode.stats.snapshotsReceived > 10, `${label}: snapshots received ${secondClient.netcode.stats.snapshotsReceived}`);
+      const serverX = server.netcode.getEntityState('a').position[0];
+      const clientX = secondClient.netcode.getEntityState('a').position[0];
+      assert.ok(Math.abs(serverX - clientX) < 1, `${label}: client x ${clientX} vs server x ${serverX}`);
+    }
+  }
+});
+
+// A bare transport that plays the client by hand, so each ack the authority sees is chosen by the test.
+function createHandPlayedClient() {
+  const network = createLoopbackNetwork();
+  const server = createPeer({ role: 'authority', authority: 'server', transport: network.createTransport('server') });
+  server.netcode.addEntity('p', { owner: 'hand' });
+  const transport = network.createTransport('hand');
+  let latestSnapshot = null;
+  transport.receive((peerId, message) => {
+    if (message.type === 'snapshot') latestSnapshot = message;
+  });
+  function stepServer() {
+    server.runtime.step(FRAME_MILLISECONDS);
+    network.advance(1);
+  }
+  stepServer();
+  stepServer();
+  return { server, transport, stepServer, snapshot: () => latestSnapshot };
+}
+
+function handInput(sequence, fields) {
+  return { type: 'input', session: 'hand-run', inputs: [{ sequence, input: { moveX: 1, moveZ: 0 } }], ...fields };
+}
+
+test('the authority forgets its base when the newest message acks null, and keeps it for an older reordered one', () => {
+  const { transport, stepServer, snapshot } = createHandPlayedClient();
+  const run = snapshot().session;
+  transport.send('server', handInput(1, { authoritySession: run, acknowledgedTick: snapshot().tick }));
+  stepServer();
+  stepServer();
+  assert.notEqual(snapshot().base, null, 'an ack of this run names the base');
+  transport.send('server', handInput(2, { authoritySession: run, acknowledgedTick: snapshot().tick }));
+  stepServer();
+  transport.send('server', handInput(1, { authoritySession: null, acknowledgedTick: null }));
+  stepServer();
+  stepServer();
+  assert.notEqual(snapshot().base, null, 'a null ack on an older reordered message does not reset the base');
+  transport.send('server', handInput(3, { authoritySession: null, acknowledgedTick: null }));
+  stepServer();
+  stepServer();
+  stepServer();
+  assert.equal(snapshot().base, null, 'a null ack on the newest message resets the base to a full snapshot');
+});
+
+test('the authority ignores an ack that names an earlier run of itself', () => {
+  const { transport, stepServer, snapshot } = createHandPlayedClient();
+  transport.send('server', handInput(1, { authoritySession: 'an-older-run', acknowledgedTick: snapshot().tick }));
+  stepServer();
+  stepServer();
+  assert.equal(snapshot().base, null, 'an ack from another run keeps the next snapshot full');
+  transport.send('server', handInput(2, { authoritySession: 7, acknowledgedTick: 1 }));
+  stepServer();
+  assert.equal(snapshot().base, null);
+});
+
+test('a client drops a snapshot of an older run even when it never saw that run before', () => {
+  const network = createLoopbackNetwork();
+  const serverTransport = network.createTransport('server');
+  const client = createPeer({ role: 'client', serverId: 'server', transport: network.createTransport('c') });
+  client.runtime.step(FRAME_MILLISECONDS);
+  const snapshot = (session, tick) => ({ type: 'snapshot', tick, base: null, entities: {}, removed: [], lastProcessedInput: 0, session });
+  serverTransport.send('c', snapshot('run-b', 1));
+  serverTransport.send('c', snapshot('run-a', 2));
+  serverTransport.send('c', snapshot('run-b', 3));
+  network.advance(1);
+  assert.equal(client.netcode.stats.authorityRestarts, 0, 'the older run arrives second and is stale, not a restart');
+  assert.equal(client.netcode.stats.staleSnapshots, 1);
+  assert.equal(client.netcode.tick, 3);
+  serverTransport.send('c', snapshot('run-c', 1));
+  network.advance(1);
+  assert.equal(client.netcode.stats.authorityRestarts, 1);
+  assert.equal(client.netcode.tick, 1);
+});
