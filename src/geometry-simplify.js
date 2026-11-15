@@ -4,10 +4,15 @@
 // move or disappear, so textures and shading breaks stay where they were. The cost of a collapse is the quadric error
 // of Garland and Heckbert (the same measure `mesh-decimate.js` uses on mesh data, which drops uvs).
 // Used for scans and textured models that `generateGeometryLods` could not reduce before (#1163).
+// Every plane counts once (not by face area), so the square root of a quadric cost is a distance in the units of the
+// positions and scales with the mesh: tiny triangles do not make a collapse look cheaper.
 
 const PER_VERTEX_ATTRIBUTES = [['normals', 3], ['uvs', 2], ['lightUvs', 2], ['colors', 3], ['skyVisibility', 1]];
 const MINIMUM_NORMAL_AGREEMENT = 0.2;
 const MINIMUM_TRIANGLES = 4;
+/** The most triangles and vertices one geometry may have: the edge map and the heap grow with them. */
+export const MAXIMUM_SIMPLIFY_TRIANGLES = 2000000;
+export const MAXIMUM_SIMPLIFY_VERTICES = 2000000;
 
 class MinHeap {
   constructor() {
@@ -56,6 +61,11 @@ function validateGeometry(geometry) {
     throw new TypeError('simplifyGeometry needs a geometry with Float32Array positions and Uint16Array or Uint32Array indices.');
   }
   if (geometry.indices.length % 3 !== 0) throw new RangeError('simplifyGeometry needs indices that hold whole triangles.');
+  const triangleCount = geometry.indices.length / 3;
+  const vertexCount = geometry.positions.length / 3;
+  if (triangleCount > MAXIMUM_SIMPLIFY_TRIANGLES || vertexCount > MAXIMUM_SIMPLIFY_VERTICES) {
+    throw new RangeError(`simplifyGeometry takes at most ${MAXIMUM_SIMPLIFY_TRIANGLES} triangles and ${MAXIMUM_SIMPLIFY_VERTICES} vertices per geometry, got ${triangleCount} triangles and ${vertexCount} vertices: split the part into smaller geometries or skip levels for it.`);
+  }
   for (const field of ['joints', 'weights', 'morphTargets']) {
     if (geometry[field]) throw new RangeError(`simplifyGeometry cannot reduce skinned or morphed geometry (${field}); its per-vertex weights would break.`);
   }
@@ -95,18 +105,18 @@ export function findLockedVertices(indices, vertexCount) {
 }
 
 // A quadric is the symmetric 4x4 matrix of a plane sum, stored as ten numbers: aa ab ac ad bb bc bd cc cd dd.
-function addPlane(quadrics, vertex, nx, ny, nz, d, weight) {
+function addPlane(quadrics, vertex, nx, ny, nz, d) {
   const base = vertex * 10;
-  quadrics[base] += weight * nx * nx;
-  quadrics[base + 1] += weight * nx * ny;
-  quadrics[base + 2] += weight * nx * nz;
-  quadrics[base + 3] += weight * nx * d;
-  quadrics[base + 4] += weight * ny * ny;
-  quadrics[base + 5] += weight * ny * nz;
-  quadrics[base + 6] += weight * ny * d;
-  quadrics[base + 7] += weight * nz * nz;
-  quadrics[base + 8] += weight * nz * d;
-  quadrics[base + 9] += weight * d * d;
+  quadrics[base] += nx * nx;
+  quadrics[base + 1] += nx * ny;
+  quadrics[base + 2] += nx * nz;
+  quadrics[base + 3] += nx * d;
+  quadrics[base + 4] += ny * ny;
+  quadrics[base + 5] += ny * nz;
+  quadrics[base + 6] += ny * d;
+  quadrics[base + 7] += nz * nz;
+  quadrics[base + 8] += nz * d;
+  quadrics[base + 9] += d * d;
 }
 
 function quadricError(quadrics, first, second, x, y, z) {
@@ -138,7 +148,7 @@ function buildQuadrics(positions, indices, vertexCount) {
     ny /= doubleArea;
     nz /= doubleArea;
     const d = -(nx * positions[first * 3] + ny * positions[first * 3 + 1] + nz * positions[first * 3 + 2]);
-    for (const vertex of [first, second, third]) addPlane(quadrics, vertex, nx, ny, nz, d, doubleArea / 2);
+    for (const vertex of [first, second, third]) addPlane(quadrics, vertex, nx, ny, nz, d);
   }
   return quadrics;
 }

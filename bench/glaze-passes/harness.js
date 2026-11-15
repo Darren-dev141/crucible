@@ -90,7 +90,7 @@ function replaceColourShaders(replaceVertex) {
   };
 }
 
-window.measureScene = async function measureScene({ description, glbUrl, hdriUrl, frames = 200, capture = false, alternate = false, segmented = true, width = 1280, height = 720, rendererOverrides = {}, experiment = null, lodRatios = [0.25, 0.0625] }) {
+window.measureScene = async function measureScene({ description, glbUrl, hdriUrl, frames = 200, capture = false, alternate = false, segmented = true, width = 1280, height = 720, rendererOverrides = {}, experiment = null, cameraDistanceScale = 1, lodRatios = [0.25, 0.0625] }) {
   const canvas = document.querySelector('#viewport');
   const experiments = new Set(String(experiment ?? '').split(','));
   if (experiments.has('no-invariant')) {
@@ -138,7 +138,7 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
     // The shipped helper: levels for every dense, eligible part (canvas pixels as the renderer counts them).
     const started = performance.now();
     parts = addLodsToDenseParts(asset.parts, { pixels: width * height * (description.renderer?.pixelRatio ?? 1.5) ** 2, ratios: lodRatios });
-    lodReport = { milliseconds: Math.round(performance.now() - started), partsWithLevels: parts.filter(part => part.lods).length };
+    lodReport = { milliseconds: Math.round(performance.now() - started), partsWithLevels: parts.filter(part => part.lods).length, levelErrors: [...new Set(parts.filter(part => part.lods).map(part => part.lods))].map(levels => levels.map(level => [level.triangles, Number(level.error.toPrecision(3))])) };
   }
   const rendererOptions = description.renderer ?? {};
   const shadowCascades = rendererOptions.shadowCascades ? createCascadedShadows(rendererOptions.shadowCascades) : undefined;
@@ -150,7 +150,7 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
   const timer = createSegmentTimer(context);
   // The renderer's own timer would open a query inside ours, and WebGL allows one at a time.
   renderer.gpuTimer = null;
-  const frame = { exposure: description.exposure ?? 1, ...(description.frame ?? {}), eye: description.eye, target: description.target };
+  const frame = { exposure: description.exposure ?? 1, ...(description.frame ?? {}), eye: description.eye.map((value, axis) => description.target[axis] + (value - description.target[axis]) * cameraDistanceScale), target: description.target };
   if (experiment === 'discard') {
     // Vertex work only: the rasterizer throws every triangle away, so no pixel is shaded.
     const originalDraw = renderer.drawAlphaBatch.bind(renderer);

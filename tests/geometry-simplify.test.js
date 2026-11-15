@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sphere } from '../src/geometry.js';
-import { simplifyGeometry, findLockedVertices } from '../src/geometry-simplify.js';
+import { simplifyGeometry, findLockedVertices, MAXIMUM_SIMPLIFY_TRIANGLES } from '../src/geometry-simplify.js';
 import { generateGeometryLods } from '../src/mesh-lod.js';
 import { addLodsToDenseParts, trianglesPerPixel } from '../src/dense-lods.js';
 
@@ -74,11 +74,70 @@ test('levels keep the seam of a sphere and report a growing error', () => {
   for (const position of seamPositions) assert.ok(survivors.has(position), `seam vertex ${position} survives`);
 });
 
-test('the same input gives the same levels', () => {
-  const first = simplifyGeometry(sphere(32, 16), { ratios: [0.3] })[0].geometry;
-  const second = simplifyGeometry(sphere(32, 16), { ratios: [0.3] })[0].geometry;
-  assert.deepEqual([...first.indices], [...second.indices]);
-  assert.deepEqual([...first.positions], [...second.positions]);
+function withAllAttributes(geometry) {
+  const vertexCount = geometry.positions.length / 3;
+  const lightUvs = new Float32Array(vertexCount * 2).map((value, index) => (index * 7919 % 1000) / 1000);
+  const skyVisibility = new Float32Array(vertexCount).map((value, index) => (index % 10) / 10);
+  const colors = new Float32Array(vertexCount * 3).map((value, index) => (index % 13) / 13);
+  return { ...geometry, lightUvs, skyVisibility, colors };
+}
+
+test('the same input gives the same levels, byte for byte, in every attribute', () => {
+  const first = simplifyGeometry(withAllAttributes(sphere(32, 16)), { ratios: [0.5, 0.3] });
+  const second = simplifyGeometry(withAllAttributes(sphere(32, 16)), { ratios: [0.5, 0.3] });
+  first.forEach((level, index) => {
+    for (const field of ['positions', 'normals', 'uvs', 'colors', 'lightUvs', 'skyVisibility', 'indices']) {
+      assert.ok(level.geometry[field], `level ${index} has ${field}`);
+      assert.deepEqual(Buffer.from(level.geometry[field].buffer), Buffer.from(second[index].geometry[field].buffer), field);
+    }
+    assert.equal(level.error, second[index].error);
+  });
+});
+
+test('error is a distance: scaling the mesh by k scales the error by k', () => {
+  const geometry = sphere(48, 24);
+  const base = simplifyGeometry(geometry, { ratios: [0.3] })[0];
+  for (const factor of [0.125, 4, 256]) {
+    const scaled = { ...geometry, positions: geometry.positions.map(value => value * factor) };
+    const level = simplifyGeometry(scaled, { ratios: [0.3] })[0];
+    assert.equal(level.triangles, base.triangles);
+    assert.ok(Math.abs(level.error / (base.error * factor) - 1) < 1e-3, `scale ${factor}: ${level.error} against ${base.error * factor}`);
+  }
+});
+
+test('a UV seam on a flat grid stays locked and keeps its uvs on both sides', () => {
+  // Two grids side by side share the column x = 1 but not its vertices: the uvs jump there.
+  const left = uvGrid(12);
+  const right = uvGrid(12);
+  const count = left.positions.length / 3;
+  const positions = new Float32Array(count * 6);
+  positions.set(left.positions);
+  positions.set(right.positions.map((value, index) => (index % 3 === 0 ? value + 1 : value)), count * 3);
+  const uvs = new Float32Array(count * 4);
+  uvs.set(left.uvs);
+  uvs.set(right.uvs.map(value => value * 0.5 + 7), count * 2);
+  const normals = new Float32Array(count * 6).map((value, index) => (index % 3 === 2 ? 1 : 0));
+  const indices = Uint32Array.from([...left.indices, ...right.indices.map(index => index + count)]);
+  const geometry = { positions, normals, uvs, indices };
+  const locked = findLockedVertices(indices, count * 2);
+  const [level] = simplifyGeometry(geometry, { ratios: [0.2] });
+  const seamUvs = new Map();
+  for (let vertex = 0; vertex < level.geometry.positions.length / 3; vertex++) {
+    if (level.geometry.positions[vertex * 3] !== 1) continue;
+    const key = level.geometry.positions[vertex * 3 + 1];
+    const uv = level.geometry.uvs[vertex * 2];
+    seamUvs.set(key, [...(seamUvs.get(key) ?? []), uv]);
+  }
+  assert.equal(seamUvs.size, 13, 'every seam row survives');
+  for (const uvsAtRow of seamUvs.values()) assert.deepEqual(uvsAtRow.sort(), [1, 7].sort());
+  let lockedSeam = 0;
+  for (let vertex = 0; vertex < count * 2; vertex++) if (locked[vertex] && positions[vertex * 3] === 1) lockedSeam++;
+  assert.equal(lockedSeam, 26, 'the seam vertices of both sides are locked');
+});
+
+test('a geometry over the cap is refused with what to do', () => {
+  const huge = { positions: new Float32Array(9), indices: new Uint32Array((MAXIMUM_SIMPLIFY_TRIANGLES + 1) * 3) };
+  assert.throws(() => simplifyGeometry(huge), /at most 2000000 triangles.*got 2000001 triangles.*split the part/);
 });
 
 test('generateGeometryLods keeps the uvs of a textured geometry', () => {

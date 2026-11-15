@@ -1,4 +1,5 @@
 import { generateGeometryLods, DEFAULT_LOD_RATIOS } from './mesh-lod.js';
+import { MAXIMUM_SIMPLIFY_TRIANGLES } from './geometry-simplify.js';
 import { DENSE_TRIANGLES_PER_PIXEL, partTakesLods } from './renderer.js';
 
 // Parts for a scene with more than one triangle per pixel (a scan, a sculpt), given `lods` so that each draws with the
@@ -26,7 +27,7 @@ export function addLodsToDenseParts(parts, { pixels, minimumTrianglesPerPixel = 
   const levelsByGeometry = new Map();
   return parts.map(part => {
     const triangles = part.geometry.indices.length / 3;
-    if (part.lods || triangles < minimumTriangles || !partTakesLods(part)) return part;
+    if (part.lods || triangles < minimumTriangles || triangles > MAXIMUM_SIMPLIFY_TRIANGLES || !partTakesLods(part)) return part;
     if (!levelsByGeometry.has(part.geometry)) levelsByGeometry.set(part.geometry, generateGeometryLods(part.geometry, { ratios }));
     return { ...part, lods: levelsByGeometry.get(part.geometry) };
   });
