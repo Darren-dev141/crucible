@@ -49,8 +49,11 @@ export function placeCellVertices(distances, grid, origin) {
 const AXIS_BASES = [[1, 2], [2, 0], [0, 1]];
 const QUAD_OFFSETS = [[-1, -1], [0, -1], [0, 0], [-1, 0]];
 
-/** One quad of cell vertices per grid edge that crosses the surface, wound so the normal points outward. */
-export function quadsAroundEdges(distances, grid, cellVertex) {
+/**
+ * One quad of cell vertices per grid edge that crosses the surface, wound so the normal points outward. When
+ * `insidePoints` is an array, the inside grid point of each quad is pushed to it, for `splitSaddleVertices`.
+ */
+export function quadsAroundEdges(distances, grid, cellVertex, insidePoints = null) {
   const cellsPerAxis = grid.points.map(count => count - 1);
   const [pointsX, pointsY, pointsZ] = grid.points;
   const strides = [1, pointsX, pointsX * pointsY];
@@ -71,6 +74,7 @@ export function quadsAroundEdges(distances, grid, cellVertex) {
           const quad = QUAD_OFFSETS.map(([stepU, stepV]) => cellVertexAt(cellVertex, cellsPerAxis, point, axis, u, v, stepU, stepV));
           if (quad.includes(-1)) continue;
           quads.push(here < 0 ? quad : quad.reverse());
+          insidePoints?.push(here < 0 ? index : index + strides[axis]);
         }
       }
     }
@@ -84,4 +88,111 @@ function cellVertexAt(cellVertex, cellsPerAxis, point, axis, u, v, stepU, stepV)
   cell[v] += stepV;
   if (cell[0] >= cellsPerAxis[0] || cell[1] >= cellsPerAxis[1] || cell[2] >= cellsPerAxis[2]) return -1;
   return cellVertex[(cell[2] * cellsPerAxis[1] + cell[1]) * cellsPerAxis[0] + cell[0]];
+}
+
+// A grid face whose four corners alternate inside and outside (a saddle) crosses the surface on all four of its edges,
+// so the four quads around those edges all join the same two cell vertices and that edge has four quads. Every quad
+// belongs to the grid edge between one inside and one outside point; the two quads that share an inside point are the
+// two halves of one sheet, so the pair of cell vertices is split in two and each sheet keeps its own copy. A cell with
+// several saddle faces splits into one copy for each sheet that passes through it.
+const SPLIT_PULL = 0.1;
+
+function findRoot(parents, slot) {
+  let root = slot;
+  while (parents[root] !== root) root = parents[root];
+  while (parents[slot] !== root) {
+    const next = parents[slot];
+    parents[slot] = root;
+    slot = next;
+  }
+  return root;
+}
+
+function quadsByEdge(quads) {
+  const edges = new Map();
+  quads.forEach((quad, quadIndex) => {
+    for (let corner = 0; corner < 4; corner++) {
+      const first = quad[corner];
+      const second = quad[(corner + 1) % 4];
+      const key = first < second ? `${first},${second}` : `${second},${first}`;
+      if (!edges.has(key)) edges.set(key, { first: Math.min(first, second), second: Math.max(first, second), quadIndices: [] });
+      edges.get(key).quadIndices.push(quadIndex);
+    }
+  });
+  return edges;
+}
+
+// The quads that stay one sheet at this edge: both of a plain edge, or the two that share an inside point on a saddle.
+function sheetPairs(quadIndices, insidePoints) {
+  if (quadIndices.length !== 4) return [quadIndices];
+  const byInside = new Map();
+  for (const quadIndex of quadIndices) {
+    const inside = insidePoints[quadIndex];
+    byInside.set(inside, [...(byInside.get(inside) ?? []), quadIndex]);
+  }
+  const groups = [...byInside.values()];
+  return groups.length === 2 && groups.every(group => group.length === 2) ? groups : [quadIndices];
+}
+
+/**
+ * Splits cell vertices where four quads share an edge, so every such edge joins exactly two quads. `insidePoints` is
+ * the array `quadsAroundEdges` filled. Returns new quads and positions; the input is left as it was.
+ */
+export function splitSaddleVertices(quads, insidePoints, positions) {
+  const edges = quadsByEdge(quads);
+  if (![...edges.values()].some(edge => edge.quadIndices.length === 4)) return { quads, positions };
+  const parents = Int32Array.from({ length: quads.length * 4 }, (value, slot) => slot);
+  const slotOf = (quadIndex, vertex) => quadIndex * 4 + quads[quadIndex].indexOf(vertex);
+  for (const { first, second, quadIndices } of edges.values()) {
+    for (const group of sheetPairs(quadIndices, insidePoints)) {
+      for (const vertex of [first, second]) {
+        const rootSlot = findRoot(parents, slotOf(group[0], vertex));
+        for (const quadIndex of group.slice(1)) parents[findRoot(parents, slotOf(quadIndex, vertex))] = rootSlot;
+      }
+    }
+  }
+  return rebuildWithCopies(quads, positions, parents);
+}
+
+function rebuildWithCopies(quads, positions, parents) {
+  const copyOfRoot = new Map();
+  const copiesPerVertex = new Map();
+  const copyMembers = new Map();
+  const nextPositions = positions.slice();
+  const nextQuads = quads.map((quad, quadIndex) => quad.map((vertex, corner) => {
+    const root = findRoot(parents, quadIndex * 4 + corner);
+    if (!copyOfRoot.has(root)) {
+      const copiesSoFar = copiesPerVertex.get(vertex) ?? 0;
+      const copyIndex = copiesSoFar === 0 ? vertex : nextPositions.length / 3;
+      if (copiesSoFar > 0) nextPositions.push(0, 0, 0);
+      copiesPerVertex.set(vertex, copiesSoFar + 1);
+      copyOfRoot.set(root, copyIndex);
+      copyMembers.set(copyIndex, { vertex, quadIndices: new Set() });
+    }
+    const copyIndex = copyOfRoot.get(root);
+    copyMembers.get(copyIndex).quadIndices.add(quadIndex);
+    return copyIndex;
+  }));
+  pullCopiesApart({ copyMembers, copiesPerVertex, quads, positions, nextPositions });
+  return { quads: nextQuads, positions: nextPositions };
+}
+
+// Copies of one cell vertex start at the same point; each moves a tenth of the way to the middle of its own sheet so the
+// two sheets do not touch and no later edit welds them back together.
+function pullCopiesApart({ copyMembers, copiesPerVertex, quads, positions, nextPositions }) {
+  for (const [copyIndex, { vertex, quadIndices }] of copyMembers) {
+    if (copiesPerVertex.get(vertex) < 2) continue;
+    const middle = [0, 0, 0];
+    let count = 0;
+    for (const quadIndex of quadIndices) {
+      for (const other of quads[quadIndex]) {
+        for (let axis = 0; axis < 3; axis++) middle[axis] += positions[other * 3 + axis];
+        count++;
+      }
+    }
+    for (let axis = 0; axis < 3; axis++) {
+      const here = positions[vertex * 3 + axis];
+      nextPositions[copyIndex * 3 + axis] = here + SPLIT_PULL * (middle[axis] / count - here);
+    }
+  }
 }

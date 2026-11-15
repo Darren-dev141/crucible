@@ -2,7 +2,7 @@ import { createMeshData, meshBounds } from './mesh-data.js';
 import { lintMesh } from './mesh-lint.js';
 import { edgeCornerTable } from './mesh-topology.js';
 import { createSurfaceDistance, triangulatedSurface } from './mesh-surface-distance.js';
-import { placeCellVertices, quadsAroundEdges } from './surface-nets.js';
+import { placeCellVertices, quadsAroundEdges, splitSaddleVertices } from './surface-nets.js';
 
 // Voxel remesh: sample the signed distance to the surface on a grid, then place one vertex in each cell the surface
 // crosses (surface nets) and join the four cells around each crossing grid edge into a quad. The result is a closed
@@ -23,8 +23,8 @@ function assertOutward(mesh) {
   if (inverted) throw new RangeError(`remesh needs outward-facing normals: ${inverted.count} inverted part. ${inverted.fix}`);
 }
 
-// Surface nets can leave a saddle edge shared by four quads on thin, bumpy surfaces; that shell is still closed and is
-// kept. An edge with one quad is a hole, and a hole would pass for a solid in every later edit, so it fails.
+// An edge with one quad is a hole, and a hole would pass for a solid in every later edit, so it fails. Saddle edges with
+// four quads are split before this check (splitSaddleVertices).
 export function assertNoHoles(mesh) {
   const table = edgeCornerTable(mesh);
   for (let edge = 0; edge < mesh.edgeCount; edge++) {
@@ -145,8 +145,10 @@ export function remeshMesh(mesh, options, buildQuads = quadsAroundEdges) {
   const grid = remeshGridSize(mesh, options);
   const surface = triangulatedSurface(mesh);
   const { distances, origin } = sampleDistances(mesh, surface, grid);
-  const { cellVertex, positions } = placeCellVertices(distances, grid, origin);
-  const quads = buildQuads(distances, grid, cellVertex);
+  const placed = placeCellVertices(distances, grid, origin);
+  const insidePoints = [];
+  const builtQuads = buildQuads(distances, grid, placed.cellVertex, insidePoints);
+  const { quads, positions } = splitSaddleVertices(builtQuads, insidePoints, placed.positions);
   if (!quads.length) throw new RangeError('remesh found no surface: the voxel size is larger than the mesh.');
   const faceOffsets = Uint32Array.from({ length: quads.length + 1 }, (value, index) => index * 4);
   const remeshed = createMeshData({ positions: Float32Array.from(positions), faceOffsets, cornerVertices: Uint32Array.from(quads.flat()) });

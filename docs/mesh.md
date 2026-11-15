@@ -470,7 +470,7 @@ attributes (`uv`, colour, `sharp`) are dropped, so unwrap after it. The result r
 `remesh` (`voxelSize`, or `resolution` cells along the longest side up to 192) samples the signed distance to the
 surface on a grid and builds a closed quad surface with surface nets. Only cells near the surface are queried through the
 triangle BVH; the rest take their sign from a flood fill. The grid is checked before it is allocated (192 per side, 4,194,304
-cells). The mesh must be closed and outward facing: an inside-out mesh (lint `inverted-part`) fails with a `flip_normals` hint. The result carries no tags or attributes, and a grid that cannot close the surface fails instead of returning a damaged mesh.
+cells). The mesh must be closed and outward facing: an inside-out mesh (lint `inverted-part`) fails with a `flip_normals` hint. The result carries no tags or attributes, and a grid that cannot close the surface fails instead of returning a damaged mesh. Where a thin, bumpy surface leaves a saddle face (four crossing edges), the two cell vertices are split into one copy for each sheet, so every edge joins exactly two quads and lint finds no `non-manifold-edge`.
 
 `generateMeshLods(mesh, { ratios })` (also `generateGeometryLods` for renderer geometry such as a recipe part, and
 `generateAssetLods` for a static imported asset) returns level 0, the input, and one level for each ratio, from strictly
