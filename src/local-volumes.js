@@ -53,7 +53,7 @@ export function packLocalVolumes(volumes, buffers) {
     }
     const axes = volume.axes ?? IDENTITY_AXES;
     // The free fourth component of the first axis row carries the number of scatter octaves.
-    for (let axis = 0; axis < 3; axis++) buffers.axes.set([axes[axis * 3], axes[axis * 3 + 1], axes[axis * 3 + 2], axis === 0 ? volume.scatterOctaves ?? 1 : 0], (index * 3 + axis) * 4);
+    for (let axis = 0; axis < 3; axis++) buffers.axes.set([axes[axis * 3], axes[axis * 3 + 1], axes[axis * 3 + 2], axis === 0 ? (volume.scatterOctaves ?? 1) - 1 : 0], (index * 3 + axis) * 4);
   });
   return buffers;
 }
