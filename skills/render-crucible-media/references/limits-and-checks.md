@@ -25,7 +25,7 @@ before you promise a size or a sound track.
 
 ## Check the result
 
-1. `scene_render_result` lists files and SHA-256 hashes. Compare `metrics` frame count and duration with what you asked.
+1. `scene_render_result` lists files; SHA-256 hashes come with `response_format: "detailed"`. Compare `metrics` frame count and duration with what you asked.
 2. Look at one frame: the PNG itself, or for video a still of the same `motion.start` (the timeline seek gives the same
    pixels as the frame inside the video).
 3. For video, verify with ffprobe when it is installed:
