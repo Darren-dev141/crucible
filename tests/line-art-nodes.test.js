@@ -12,7 +12,7 @@ await loadAllAgentSceneModules();
 test('lines.nodes fills each entry with defaults, the colour following lines.color', () => {
   const lines = resolveLineArt({ color: [1, 0, 0], nodes: { basket: { silhouetteOnly: true }, rug: { lines: false }, vase: { color: [0, 0, 1] } } });
   assert.deepEqual(lines.nodes.basket, { lines: true, silhouetteOnly: true, color: [1, 0, 0] });
-  assert.deepEqual(lines.nodes.rug, { lines: false, silhouetteOnly: false, color: [1, 0, 0] });
+  assert.deepEqual(lines.nodes.rug, { lines: false, silhouetteOnly: false });
   assert.deepEqual(lines.nodes.vase, { lines: true, silhouetteOnly: false, color: [0, 0, 1] });
   assert.equal(resolveLineArt({}).nodes, undefined);
 });
@@ -94,4 +94,50 @@ test('lines.nodes does not read inherited members for a node named constructor o
 test('lines.nodes names that match no node of the recipe fail and name the fix', () => {
   assert.throws(() => sceneWithNodeIds(['floor'], { nodes: { flooor: { lines: false } } }), /environment\.lines\.nodes.*flooor.*scene_inspect/s);
   assert.doesNotThrow(() => sceneWithNodeIds(['floor', 'constructor'], { nodes: { floor: { lines: false }, constructor: { lines: false } } }));
+});
+
+test('lines false resolves to a form that resolves again, so a scene survives export and the next operation', () => {
+  const once = resolveLineArt({ nodes: { rug: { lines: false } } });
+  assert.deepEqual(once.nodes.rug, { lines: false, silhouetteOnly: false });
+  assert.deepEqual(resolveLineArt(once), once);
+  const scene = sceneWithNodeIds(['rug', 'floor'], { nodes: { rug: { lines: false } } });
+  const recreated = createAgentScene(scene.exportRecipe(), {});
+  recreated.apply([{ type: 'set-environment', environment: { fogDensity: 0.01 } }], { expectedRevision: 0 });
+  assert.deepEqual(recreated.exportRecipe().environment.lines.nodes.rug, { lines: false, silhouetteOnly: false });
+  assert.throws(() => resolveLineArt({ nodes: { rug: { lines: false, color: [1, 0, 0] } } }), /sets lines false together with color/);
+});
+
+test('naming the node that grows vegetation reaches every generated part', () => {
+  const recipe = {
+    format: 'crucible.scene', schemaVersion: 1,
+    nodes: [{ id: 'oak', translation: [4, 0, 2], vegetation: { species: 'broadleaf', seed: 2, height: 9 } }],
+    camera: { eye: [4, 4, 20], target: [4, 4, 2] },
+    environment: { lines: { nodes: { oak: { lines: false } } } },
+  };
+  const scene = createAgentScene(recipe, {});
+  const renderer = { batches: [{ parts: scene.parts }], drawsInOpaqueLoop: () => true };
+  installRenderPasses(renderer);
+  const nodes = renderer.passSupport.objectNodes();
+  assert.deepEqual(Object.keys(nodes), ['oak']);
+  assert.equal(nodes.oak.length, scene.parts.length);
+  assert.ok(scene.parts.length >= 2);
+});
+
+test('naming a group that draws nothing itself fails and names its children', () => {
+  const recipe = {
+    format: 'crucible.scene', schemaVersion: 1,
+    geometries: [{ id: 'ground', type: 'box' }],
+    materials: [{ id: 'grass', color: [0.2, 0.5, 0.2] }],
+    nodes: [{ id: 'trees', geometry: 'ground', material: 'grass', instances: { grid: { counts: [2, 1, 1], spacing: [2, 1, 1] } } }],
+    environment: { lines: { nodes: { trees: { lines: false } } } },
+  };
+  assert.throws(() => createAgentScene(recipe, {}), /environment\.lines\.nodes\.trees.*no geometry of its own.*trees\.0/s);
+  recipe.environment.lines.nodes = { 'trees.0': { lines: false } };
+  assert.doesNotThrow(() => createAgentScene(recipe, {}));
+});
+
+test('removing a node that lines.nodes names says to drop its entry in the same call', () => {
+  const scene = sceneWithNodeIds(['rug', 'floor'], { nodes: { rug: { lines: false } } });
+  assert.throws(() => scene.apply([{ type: 'remove-node', id: 'rug' }], { expectedRevision: 0 }), /rug.*drop that node's entry from lines\.nodes in the same call/s);
+  scene.apply([{ type: 'remove-node', id: 'rug' }, { type: 'set-environment', environment: { lines: { nodes: { floor: { silhouetteOnly: true } } } } }], { expectedRevision: 0 });
 });

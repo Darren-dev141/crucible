@@ -131,7 +131,9 @@ function nodeLinesFrom(input, name, defaultColor) {
   if (!drawn && (silhouetteOnly || input.color !== undefined)) {
     throw new RangeError(`${label} sets lines false together with ${silhouetteOnly ? 'silhouetteOnly' : 'color'}. Fix: drop lines:false, or drop the other field.`);
   }
-  return { lines: drawn, silhouetteOnly, color: colorValue(input.color ?? defaultColor, `${label}.color`) };
+  const color = colorValue(input.color ?? defaultColor, `${label}.color`);
+  // A node with no lines has no colour, so the resolved form passes through this function again unchanged.
+  return drawn ? { lines: true, silhouetteOnly, color } : { lines: false, silhouetteOnly: false };
 }
 
 function nodesFrom(input, defaultColor) {

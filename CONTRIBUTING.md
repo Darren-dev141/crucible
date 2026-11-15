@@ -85,6 +85,7 @@ These checks need a GPU or a person's eyes, so they do not run on a pull request
 | --- | --- |
 | `npm run smoke:mcp` | MCP tools or the preview, on a GPU |
 | `npm run smoke:character` | Skinning, glTF loading, poses or IK |
+| `npm run smoke:line-art-nodes` | Outlines or `environment.lines.nodes`, on a GPU |
 | `npm run reference` | Shaders, lighting or materials |
 | `npm run benchmark:runtime` | The renderer's frame path |
 | `scripts/blender-golden.py` | A case in `tests/fixtures/blender/cases.json`, or the Blender version |

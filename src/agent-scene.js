@@ -915,7 +915,14 @@ function checkLineNodeNames(recipe) {
   }
   const unknown = agentSceneModule('lineArt').unknownLineNodeNames(lines, recipe.nodes);
   if (unknown.length > 0) {
-    throw invalidField('environment.lines.nodes', unknown.slice(0, 4), 'node IDs that exist in nodes; scene_inspect lists them');
+    throw invalidField('environment.lines.nodes', unknown.slice(0, 4), 'node IDs that exist in nodes; scene_inspect lists them. After remove-node, drop that node\'s entry from lines.nodes in the same call');
+  }
+  // A group that draws nothing itself (an expanded instances node, a plain group) would do nothing without a sign.
+  // A placed asset, vegetation and crowd nodes are groups too, but their parts name them in `group`.
+  const drawsNothing = recipe.nodes.find(node => Object.hasOwn(lines.nodes, node.id) && node.geometry === undefined && !node.asset && !node.vegetation);
+  if (drawsNothing) {
+    const childIds = recipe.nodes.filter(node => node.parent === drawsNothing.id).map(node => node.id);
+    throw invalidField(`environment.lines.nodes.${drawsNothing.id}`, drawsNothing.id, `the ID of a node that draws a part; ${JSON.stringify(drawsNothing.id)} is a group with no geometry of its own. Name its children instead, such as ${childIds.slice(0, 3).join(', ') || 'a child node'}`);
   }
 }
 
