@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { box } from '../src/geometry.js';
 import { createCamera, describeIgnoredFeatures, renderBand } from '../src/path-tracer.js';
+import { noteIgnoredClipStart } from '../src/path-tracer-realtime-options.js';
 import { buildTraceScene } from '../src/path-tracer-scene.js';
 import { withWebGpuPage } from './helpers/webgpu-page.js';
 
@@ -72,4 +73,22 @@ test('on a WebGPU adapter a clipStart past the near wall shows the wall behind i
     assert.ok(pixels[1][0] > pixels[1][1] * 10, `the red wall shows past the clip start: ${pixels[1]}`);
     assert.doesNotMatch(pixels.ignored.join(' '), /clipStart/);
   });
+});
+
+test('a clipStart at or past the far plane is refused, one below it is accepted (#1351)', () => {
+  assert.throws(() => createCamera({ ...CAMERA, far: 10, clipStart: 10 }, 8, 8), /clipStart 10 is at or past the far plane 10.*Pass a clipStart below far/);
+  assert.throws(() => createCamera({ ...CAMERA, far: 10, clipStart: 50 }, 8, 8), /far plane 10/);
+  assert.equal(createCamera({ ...CAMERA, far: 10, clipStart: 9.5 }, 8, 8).clipStart, 9.5);
+  assert.equal(createCamera({ ...CAMERA, clipStart: 50 }, 8, 8).clipStart, 50);
+});
+
+test('the real-time tracers note a clipStart they ignore once, and say nothing without one (#1351)', () => {
+  const notes = [];
+  noteIgnoredClipStart(notes, createCamera(CAMERA, 8, 8));
+  assert.deepEqual(notes, []);
+  const clipped = createCamera({ ...CAMERA, clipStart: 1 }, 8, 8);
+  noteIgnoredClipStart(notes, clipped);
+  noteIgnoredClipStart(notes, clipped);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /camera\.clipStart is ignored by the real-time tracers/);
 });

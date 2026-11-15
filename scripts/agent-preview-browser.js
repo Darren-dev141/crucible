@@ -1094,7 +1094,7 @@ window.__agentPreview = {
       heldNativeExportTables = split.tables;
       exported = split.manifest;
     }
-    return { ...exported, ignored: describeIgnoredFeatures(record.scene.parts, environment, 'cpu', { kernelMaterials: exported.wholeMaterials }) };
+    return { ...exported, ignored: describeIgnoredFeatures(record.scene.parts, environment, 'cpu', { kernelMaterials: exported.wholeMaterials, clipStart: camera.clipStart }) };
   },
   // One chunk (base64) of a table of the chunked export that exportNativeScene holds.
   readNativeExportChunk({ name, offset }) {
