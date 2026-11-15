@@ -8,7 +8,7 @@ import { finiteRange, vectorField } from './volumetric.js';
 export const MAX_LOCAL_VOLUMES = 8;
 export const LOCAL_VOLUME_SHAPES = Object.freeze(['box', 'sphere', 'mesh', 'grid']);
 export const LOCAL_VOLUME_FIT = Object.freeze(['bounds', 'mesh']);
-export const LOCAL_VOLUME_FIELDS = Object.freeze(['shape', 'part', 'fit', 'center', 'size', 'radius', 'density', 'falloff', 'absorption', 'emission', 'emissionStrength', 'scatter', 'blur', 'noiseAmount', 'noiseScale', 'steps', 'grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy', 'lightsScene', 'shadowDetail']);
+export const LOCAL_VOLUME_FIELDS = Object.freeze(['shape', 'part', 'fit', 'center', 'size', 'radius', 'density', 'falloff', 'absorption', 'emission', 'emissionStrength', 'scatter', 'blur', 'noiseAmount', 'noiseScale', 'steps', 'grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy', 'lightsScene', 'shadowDetail', 'castShadow']);
 // The fields only a grid volume takes (#1045), and the steps its denser march may take (the shader's grid loop is bounded by the same number).
 export const LOCAL_VOLUME_GRID_FIELDS = Object.freeze(['grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy']);
 export const LOCAL_VOLUME_MAXIMUM_STEPS = 32;
@@ -39,6 +39,7 @@ function resolveLocalVolume(input, label, resolveGrid) {
     scatter: finiteRange(input.scatter ?? 0, 0, 1, `${label}.scatter`),
     lightsScene: resolveFlag(input.lightsScene, `${label}.lightsScene`),
     shadowDetail: resolveFlag(input.shadowDetail, `${label}.shadowDetail`),
+    castShadow: input.castShadow === undefined ? true : resolveFlag(input.castShadow, `${label}.castShadow`),
     blur: finiteRange(input.blur ?? 1, 0, 1, `${label}.blur`),
     noiseAmount: finiteRange(input.noiseAmount ?? 0, 0, 1, `${label}.noiseAmount`),
     noiseScale: finiteRange(input.noiseScale ?? 1, 0.001, 100, `${label}.noiseScale`),

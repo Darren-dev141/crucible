@@ -1,0 +1,1 @@
+- A box or sphere local volume now shades the opaque surfaces under it from the key light, in the rasterizer and the CPU path tracer, and `castShadow: false` turns it off (#1047).
