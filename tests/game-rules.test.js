@@ -200,6 +200,19 @@ test('restart resets play, onEvent sees every entry and spawns are bounded', () 
   assert.equal(rules.eventLog.at(-1).action, 'restart');
 });
 
+test('onRestart tells the host after the rules reset, for the restart action and for restart()', () => {
+  const calls = [];
+  const rules = createGameRules({
+    version: 1,
+    variables: { score: 0 },
+    rules: [{ id: 'again', when: { type: 'timer', seconds: STEP }, do: [{ type: 'add', variable: 'score', value: 5 }, { type: 'restart' }] }],
+  }, { onRestart: () => calls.push(rules.state.variables.score) });
+  rules.fixedUpdate(STEP);
+  assert.deepEqual(calls, [0], 'the host hears about the action after the variables reset');
+  rules.restart();
+  assert.deepEqual(calls, [0, 0]);
+});
+
 test('a restart action stops the step and the event log is capped', () => {
   const rules = createGameRules({
     version: 1,

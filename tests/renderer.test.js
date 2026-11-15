@@ -639,7 +639,7 @@ test('blend batches draw their opaque texels with depth writes before the blende
 
 test('resize keeps the projection centered at 699 px and 1440 px', () => {
   const renderer = Object.create(CrucibleRenderer.prototype);
-  renderer.context = { getParameter: () => 8192 };
+  renderer.context = { getParameter: () => 8192, isContextLost: () => false };
   renderer.projection = new Float32Array(16);
   renderer.pixelRatio = 1;
   renderer.multisampleSamples = 1;

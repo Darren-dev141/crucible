@@ -1,7 +1,7 @@
 import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { gamePhysicsProblem, hasTexturedMaterial } from '../src/game-needs.js';
+import { gamePhysicsProblem, hasTexturedMaterial, parentTranslation } from '../src/game-needs.js';
 
 // Writes a playable game as one folder that any static host can serve: index.html, game.json (the recipe with its game
 // section) and engine/ (the built Crucible modules that index.html imports, found by following the import statements from
@@ -98,6 +98,10 @@ ${physicsUrl ? `const physicsUrl = ${JSON.stringify(physicsUrl)};\n` : ''}window
  */
 export async function writeWebBuild({ recipe, buildDirectory, outputDirectory, title, assets = new Map() }) {
   if (!recipe?.game) throw new Error('This scene has no game. Add one with scene_apply set-game (fields: scene_capabilities topic game), then export again.');
+  // A node can be given a rotated parent after set-game ran, and the page would throw where no agent reads it.
+  const nodes = recipe.nodes ?? [];
+  parentTranslation(nodes, recipe.game.player?.node, 'game.player.node');
+  for (const npc of recipe.game.npcs ?? []) parentTranslation(nodes, npc.node, 'game.npcs[].node');
   const withPhysics = recipe.game.physics === true;
   const physicsProblem = withPhysics ? gamePhysicsProblem(recipe) : null;
   if (physicsProblem) throw new Error(physicsProblem);
