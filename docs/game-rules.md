@@ -72,7 +72,7 @@ A rule with `once: true` fires at most once per play. `if` is an optional expres
 | `animation` | `event` | log an animation event name. A game system feeds it to its [animation graph](animation-graph.md) from `onEvent`. |
 | `sound` | `name` | log a sound marker. The host plays it from `onEvent`. |
 | `win`, `lose` | none | end the game. The remaining actions and rules of the step are skipped. |
-| `restart` | none | reset variables, visibility, spawns, timers and `once` flags. The rest of the step is skipped. Part positions stay with the host. |
+| `restart` | none | reset variables, visibility, spawns, timers and `once` flags. The rest of the step is skipped. Part positions stay with the host: the rules call `onRestart()` (a `createGameRules` option) after they reset, and `startGame` uses it to put the player, camera, NPCs, animation graphs and physics bodies back at their start, see [Restarting](game.md#restarting). |
 
 ## Expressions
 
@@ -86,7 +86,7 @@ Each fixed step does the same things in the same order:
 2. walk `rules` in document order. A rule whose trigger matches, and whose `if` holds, runs all its actions at once, so a later rule sees the variables an earlier rule changed;
 3. clear the reported contacts.
 
-After `win` or `lose`, `fixedUpdate` does nothing until `restart()`. Same inputs, same positions and same step give the same event log, byte for byte.
+After `win` or `lose`, `fixedUpdate` does nothing until `restart()` (in a `startGame` game, `game.restart()` or the R key). Same inputs, same positions and same step give the same event log, byte for byte.
 
 ## Reading the state
 

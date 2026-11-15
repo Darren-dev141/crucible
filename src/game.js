@@ -8,7 +8,7 @@ import { createInput, gamepadSource, keyboardSource } from './input.js';
 import { replaySource, touchSource } from './input-sources.js';
 import { createCharacterController, createChaseCamera, createController, createCameraRigOfKind, createFirstPersonCamera, createFollowCamera, createTopDownCamera, createVehicleController } from './player.js';
 import { createGameRules } from './game-rules.js';
-import { hasTexturedMaterial } from './game-needs.js';
+import { hasTexturedMaterial, parentTranslation } from './game-needs.js';
 
 // Plays the `game` section of a scene recipe in a page: the scene, the input preset, the character controller, the camera rig
 // and the game rules, all run by the live runtime. scene_export_web writes a folder whose index.html calls startGame.
@@ -70,9 +70,10 @@ function nodeTranslation(nodes, id) {
 // A placed glTF character faces +Z, while yaw 0 faces -Z, so its node is turned half a circle.
 const GLTF_FACING_YAW = Math.PI;
 
-function characterOperation(id, position, yaw, footOffset, modelYaw = 0) {
+function characterOperation(id, position, yaw, footOffset, modelYaw = 0, parentOffset = [0, 0, 0]) {
   yaw += modelYaw;
-  return { type: 'set-node', id, translation: [position[0], position[1] + footOffset, position[2]], rotation: [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)] };
+  const translation = [position[0] - parentOffset[0], position[1] + footOffset - parentOffset[1], position[2] - parentOffset[2]];
+  return { type: 'set-node', id, translation, rotation: [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)] };
 }
 
 // Copies the controller's state into the graph parameters that the animation's `drive` names.
@@ -106,9 +107,15 @@ function modelYawOf(animation) {
   return animation?.assetNode ? GLTF_FACING_YAW : 0;
 }
 
-function describeState(state) {
+// The hint names the way the page can restart: a replay has none, a phone has no R key, so it takes a tap.
+function restartHintFor(inputPreset, replay) {
+  if (replay) return '';
+  return inputPreset === 'touch' ? '   (tap to restart)' : '   (R to restart)';
+}
+
+function describeState(state, restartHint) {
   const variables = Object.entries(state.variables).map(([name, value]) => `${name} ${value}`).join('   ');
-  const verdict = state.status === 'won' ? '   YOU WIN' : state.status === 'lost' ? '   GAME OVER' : '';
+  const verdict = state.status === 'won' ? `   YOU WIN${restartHint}` : state.status === 'lost' ? `   GAME OVER${restartHint}` : '';
   return `${variables}${verdict}`;
 }
 
@@ -118,22 +125,26 @@ async function loadAnimationRuntime() {
 }
 
 /**
- * Start the game a recipe describes on a canvas and return its parts: `scene`, `runtime`, `rules`, `input`, `controller`, `renderer`
- * and `dispose()`. Options: `replay` (a recording from recordInput; the keyboard is not attached) `showStatus` (default true) `assets` (decoded catalog assets by assetCopyKey) or `assetUrls` (asset id to GLB URL, which startGame fetches and decodes), `physicsUrl` (where the page keeps jolt-physics.wasm.js, on its own origin; a recipe with game.physics true needs it unless the jolt-physics package resolves) and `createRenderer` (tests pass a stand-in for the WebGL renderer).
+ * Start the game a recipe describes on a canvas and return its parts: `scene`, `runtime`, `rules`, `input`, `controller`, `renderer`,
+ * `restart()` (puts the player, camera, NPCs, animation graphs, physics bodies and rules back at the start; returns a promise that settles once the physics world is rebuilt) and `dispose()`. Options: `replay` (a recording from recordInput; the keyboard is not attached) `showStatus` (default true) `assets` (decoded catalog assets by assetCopyKey) or `assetUrls` (asset id to GLB URL, which startGame fetches and decodes), `physicsUrl` (where the page keeps jolt-physics.wasm.js, on its own origin; a recipe with game.physics true needs it unless the jolt-physics package resolves) and `createRenderer` (tests pass a stand-in for the WebGL renderer).
  */
 export async function startGame(canvas, recipe, options = {}) {
   const cleanups = [];
   try {
     const game = await buildGame(canvas, recipe, options, cleanups);
     let disposed = false;
-    return {
-      ...game,
-      dispose() {
-        if (disposed) return;
-        disposed = true;
-        runCleanups(cleanups);
+    // Copy the property descriptors, not the values, so `physics` keeps following the world that restart() rebuilds.
+    return Object.defineProperties({}, {
+      ...Object.getOwnPropertyDescriptors(game),
+      dispose: {
+        enumerable: true,
+        value() {
+          if (disposed) return;
+          disposed = true;
+          runCleanups(cleanups);
+        },
       },
-    };
+    });
   } catch (error) {
     runCleanups(cleanups);
     throw error;
@@ -172,6 +183,7 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
   const input = createInput({ sources: replay ? [replaySource(replay)] : inputSources(game.input, canvas), actions, axes });
   const footOffset = game.player.footOffset;
   const start = nodeTranslation(recipe.nodes, game.player.node);
+  const playerParentOffset = parentTranslation(recipe.nodes, game.player.node, 'game.player.node');
   const body = { position: [0, 0, 0], rotationY: 0 };
   let rig = null;
   // The animation graph runtime loads only for a recipe that declares an animation or an NPC, so other games do not carry it.
@@ -206,7 +218,7 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
     fixedUpdate: (stepSeconds, context) => physics.fixedUpdate(stepSeconds, context, physics.playerIsBody ? [controller.state.position[0], controller.state.position[1] + footOffset, controller.state.position[2]] : null, body.rotationY),
   };
   const nodeIds = new Set(recipe.nodes.map(node => node.id));
-  const rules = game.rules ? createGameRules(game.rules, { input, getPartPosition: id => (id === game.player.node ? [...controller.state.position] : physics?.positionOf(id)) }) : null;
+  const rules = game.rules ? createGameRules(game.rules, { input, onRestart: restartHost, getPartPosition: id => (id === game.player.node ? [...controller.state.position] : physics?.positionOf(id)) }) : null;
   const shownNodes = new Map();
   const animatedCharacters = [];
   const animationSystems = [];
@@ -217,11 +229,12 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
   const npcs = (game.npcs ?? []).map(npc => {
     const animation = createGameAnimation(npc.animation, recipe.nodes, npc.node, { assets });
     const start = nodeTranslation(recipe.nodes, npc.node);
+    const parentOffset = parentTranslation(recipe.nodes, npc.node, 'game.npcs[].node');
     const follower = createPathFollower({ graph: animation.graph, position: [start[0], start[1] - npc.footOffset, start[2]], yaw: npc.yaw, cruiseSpeed: npc.cruiseSpeed });
     follower.follow(npc.path);
     animatedCharacters.push(animation);
     animationSystems.push(follower.system(), animation.graph.system());
-    return { node: npc.node, footOffset: npc.footOffset, follower, graph: animation.graph, modelYaw: modelYawOf(animation) };
+    return { node: npc.node, footOffset: npc.footOffset, follower, graph: animation.graph, modelYaw: modelYawOf(animation), parentOffset, startPosition: [...follower.state.position], startYaw: follower.state.yaw, path: npc.path };
   });
   const hasPosedAssets = animatedCharacters.some(animation => animation.assetNode);
   let drawnTopology = scene.topologyRevision;
@@ -232,8 +245,8 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
     name: 'scene',
     update(deltaSeconds, context) {
       const position = controller.positionAt(context.alpha);
-      const operations = [characterOperation(game.player.node, position, body.rotationY, footOffset, modelYawOf(playerAnimation))];
-      for (const npc of npcs) operations.push(characterOperation(npc.node, npc.follower.state.position, npc.follower.state.yaw, npc.footOffset, npc.modelYaw));
+      const operations = [characterOperation(game.player.node, position, body.rotationY, footOffset, modelYawOf(playerAnimation), playerParentOffset)];
+      for (const npc of npcs) operations.push(characterOperation(npc.node, npc.follower.state.position, npc.follower.state.yaw, npc.footOffset, npc.modelYaw, npc.parentOffset));
       for (const animation of animatedCharacters) operations.push(...animation.operations());
       if (physics) operations.push(...physics.poseOperations());
       for (const part of rules?.state.parts ?? []) {
@@ -252,9 +265,34 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
         renderer.replaceParts(scene.parts);
         drawnTopology = scene.topologyRevision;
       }
-      if (status) status.textContent = describeState(rules.state);
+      if (status) status.textContent = describeState(rules.state, restartHintFor(game.input, replay));
     },
   };
+
+  // Puts everything the game moves back at its start. The rules have already reset themselves when this runs.
+  const startYaw = controller.state.yaw;
+  const startRig = { yaw: rig.yaw, pitch: rig.pitch };
+  let physicsRestart = Promise.resolve();
+  function restartHost() {
+    controller.teleport?.(startPosition, startYaw);
+    Object.assign(rig, startRig);
+    rig.init?.();
+    playerAnimation?.graph.reset();
+    for (const npc of npcs) {
+      Object.assign(npc.follower.state, { position: [...npc.startPosition], yaw: npc.startYaw, speed: 0, lastMove: 0 });
+      npc.graph.reset();
+      npc.follower.follow(npc.path);
+    }
+    if (physics) {
+      physicsRestart = physics.restart();
+      physicsRestart.catch(() => {});
+    }
+  }
+  function restart() {
+    if (rules) rules.restart();
+    else restartHost();
+    return physicsRestart;
+  }
 
   const baseCamera = scene.camera;
   const runtime = createRuntime(renderer, {
@@ -267,7 +305,35 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
   globalThis.addEventListener?.('resize', resize);
   cleanups.push(() => globalThis.removeEventListener?.('resize', resize));
   resize();
+  // After a win or a loss, R (or a tap on a touch game) starts the game again. A replay drives the input itself, so it has neither.
+  const restartOnKey = event => {
+    if (event.code === 'KeyR' && !event.repeat && rules && rules.state.status !== 'playing') restart();
+  };
+  const restartOnTap = () => {
+    if (rules && rules.state.status !== 'playing') restart();
+  };
+  if (!replay) {
+    globalThis.addEventListener?.('keydown', restartOnKey);
+    cleanups.push(() => globalThis.removeEventListener?.('keydown', restartOnKey));
+    if (game.input === 'touch') {
+      canvas.addEventListener?.('pointerdown', restartOnTap);
+      cleanups.push(() => canvas.removeEventListener?.('pointerdown', restartOnTap));
+    }
+  }
   runtime.start();
 
-  return { scene, runtime, rules, input, controller, renderer, physics: physics?.system ?? null, animation: playerAnimation?.graph ?? null, npcs };
+  return {
+    scene,
+    runtime,
+    rules,
+    input,
+    controller,
+    renderer,
+    get physics() {
+      return physics?.system ?? null;
+    },
+    animation: playerAnimation?.graph ?? null,
+    npcs,
+    restart,
+  };
 }

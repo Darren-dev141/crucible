@@ -347,7 +347,8 @@ function pairKey(zoneId, partId) {
 /**
  * A runtime system that plays a rule document. Put it after input and physics in `systems`.
  * Options: `input` (a createInput object, for input triggers), `getPartPosition(partId)` (returns [x, y, z] or undefined,
- * read once per part on each fixed step) and `onEvent(entry)` (called for each event log entry, such as a sound marker).
+ * read once per part on each fixed step) and `onEvent(entry)` (called for each event log entry, such as a sound marker) and
+ * `onRestart()` (called after the rules reset, from the `restart` action or `restart()`, so the host can put what it owns back at the start).
  * The host also calls `setPartPosition` and `reportContact`. Read `state` and `eventLog` from game code.
  */
 export function createGameRules(document, options = {}) {
@@ -511,6 +512,7 @@ export function createGameRules(document, options = {}) {
       default:
         record(base);
         resetPlay();
+        options.onRestart?.();
     }
   }
 
@@ -548,6 +550,7 @@ export function createGameRules(document, options = {}) {
   function restart() {
     record({ step, rule: null, action: 'restart' });
     resetPlay();
+    options.onRestart?.();
   }
 
   return {
