@@ -153,7 +153,10 @@ function resolveHeightFunction(height, size, seed) {
   return createNoiseHeight(height ?? {}, seed);
 }
 
-function validateOptions({ size, resolution, chunks, levels, mirrorLevels }) {
+function validateOptions({ size, resolution, chunks, levels, mirrorLevels, lodDistance }) {
+  if (lodDistance !== undefined && !(lodDistance > 0 && Number.isFinite(lodDistance))) {
+    throw new RangeError(`lodDistance must be a positive number of metres, such as ${size / 8}; got ${lodDistance}.`);
+  }
   if (!(size > 0) || !Number.isFinite(size)) throw new RangeError('size must be a positive number of metres.');
   if (!Number.isInteger(chunks) || chunks < 1) throw new RangeError('chunks must be a positive integer.');
   if (!Number.isInteger(levels) || levels < 1) throw new RangeError('levels must be a positive integer.');
@@ -201,7 +204,7 @@ function pointInsideHoles(holes, pointX, pointZ) {
 export function createTerrain({ size = 512, resolution = 32, chunks = 8, levels = 4, height, seed = 1, material = DEFAULT_MATERIAL, lodDistance, eye, holes, mirrorLevels } = {}) {
   const mirrorLevelsExplicit = mirrorLevels !== undefined;
   let activeMirrorLevels = mirrorLevelsExplicit ? mirrorLevels : 0;
-  validateOptions({ size, resolution, chunks, levels, mirrorLevels: activeMirrorLevels });
+  validateOptions({ size, resolution, chunks, levels, mirrorLevels: activeMirrorLevels, lodDistance });
   const holeCircles = normalizeTerrainHoles(holes);
   const isHole = (worldX, worldZ) => holeCircles !== null && pointInsideHoles(holeCircles, worldX, worldZ);
   const heightFunction = resolveHeightFunction(height, size, seed);
