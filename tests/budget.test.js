@@ -79,3 +79,15 @@ test('a reduced plan names the budget its full frame needs, and that budget fits
   assert.equal(fittedPlan.width, 1920);
   assert.equal(fittedPlan.height, 1080);
 });
+
+test('a budget error never advises a value above the largest budget the runtime accepts (#1313)', () => {
+  const scene = { width: 1920, height: 1080, samples: 4, hdr: true, bloom: true, geometryBytes: 300 * 1024 ** 2, textureBytes: 150 * 1024 ** 2, memoryBudgetMiB: 128 };
+  assert.throws(() => planRenderSize(scene), /Fix: pass \{ memoryBudgetMiB: \d+ \}/);
+  assert.throws(() => planRenderSize({ ...scene, maximumMemoryBudgetMiB: 384 }), error => {
+    assert.match(error.message, /more than the 384 MiB largest budget this runtime accepts/);
+    assert.match(error.message, /reduce the textures, the geometry, the frame size/);
+    assert.doesNotMatch(error.message, /pass \{ memoryBudgetMiB/);
+    return true;
+  });
+  assert.throws(() => planRenderSize({ ...scene, geometryBytes: 0, textureBytes: 200 * 1024 ** 2, width: 640, height: 360, maximumMemoryBudgetMiB: 384 }), /Fix: pass \{ memoryBudgetMiB: \d+ \}/);
+});

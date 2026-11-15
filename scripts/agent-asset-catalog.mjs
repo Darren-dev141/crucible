@@ -3,23 +3,42 @@ import { open, readdir, realpath, lstat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { AGENT_ASSET_LIMITS, assetBytesLimitMessage } from '../src/agent-asset-limits.js';
-import { MAXIMUM_CATALOG_LOOK_BYTES } from '../src/look-catalog.js';
+import { MAXIMUM_CATALOG_ENVIRONMENT_BYTES, MAXIMUM_CATALOG_LOOK_BYTES } from '../src/look-catalog.js';
+import { imageLimitProblem } from '../src/image-header.js';
+import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 
 const MAXIMUM_ASSETS = AGENT_ASSET_LIMITS.maxAssets;
 const MAXIMUM_BYTES = AGENT_ASSET_LIMITS.maxBytes;
 
 const IMAGE_EXTENSIONS = { png: /\.png$/i, jpeg: /\.jpe?g$/i, webp: /\.webp$/i };
+/**
+ * A file the catalog refuses for its size or pixel bounds. Listing skips it and says why, so one such file does not hide the
+ * others; reading it by name still throws.
+ */
+export class SkippableCatalogFileError extends RangeError {
+  constructor(message) {
+    super(message);
+    this.name = 'SkippableCatalogFileError';
+  }
+}
+
 /** 'environment' for a Radiance .hdr and 'look' for a .cube file, by extension and a first-bytes check; the preview decodes them. */
 function lookFileKind(filename, bytes) {
-  if (/\.hdr$/i.test(filename)) {
+  const isHdr = /\.hdr$/i.test(filename);
+  const isCube = /\.cube$/i.test(filename);
+  if (!isHdr && !isCube) return null;
+  const limitBytes = isHdr ? MAXIMUM_CATALOG_ENVIRONMENT_BYTES : MAXIMUM_CATALOG_LOOK_BYTES;
+  if (bytes.length > limitBytes) {
+    const kindName = isHdr ? 'An .hdr catalog file' : 'A .cube catalog file';
+    const advice = isHdr ? 'Use a 2k or smaller HDRI.' : 'Use a smaller LUT, for example 33 points on a side.';
+    throw new SkippableCatalogFileError(`${kindName} is at most ${limitBytes / 1048576} MiB; this one is ${(bytes.length / 1048576).toFixed(1)} MiB. ${advice}`);
+  }
+  if (isHdr) {
     if (!/^#\?(?:RADIANCE|RGBE)/.test(bytes.toString('latin1', 0, 10))) throw new Error('An .hdr catalog file must be a Radiance file starting with #?RADIANCE or #?RGBE.');
     return 'environment';
   }
-  if (/\.cube$/i.test(filename)) {
-    if (bytes.length > MAXIMUM_CATALOG_LOOK_BYTES || !bytes.toString('utf8').includes('LUT_3D_SIZE')) throw new Error('A .cube catalog file must be a 3D look (LUT_3D_SIZE) of at most 4 MiB.');
-    return 'look';
-  }
-  return null;
+  if (!bytes.toString('utf8').includes('LUT_3D_SIZE')) throw new Error('A .cube catalog file must be a 3D look (LUT_3D_SIZE).');
+  return 'look';
 }
 
 const IMAGE_MIME = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' };
@@ -183,9 +202,9 @@ async function readSiblingImage(directory, glbName, uri, segments) {
 /**
  * Reads one catalog file (GLB, image, .hdr or .cube) inside a real directory: its bytes, kind and content ID. `filename` may be a
  * relative path with forward slashes. A GLB whose images point at files beside it gets those images embedded, so the ID binds
- * the self-contained bytes.
+ * the self-contained bytes. `enforceImageLimits: false` skips the sequence frame pixel limits, for an image that is never a frame.
  */
-export async function readCatalogFile(directory, filename) {
+export async function readCatalogFile(directory, filename, { enforceImageLimits = true } = {}) {
   const path = join(directory, filename);
   const original = await lstat(path);
   if (!original.isFile() || original.isSymbolicLink()) {
@@ -219,6 +238,9 @@ export async function readCatalogFile(directory, filename) {
     const lookKind = lookFileKind(filename, bytes);
     const imageFormat = lookKind ? null : imageKind(bytes);
     if (imageFormat && !IMAGE_EXTENSIONS[imageFormat].test(filename)) throw new Error('Image extension must match its PNG, JPEG or WebP content.');
+    // The header gives the size, so an oversized frame is refused here, before the preview page decodes its pixels.
+    const imageProblem = imageFormat && enforceImageLimits ? imageLimitProblem(bytes, filename, TEXTURE_SEQUENCE_LIMITS) : null;
+    if (imageProblem) throw new SkippableCatalogFileError(`${imageProblem} Resize it before adding it to the --assets or --packs folder.`);
     if (!imageFormat && !lookKind && !/\.glb$/i.test(filename)) throw new Error('Catalog files must be GLB, PNG, JPEG, WebP, HDR or CUBE, with a matching extension.');
     let document = null;
     if (!imageFormat && !lookKind) {
@@ -262,6 +284,7 @@ export function describeCatalogFile(name, { bytes, document, assetId, imageForma
  */
 export async function createAgentAssetCatalog(root, packFiles = []) {
   const entries = new Map();
+  const skipped = [];
   if (root !== null) {
     if (typeof root !== 'string' || !isAbsolute(root)) {
       throw new TypeError('Asset root must be an explicit absolute directory path.');
@@ -274,7 +297,14 @@ export async function createAgentAssetCatalog(root, packFiles = []) {
       .filter(entry => /\.(glb|png|jpe?g|webp|hdr|cube)$/i.test(entry.name)).sort((left, right) => left.name.localeCompare(right.name));
     if (files.length > MAXIMUM_ASSETS) throw new RangeError(`Asset catalog has ${files.length} files, over its maxAssets ${MAXIMUM_ASSETS}. Remove files from the --assets directory.`);
     for (const file of files) {
-      const result = await readCatalogFile(directory, file.name);
+      let result;
+      try {
+        result = await readCatalogFile(directory, file.name);
+      } catch (error) {
+        if (!(error instanceof SkippableCatalogFileError)) throw error;
+        skipped.push({ name: file.name, reason: error.message });
+        continue;
+      }
       if (entries.has(result.assetId)) continue;
       entries.set(result.assetId, { directory, filename: file.name, metadata: describeCatalogFile(file.name, result) });
     }
@@ -284,7 +314,7 @@ export async function createAgentAssetCatalog(root, packFiles = []) {
   }
   return Object.freeze({
     list() {
-      return { assets: structuredClone([...entries.values()].map(entry => entry.metadata)), maximumBytes: MAXIMUM_BYTES, maximumAssets: MAXIMUM_ASSETS };
+      return { assets: structuredClone([...entries.values()].map(entry => entry.metadata)), maximumBytes: MAXIMUM_BYTES, maximumAssets: MAXIMUM_ASSETS, ...(skipped.length ? { skipped: structuredClone(skipped) } : {}) };
     },
     /**
      * The length `read` returns, known from the catalog record without loading the file. A GLB whose images sit beside it is

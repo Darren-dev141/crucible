@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentRenderJobs, normalizeJobSettings, RENDER_HISTORY_FILE } from '../scripts/agent-render-jobs.mjs';
 import { conciseJobResult } from '../scripts/mcp-response-format.mjs';
+import { planRenderSize } from '../src/budget.js';
+import { MAXIMUM_MEMORY_MIB } from '../src/agent-scene-capabilities.js';
 import {
   CORRECTION_BOUND, HISTORY_LIMIT, correctionFromHistory, estimateRenderJob, historyWithJob, jobKind, parseHistory, renderReport, sceneSizeFrom,
 } from '../scripts/agent-render-estimate.mjs';
@@ -192,4 +194,17 @@ test('the basis names the jobs folder, a clamped time factor and missing memory 
   const noMemory = [{ ...historyEntry(2), measuredPeakMemoryMiB: 0 }, { ...historyEntry(2), measuredPeakMemoryMiB: 0 }];
   assert.match(estimateRenderJob({ size, settings, backend: 'gpu', history: noMemory }).basis, /memory from scene size only/);
   assert.doesNotMatch(estimateRenderJob({ size, settings, backend: 'gpu', history: [historyEntry(1.5), historyEntry(1.5)] }).basis, /\(/);
+});
+
+test('the reduced-frame fallback never asks for a --memory value over the ceiling (#1313)', () => {
+  const plan = planRenderSize({ width: 1920, height: 1080, samples: 4, memoryBudgetMiB: 384, hdr: true, bloom: true, geometryBytes: 100e6, textureBytes: 150e6 });
+  assert.ok(plan.reduced);
+  assert.ok(plan.requiredMemoryMiB > MAXIMUM_MEMORY_MIB);
+  const metrics = { elapsedSeconds: 1, requestedWidth: 1920, requestedHeight: 1080, width: plan.width, height: plan.height, requiredMemoryMiB: plan.requiredMemoryMiB, memoryBudgetMiB: 384 };
+  const [fallback] = renderReport({ settings: settingsFor({}), metrics }).fallbacks;
+  assert.doesNotMatch(fallback, /Restart it with --memory/);
+  assert.match(fallback, new RegExp(`--memory accepts at most ${MAXIMUM_MEMORY_MIB}`));
+  assert.match(fallback, /Reduce the textures, the geometry, the frame size/);
+  const [reachable] = renderReport({ settings: settingsFor({}), metrics: { ...metrics, requiredMemoryMiB: MAXIMUM_MEMORY_MIB, memoryBudgetMiB: 192 } }).fallbacks;
+  assert.match(reachable, new RegExp(`Restart it with --memory ${MAXIMUM_MEMORY_MIB} or more`));
 });
