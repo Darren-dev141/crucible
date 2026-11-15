@@ -32,6 +32,9 @@ const sealed = argumentsGiven.includes('--sealed');
 const withoutLawn = argumentsGiven.includes('--no-lawn');
 // --tight-shadow fits the sun's shadow map to the room instead of the default 130 m world view.
 const tightShadow = argumentsGiven.includes('--tight-shadow');
+// --raster-only skips the path tracer, for sweeps of the raster alone; --shadow-extent <metres> fits the sun's shadow view to that half width around the room.
+const rasterOnly = argumentsGiven.includes('--raster-only');
+const shadowExtent = numberAfter('--shadow-extent', 0);
 const WIDTH = 960;
 const HEIGHT = 540;
 
@@ -80,6 +83,7 @@ const recipe = {
   },
   effects: { exposure },
   ...(tightShadow ? { shadow: { target: [0, 1.5, 0.3], extent: 6, distance: 14, near: 1, far: 30 } } : {}),
+  ...(shadowExtent > 0 ? { shadow: { target: [0, 1.5, numberAfter('--shadow-target-z', 0.3)], extent: shadowExtent, distance: shadowExtent * 2.4, near: 1, far: shadowExtent * 5 } } : {}),
 };
 
 const workDirectory = await mkdtemp(join(tmpdir(), 'crucible-interior-'));
@@ -112,15 +116,23 @@ async function render(sessionId, name, renderer) {
   return result;
 }
 
-try {
-  await client.connect(transport);
-  const created = await call('scene_create', { recipe });
-  await render(created.sessionId, 'raster');
-  const traced = await render(created.sessionId, 'path-traced', {
+async function traceAndReport(sessionId) {
+  const traced = await render(sessionId, 'path-traced', {
     type: 'pathTracer', backend, samples, bounces: 6, denoise: false, seed: 1, maxSeconds: 120,
   });
   console.log(JSON.stringify({ ignored: traced.metrics?.pathTracer?.ignored, diagnostics: traced.diagnostics }, null, 1));
   console.log(`wrote ${outputDirectory}/raster.png and path-traced.png`);
+}
+
+try {
+  await client.connect(transport);
+  const created = await call('scene_create', { recipe });
+  await render(created.sessionId, 'raster');
+  if (rasterOnly) {
+    console.log(`wrote ${outputDirectory}/raster.png`);
+  } else {
+    await traceAndReport(created.sessionId);
+  }
 } finally {
   await client.close().catch(() => {});
   await rm(workDirectory, { recursive: true, force: true });

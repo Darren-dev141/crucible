@@ -14,7 +14,7 @@ import { installCoplanarDiagnostics } from '../src/coplanar-overlap.js';
 import { applyProjection } from '../src/camera.js';
 import { mat4 } from 'gl-matrix';
 import { listAddedControllerKinds, listAddedCameraRigKinds, listControllerKinds, listCameraRigKinds, unregisterControllerKind, unregisterCameraRigKind } from '../src/player.js';
-import { resolveAgentShadow, agentEnvironmentMap } from '../src/agent-look.js';
+import { fitAgentShadow, resolveAgentShadow, agentEnvironmentMap } from '../src/agent-look.js';
 import { agentSceneModule, agentSceneModuleLoaded } from '../src/agent-scene-modules.js';
 import { agentGroundPlacement, createAgentGround, placeAgentGround, FLOOR_COLOR } from '../src/agent-ground.js';
 import { groundBounceEnvironment } from '../src/ground-bounce.js';
@@ -404,7 +404,7 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   syncSequenceTextures(record);
   const environment = record.scene.environment;
   const effects = record.scene.effects;
-  const shadow = record.scene.shadow;
+  const shadow = fitAgentShadow(record.scene.shadow, record.scene.parts);
   const shadowKey = JSON.stringify([environment.lightDirection, shadow]);
   if (record.shadowKey !== shadowKey) {
     record.renderer.shadowBounds = resolveAgentShadow(shadow, environment.lightDirection);
@@ -524,7 +524,7 @@ function resetCanvas() {
 
 // The cascade code is a loaded module, so a scene with one shadow map never runs it.
 function cascadeCountFor(scene) {
-  return agentSceneModule('cascades').effectiveShadowCascades(scene.environment, scene.shadow);
+  return agentSceneModule('cascades').effectiveShadowCascades(scene.environment, fitAgentShadow(scene.shadow, scene.parts));
 }
 
 // Wind strength of the recipe; absent keeps the renderer default. The heading is applied by applyRecipeWindHeading.
@@ -553,7 +553,7 @@ function initializeRenderer(scene, { memoryBudgetMiB, backend, transparent = fal
     depth: true,
     world: scene.environment.world,
     environment: litEnvironment(scene.parts, scene.environment, Boolean(placement)),
-    shadowBounds: resolveAgentShadow(scene.shadow, scene.environment.lightDirection),
+    shadowBounds: resolveAgentShadow(fitAgentShadow(scene.shadow, scene.parts), scene.environment.lightDirection),
     shadowCascades: cascadesFor(scene),
     skyOpenness,
     fogSkyVisibility,
