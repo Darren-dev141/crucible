@@ -117,6 +117,34 @@ test('restart() puts a fallen crate back where the recipe placed it and keeps th
   }
 });
 
+test('steps while the world is rebuilt do nothing, and a second restart or a dispose in that gap leaves one working world', async () => {
+  const restore = withAnimationFrameStubs();
+  try {
+    const game = await playFor(await exportedRecipe(), 0.5);
+    const crateBefore = game.scene.exportRecipe().nodes.find(node => node.id === 'crate').translation[1];
+    const firstRestart = game.restart();
+    const secondRestart = game.restart();
+    assert.equal(game.physics, null);
+    // Fixed steps, pose operations and the rules' part lookup all run with no world and must not throw.
+    for (let step = 0; step < 5; step++) game.runtime.step(STEP_MILLISECONDS);
+    const crateY = () => game.scene.exportRecipe().nodes.find(node => node.id === 'crate').translation[1];
+    assert.equal(crateY(), crateBefore, 'no pose is written while there is no world');
+    await Promise.all([firstRestart, secondRestart]);
+    assert.ok(game.physics, 'one world is installed after two restarts');
+    assert.ok(Math.abs(game.physics.getPose('crate').translation[1] - 3) < 1e-6);
+    game.dispose();
+    assert.equal(game.physics, null, 'dispose drops the world');
+
+    const disposedWhileRebuilding = await playFor(await exportedRecipe(), 0.2);
+    const pending = disposedWhileRebuilding.restart();
+    disposedWhileRebuilding.dispose();
+    await pending;
+    assert.equal(disposedWhileRebuilding.physics, null, 'a world built after dispose is dropped, not installed');
+  } finally {
+    restore();
+  }
+});
+
 test('the kinematic player body pushes a dynamic crate', async () => {
   const restore = withAnimationFrameStubs();
   try {

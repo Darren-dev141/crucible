@@ -2,6 +2,7 @@ import './support/load-agent-scene-modules.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startGame } from '../src/game.js';
@@ -90,10 +91,18 @@ test('startGame still refuses a hand-written recipe whose player parent turns, a
   } finally {
     restore();
   }
-  await assert.rejects(
-    writeWebBuild({ recipe, buildDirectory: tmpdir(), outputDirectory: join(tmpdir(), 'crucible-never-written-1263') }),
-    /game\.player\.node "creature" sits under the parent "rig".*only a translation/,
-  );
+  const buildDirectory = await mkdtemp(join(tmpdir(), 'crucible-restart-build-'));
+  const outputDirectory = await mkdtemp(join(tmpdir(), 'crucible-restart-output-'));
+  try {
+    await assert.rejects(
+      writeWebBuild({ recipe, buildDirectory, outputDirectory }),
+      /game\.player\.node "creature" sits under the parent "rig".*only a translation/,
+    );
+    assert.deepEqual(await readdir(outputDirectory), [], 'a refused export writes nothing');
+  } finally {
+    await rm(buildDirectory, { recursive: true, force: true });
+    await rm(outputDirectory, { recursive: true, force: true });
+  }
 });
 
 test('the camera rig goes back to its start heading when the game restarts', async () => {
@@ -214,6 +223,63 @@ test('R restarts a finished game that reads the keyboard, and a replay has no su
     assert.equal(game.rules.state.status, 'playing');
     game.dispose();
     assert.equal(keyListeners().length, 0);
+  } finally {
+    globalThis.addEventListener = previous.add;
+    globalThis.removeEventListener = previous.remove;
+    restore();
+  }
+});
+
+test('R and a tap do nothing while the game is playing, on a held key, on another key or in a game without rules', async () => {
+  const restore = withAnimationFrameStubs();
+  const previous = { add: globalThis.addEventListener, remove: globalThis.removeEventListener };
+  const keyListeners = [];
+  globalThis.addEventListener = (name, listener) => {
+    if (name === 'keydown') keyListeners.push(listener);
+  };
+  globalThis.removeEventListener = () => {};
+  const taps = [];
+  const canvas = { addEventListener: (name, listener) => taps.push([name, listener]), removeEventListener() {} };
+  // The score is set at 0.2 s and the game is won at 0.5 s; a restart anywhere in between would put the score back to 0.
+  const scoringRecipe = () => playerRecipe({
+    variables: { score: 0 },
+    rules: [
+      { id: 'score', when: { type: 'timer', seconds: 0.2 }, do: [{ type: 'set', variable: 'score', value: 5 }] },
+      { id: 'done', when: { type: 'timer', seconds: 0.5 }, do: [{ type: 'win' }] },
+    ],
+  });
+  try {
+    const game = await startGame(canvas, scoringRecipe(), { showStatus: false, createRenderer: () => standInRenderer() });
+    const onKey = keyListeners.at(-1);
+    stepFrames(game, 20);
+    assert.equal(game.rules.state.status, 'playing');
+    assert.equal(game.rules.state.variables.score, 5);
+    onKey({ code: 'KeyR', repeat: false });
+    assert.equal(game.rules.state.variables.score, 5, 'R while playing does not restart');
+    stepFrames(game, 20);
+    assert.equal(game.rules.state.status, 'won');
+    onKey({ code: 'KeyR', repeat: true });
+    assert.equal(game.rules.state.status, 'won', 'a held R does not restart');
+    onKey({ code: 'KeyW', repeat: false });
+    assert.equal(game.rules.state.status, 'won', 'another key does not restart');
+    game.dispose();
+
+    const touchRecipe = scoringRecipe();
+    touchRecipe.game.input = 'touch';
+    taps.length = 0;
+    const touchGame = await startGame(canvas, touchRecipe, { showStatus: false, createRenderer: () => standInRenderer() });
+    const onTap = taps.find(([name]) => name === 'pointerdown')[1];
+    stepFrames(touchGame, 20);
+    onTap();
+    assert.equal(touchGame.rules.state.variables.score, 5, 'a tap while playing does not restart');
+    touchGame.dispose();
+
+    const rulesFree = sceneRecipe([{ id: 'creature', geometry: 'block', material: 'paint' }], { player: { node: 'creature' } });
+    const freeGame = await startGame(canvas, rulesFree, { showStatus: false, createRenderer: () => standInRenderer() });
+    assert.equal(freeGame.rules, null);
+    keyListeners.at(-1)({ code: 'KeyR', repeat: false });
+    stepFrames(freeGame, 1);
+    freeGame.dispose();
   } finally {
     globalThis.addEventListener = previous.add;
     globalThis.removeEventListener = previous.remove;
