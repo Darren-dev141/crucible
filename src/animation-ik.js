@@ -27,6 +27,21 @@ function createSmoother(smoothSeconds) {
   };
 }
 
+// A frame must never throw: a value that is not finite keeps the last good one (or the neutral one) and warns once per controller.
+function createLastGood(owner, field, neutral) {
+  let good = neutral;
+  let warned = false;
+  return function resolve(value, isGood) {
+    if (isGood) {
+      good = value;
+    } else if (!warned) {
+      warned = true;
+      console.warn(`${owner} ${field} returned ${Array.isArray(value) ? `[${value.join(', ')}]` : String(value)}, which is not finite; keeping the last good value.`);
+    }
+    return good;
+  };
+}
+
 /**
  * A two-bone solver that keeps a planted foot on uneven ground. `groundOffset(footPosition)` says how far the ground under
  * that foot sits above (positive) or below the ground the clip was made for, in the pose's units; it receives the animated
@@ -48,11 +63,12 @@ export function createFootPlacement(options = {}) {
   const maxAdjust = numberIn(owner, 'maxAdjust', options.maxAdjust, 0.4, 0, 1000);
   const smoothSeconds = numberIn(owner, 'smoothSeconds', options.smoothSeconds, 0.06, 0, 10);
   const smoothingAmount = createSmoother(smoothSeconds);
+  const lastOffset = createLastGood(owner, 'groundOffset', 0);
   let correction = 0;
 
   function target(time, foot) {
-    const offset = groundOffset([foot[0], foot[1], foot[2]]);
-    if (!Number.isFinite(offset)) throw new RangeError(`${owner} groundOffset must return a finite number, got ${String(offset)}.`);
+    const returned = groundOffset([foot[0], foot[1], foot[2]]);
+    const offset = lastOffset(returned, Number.isFinite(returned));
     const clamped = Math.max(-maxAdjust, Math.min(maxAdjust, offset));
     const lift = Math.min(1, Math.max(0, (foot[1] - ankleHeight) / liftHeight));
     const planted = 1 - lift * lift * (3 - 2 * lift);
@@ -85,13 +101,12 @@ export function createLookAt(options = {}) {
   const maxAngle = numberIn(owner, 'maxAngle', options.maxAngle, 70, 1e-6, 180);
   const smoothSeconds = numberIn(owner, 'smoothSeconds', options.smoothSeconds, 0.1, 0, 10);
   const smoothingAmount = createSmoother(smoothSeconds);
+  const lastGoal = createLastGood(owner, 'target', null);
   const smoothed = [0, 0, 0];
 
   function target(time, current) {
-    const goal = isPoint ? options.target : options.target(time, current);
-    if (!Array.isArray(goal) || goal.length !== 3 || !goal.every(Number.isFinite)) {
-      throw new RangeError(`${owner} target must return three finite numbers, got ${JSON.stringify(goal)}.`);
-    }
+    const returned = isPoint ? options.target : options.target(time, current);
+    const goal = lastGoal(returned, Array.isArray(returned) && returned.length === 3 && returned.every(Number.isFinite)) ?? current;
     const amount = smoothingAmount(time);
     for (let axis = 0; axis < 3; axis++) smoothed[axis] += (goal[axis] - smoothed[axis]) * amount;
     return [smoothed[0], smoothed[1], smoothed[2]];
