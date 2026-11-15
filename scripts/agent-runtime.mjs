@@ -72,6 +72,9 @@ const MAXIMUM_KEPT_WEB_BUILDS = 4;
 const EXPORTED_GLB_NAME = /^[0-9a-f-]{36}\.glb$/;
 const EXPORTED_WEB_BUILD_NAME = /^web-[0-9a-f-]{36}$/;
 const EVALUATION_TIMEOUT_MS = 30000;
+// Bringing the scene page back after a render job gets longer than an ordinary call. A job cut short by its deadline usually ran
+// while another process held the GPU, and the page can need that long to draw again once the card is free (#1256).
+const JOB_RESUME_TIMEOUT_MS = 4 * EVALUATION_TIMEOUT_MS;
 const QUERY_ONLY_TIMEOUT_MS = 120000;
 /** A bake runs on a worker for up to its own limit, so a call that bakes gets that much more than a plain call. */
 const BAKE_EVALUATION_TIMEOUT_MS = EVALUATION_TIMEOUT_MS + BAKE_WORKER_MAXIMUM_SECONDS * 1000;
@@ -927,7 +930,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         finally {
           if (suspended && !closing) {
             try {
-              await enqueue(() => invoke('resume', { sessionId }));
+              await enqueue(() => invoke('resume', { sessionId }, JOB_RESUME_TIMEOUT_MS));
               phase = 'ready';
             } catch (error) {
               phase = 'failed';

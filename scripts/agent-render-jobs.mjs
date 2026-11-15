@@ -435,7 +435,7 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
     }
   }
 
-  const LIVE_OWNER_MESSAGE = 'The job store is already owned by a live process.';
+  const LIVE_OWNER_MESSAGE = 'The job store is already owned by a live process. If another Crucible server is running, start this one with its own --jobs folder.';
 
   // Reads a lock another process may be writing. A file that does not parse is a starter that has not finished (or a lock that was
   // cut short), so it is treated as owned by a live process and never surfaces a raw SyntaxError. The hard link a starter makes
@@ -815,7 +815,7 @@ export async function createAgentRenderJobs({ root, run, limits: inputLimits = {
   async function finish(job, snapshot) {
     const { record, controller } = job;
     const timer = setTimeout(() => {
-      job.failure = 'Render job exceeded its elapsed deadline.';
+      job.failure = 'Render job exceeded its elapsed deadline. If another process was using the GPU, submit the job again; this job failed alone and the runtime stays usable.';
       record.state = 'cancelling';
       record.reason = job.failure;
       controller.abort(new Error(job.failure));
