@@ -1,10 +1,11 @@
 import test, { after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentRuntime } from '../scripts/agent-runtime.mjs';
+import { createAgentAssetCatalog } from '../scripts/agent-asset-catalog.mjs';
 import { isPreviewHost } from '../scripts/preview-host.mjs';
 import { addonCapabilities, addonFileFor, addonImportMap } from '../scripts/mcp-addons.mjs';
 import { sampleBrowserHeap, exceedsMemoryGuard } from '../scripts/agent-memory-guard.mjs';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -515,6 +516,60 @@ runTest('motion source assets count in the sum before a scene_apply reads them (
   const motion = { layers: catalogAssetIds.map(assetId => ({ from: { asset: assetId } })) };
   await assert.rejects(runtime.apply({ sessionId, operations: [{ type: 'set-motion', motion }] }), refusedAtTotal(3 * sizeEach));
   assert.equal(catalog.counts.reads, 0);
+});
+
+// The same GLB with one extra field in its JSON chunk, so the catalog gives it another asset id.
+function withDistinctDocument(bytes, marker) {
+  const jsonLength = bytes.readUInt32LE(12);
+  const document = JSON.parse(bytes.subarray(20, 20 + jsonLength).toString('utf8'));
+  document.asset = { ...document.asset, extras: { marker } };
+  const json = Buffer.from(JSON.stringify(document));
+  const paddedLength = Math.ceil(json.length / 4) * 4;
+  const binary = bytes.subarray(20 + jsonLength);
+  const result = Buffer.alloc(20 + paddedLength + binary.length, 32);
+  bytes.copy(result, 0, 0, 20);
+  result.writeUInt32LE(result.length, 8);
+  result.writeUInt32LE(paddedLength, 12);
+  json.copy(result, 20);
+  binary.copy(result, 20 + paddedLength);
+  return result;
+}
+
+runTest('two textured GLBs whose embedded images pass the combined limit are refused by the real catalog (#1282)', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'crucible-textured-limit-'));
+  try {
+    await cp(new URL('./fixtures/kenney-boat/', import.meta.url), directory, { recursive: true });
+    const boat = await readFile(join(directory, 'boat-fishing-small.glb'));
+    const secondBoat = withDistinctDocument(boat, 'second');
+    await writeFile(join(directory, 'boat-second.glb'), secondBoat);
+    const sharedImageBytes = Buffer.alloc(34 * 1024 * 1024);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(sharedImageBytes);
+    await writeFile(join(directory, 'Textures', 'colormap.png'), sharedImageBytes);
+    const onDiskTotal = boat.length + secondBoat.length + sharedImageBytes.length;
+    assert.ok(onDiskTotal < AGENT_ASSET_LIMITS.maxCombinedBytes, 'on disk the files fit, so only the embedded sizes can trip the limit');
+    const realCatalog = await createAgentAssetCatalog(directory);
+    let reads = 0;
+    const countingRealCatalog = {
+      list: () => realCatalog.list(),
+      size: assetId => realCatalog.size(assetId),
+      read: assetId => {
+        reads++;
+        return realCatalog.read(assetId);
+      },
+    };
+    const { runtime } = await reviewRuntimeHarness({
+      runtimeOptions: { assets: directory },
+      contextOverrides: { createAgentAssetCatalog: async () => countingRealCatalog },
+    });
+    const assetIds = realCatalog.list().assets.map(asset => asset.assetId);
+    assert.equal(assetIds.length, 2);
+    const recipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [],
+      nodes: assetIds.map((assetId, index) => ({ id: `boat-${index}`, asset: { id: assetId } })) };
+    await assert.rejects(runtime.create({ recipe }), error => error instanceof RangeError && error.message.includes('maxCombinedBytes'));
+    assert.equal(reads, 0, 'the refusal comes from size() before any file is read and base64 encoded');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 runTest('the preview server accepts only its own loopback host', () => {
