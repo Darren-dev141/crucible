@@ -38,12 +38,30 @@ export function stillPath(output, index, captureFormat) {
   return resolve(dirname(output), `frame-${index}.${extension}`);
 }
 
-/** Decodes the audio stream of a finished file and throws when there is none. */
-export async function assertOutputHasAudio(ffmpeg, output) {
+/** The paths of `count` stills, one distinct file per still, however short the duration. */
+export function stillPaths(output, count, captureFormat) {
+  return Array.from({ length: count }, (_, index) => stillPath(output, index, captureFormat));
+}
+
+/** The encoder options of a video render; `frameCount` is required whenever the video has audio. */
+export function renderEncoderOptions({ ffmpeg, output, fps, captureFormat, width, height, encoderBackend, audioArguments, frameCount }) {
+  const format = captureFormat === 'raw' ? 'rawvideo' : captureFormat === 'webcodecs' ? 'h264' : captureFormat;
+  return { executable: ffmpeg, output, fps, format, width, height, backend: encoderBackend, audioArguments, frameCount,
+    maximumFrameBytes: 64 * 1024 * 1024, maximumOutputBytes: Number.MAX_SAFE_INTEGER };
+}
+
+const AUDIO_LENGTH_TOLERANCE_SECONDS = 0.05;
+
+/** Decodes the audio stream of a finished file and throws when there is none or, given the picture length, when its length is off. */
+export async function assertOutputHasAudio(ffmpeg, output, expectedSeconds) {
+  let audioSeconds;
   try {
-    await measureStreamSeconds(ffmpeg, output, 'audio');
+    audioSeconds = await measureStreamSeconds(ffmpeg, output, 'audio');
   } catch (error) {
     throw new Error(`The rendered video has no audio stream although --audio was given (${error.message}). Check the sound file and the encoder.`);
+  }
+  if (expectedSeconds !== undefined && Math.abs(audioSeconds - expectedSeconds) > AUDIO_LENGTH_TOLERANCE_SECONDS) {
+    throw new Error(`The rendered audio is ${audioSeconds.toFixed(3)} s but the picture is ${expectedSeconds.toFixed(3)} s; they must match within 50 ms.`);
   }
 }
 
@@ -324,9 +342,7 @@ export async function renderMedia(values = process.argv.slice(2)) {
           measureAudioSeconds: path => measureStreamSeconds(ffmpeg, path, 'audio'),
         }));
       }
-      encoder = createFrameEncoder({ executable: ffmpeg, output, fps, format: captureFormat === 'raw' ? 'rawvideo' : captureFormat === 'webcodecs' ? 'h264' : captureFormat,
-        width, height, backend: encoderBackend, audioArguments, frameCount, maximumFrameBytes: 64 * 1024 * 1024,
-        maximumOutputBytes: Number.MAX_SAFE_INTEGER });
+      encoder = createFrameEncoder(renderEncoderOptions({ ffmpeg, output, fps, captureFormat, width, height, encoderBackend, audioArguments, frameCount }));
       if (captureFormat === 'webcodecs') frameReceiver.onChunk(chunk => encoder.writeChunk(chunk));
       const captureSequenceStarted = performance.now();
       for (let frame = 0; frame < frameCount; frame++) {
@@ -349,15 +365,14 @@ export async function renderMedia(values = process.argv.slice(2)) {
       const encoding = await encoder.finish();
       stageTimings.encoderFinishSeconds = encoding.finishSeconds;
       // A silent film must not pass for a finished one: the encoder reports success even when the sound was dropped.
-      if (audioArguments.length) await assertOutputHasAudio(ffmpeg, output);
+      if (audioArguments.length) await assertOutputHasAudio(ffmpeg, output, frameCount / fps);
     } else if (kind === 'stills') {
       const stillTimes = scene === 'film' && start === 0 && options.duration === undefined
         ? [23, 49, 59, 101, 114, 149, 158, 182]
         : Array.from({ length: 8 }, (_, index) => start + duration * (index + 0.5) / 8);
-      let stillIndex = 0;
-      for (const seconds of stillTimes) {
-        const image = await capture(seconds);
-        await writeFile(stillPath(output, stillIndex++, captureFormat), image);
+      const paths = stillPaths(output, stillTimes.length, captureFormat);
+      for (const [stillIndex, seconds] of stillTimes.entries()) {
+        await writeFile(paths[stillIndex], await capture(seconds));
       }
     } else {
       await writeFile(output, await capture(time));

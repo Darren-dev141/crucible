@@ -4,9 +4,9 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { audioTrimArguments, createFrameEncoder } from '../scripts/frame-encoder.mjs';
+import { audioTrimArguments, createFrameEncoder, frameEncoderArguments } from '../scripts/frame-encoder.mjs';
 import { audioInputArguments, measureStreamSeconds } from '../scripts/job-audio.mjs';
-import { assertOutputHasAudio, parseRenderOptions, stillPath } from '../scripts/render-media.mjs';
+import { assertOutputHasAudio, parseRenderOptions, renderEncoderOptions, stillPath, stillPaths } from '../scripts/render-media.mjs';
 
 const ffmpegAvailable = spawnSync('ffmpeg', ['-version']).status === 0;
 const SYNC_TOLERANCE_SECONDS = 0.05;
@@ -70,8 +70,39 @@ test('a rendered video without an audio stream fails the render', { skip: !ffmpe
   }
 });
 
+for (const [format, backend] of [['h264', 'cpu'], ['jpeg', 'cpu'], ['rawvideo', 'cpu'], ['jpeg', 'gpu']]) {
+  test(`the ${format} encoder (${backend}) pads the sound and cuts at the picture length without -shortest, with no ffmpeg needed`, () => {
+    const encoderArguments = frameEncoderArguments({ output: 'o.mp4', fps: 24, format, backend, audioArguments: ['-i', 'a.wav'],
+      audioCodec: 'aac', frameCount: 12, width: 64, height: 64 });
+    assert.ok(!encoderArguments.includes('-shortest'));
+    const padIndex = encoderArguments.indexOf('-af');
+    assert.equal(encoderArguments[padIndex + 1], 'apad');
+    assert.equal(encoderArguments[encoderArguments.indexOf('-t') + 1], '0.500000');
+  });
+}
+
+test('render-media hands the frame count to the encoder, which an audio render requires', () => {
+  const options = renderEncoderOptions({ ffmpeg: 'ffmpeg', output: 'o.mp4', fps: 24, captureFormat: 'webcodecs', width: 64, height: 64,
+    encoderBackend: 'cpu', audioArguments: ['-i', 'a.wav'], frameCount: 24 });
+  assert.equal(options.frameCount, 24);
+  assert.equal(options.format, 'h264');
+  assert.doesNotThrow(() => frameEncoderArguments({ ...options, audioCodec: 'aac' }));
+});
+
+test('a rendered audio length that differs from the picture fails the render', { skip: !ffmpegAvailable }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'crucible-1284-'));
+  try {
+    const video = join(directory, 'long-audio.mp4');
+    runFfmpeg(['-f', 'lavfi', '-i', 'testsrc=s=64x64:r=24', '-f', 'lavfi', '-i', 'sine=d=1:r=48000', '-frames:v', '24', '-pix_fmt', 'yuv420p', '-t', '1', video]);
+    await assertOutputHasAudio('ffmpeg', video, 1);
+    await assert.rejects(assertOutputHasAudio('ffmpeg', video, 2), /must match within 50 ms/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('stills are distinct files frame-0 to frame-7 beside --output, however short the duration', () => {
-  const names = Array.from({ length: 8 }, (_, index) => stillPath(join('out', 's.png'), index, 'png'));
+  const names = stillPaths(join('out', 's.png'), 8, 'png');
   assert.equal(new Set(names).size, 8);
   assert.match(names[0], /frame-0\.png$/);
   assert.match(names[7], /frame-7\.png$/);

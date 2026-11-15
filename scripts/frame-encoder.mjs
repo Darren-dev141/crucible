@@ -21,6 +21,22 @@ export function audioTrimArguments(audioCodec, pictureSeconds) {
   return ['-af', 'apad', ...audioCodecArguments(audioCodec), '-t', pictureSeconds.toFixed(6)];
 }
 
+/** The complete ffmpeg argument list for one encoder, kept apart from the spawn so tests can pin it without ffmpeg. */
+export function frameEncoderArguments({ output, fps, format, backend, audioArguments, audioCodec, frameCount, width, height }) {
+  const raw = format === 'rawvideo' ? rawFrameInputArguments({ width, height, fps }) : undefined;
+  const encoded = format === 'h264';
+  const codec = encoded
+    ? ['-c:v', 'copy']
+    : backend === 'gpu'
+    ? ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', '20']
+    : ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-threads', '2'];
+  return ['-hide_banner', '-loglevel', 'error', '-y', ...(encoded ? ['-f', 'h264', '-framerate', String(fps)] : raw ? raw.input : ['-f', 'image2pipe', '-framerate', String(fps), '-vcodec', format === 'jpeg' ? 'mjpeg' : 'png']),
+    '-i', 'pipe:0', ...audioArguments, ...(raw ? raw.filter : []), ...codec,
+    ...(encoded ? [] : ['-pix_fmt', 'yuv420p']), '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709',
+    '-movflags', '+faststart', ...(audioArguments.length ? audioTrimArguments(audioCodec, frameCount / fps) : []),
+    '-f', 'mp4', output];
+}
+
 /** One streamed frame at a time. The caller owns output publication and cleanup. */
 export function createFrameEncoder({ executable = 'ffmpeg', output, fps, format = 'jpeg', backend = 'cpu',
   audioArguments = [], audioCodec = 'aac', frameCount, width, height, signal, maximumFrameBytes = 1024 * 1024,
@@ -39,18 +55,7 @@ export function createFrameEncoder({ executable = 'ffmpeg', output, fps, format 
     throw new TypeError('An encoder with audio needs frameCount, the number of frames it will receive, so the sound ends with the picture.');
   }
   signal?.throwIfAborted();
-  const raw = format === 'rawvideo' ? rawFrameInputArguments({ width, height, fps }) : undefined;
-  const encoded = format === 'h264';
-  const codec = encoded
-    ? ['-c:v', 'copy']
-    : backend === 'gpu'
-    ? ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', '20']
-    : ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-threads', '2'];
-  const argumentsValue = ['-hide_banner', '-loglevel', 'error', '-y', ...(encoded ? ['-f', 'h264', '-framerate', String(fps)] : raw ? raw.input : ['-f', 'image2pipe', '-framerate', String(fps), '-vcodec', format === 'jpeg' ? 'mjpeg' : 'png']),
-    '-i', 'pipe:0', ...audioArguments, ...(raw ? raw.filter : []), ...codec,
-    ...(encoded ? [] : ['-pix_fmt', 'yuv420p']), '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709',
-    '-movflags', '+faststart', ...(audioArguments.length ? audioTrimArguments(audioCodec, frameCount / fps) : []),
-    '-f', 'mp4', output];
+  const argumentsValue = frameEncoderArguments({ output, fps, format, backend, audioArguments, audioCodec, frameCount, width, height });
   const child = spawn(executable, argumentsValue, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
   let diagnostics = '';
   let processError;
@@ -144,7 +149,7 @@ export function createFrameEncoder({ executable = 'ffmpeg', output, fps, format 
     },
     /** Appends an encoded H.264 chunk that the page already produced. Chunks are small, so the pipe buffer absorbs them. */
     writeChunk(bytes) {
-      if (!encoded) throw new Error('Chunks are for encoder format h264.');
+      if (format !== 'h264') throw new Error('Chunks are for encoder format h264.');
       if (phase !== 'writing') throw new Error('Encoder accepts no chunks after finalization.');
       check();
       child.stdin.write(bytes);
