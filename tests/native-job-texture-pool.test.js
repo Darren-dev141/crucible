@@ -62,11 +62,12 @@ function hashesOfPackedTables(input) {
 
 // SHA-256 of every packed table of the two scenes, taken on the unmodified code of origin/main at the branch base (55efd532),
 // where every map still went through the v1 atlas: stash the change, run this file with PRINT_POOL_HASHES=1, copy the printed hashes.
+// The kernelParams hashes were retaken when Cook grew the block to 336 bytes (aperture_ratio, cook#13 follow-up); other tables are unchanged.
 const GOLDEN_INSTANCED_HASHES = {
   emissiveTriangles: '2e38284e3690d5a05476c1c3068ea5e3b87e9667c3417183f287d60b1c5834b9',
   environmentTexels: '374708fff7719dd5979ec875d56cd2286f6d3cf7ec317a3b25632aab28ec37bb',
   instances: 'a196ea995083d3efc659bedb4a91ecffb87a008462be5532196dbb3cc20d94ac',
-  kernelParams: '0a786f473a472a962889ba8cc747f2bdf43d73eecef1d8c1e31df0ba9a716d85',
+  kernelParams: '901fb1765dcc35d1659bdc42f02f404ff05b5308dea19e7d321871f4ec52e015',
   lightToTree: '363f012b74b9c88d828c809a568dc50627214866415aeb36ef6effbc3061741f',
   lightTreeEmitters: '6d3621e3ca86542383ba5f3f8990f1b21aa214e30cef3bca52693d1a0e05a3a8',
   lightTreeNodes: 'df3874b6cd51492d661ee5e9b3821d45275729a0cc583f1b51362158bb6f7156',
@@ -80,7 +81,7 @@ const GOLDEN_FLATTENED_HASHES = {
   emissiveTriangles: '2f834ad7899f3eaf0e5dcd2879c8477e1536cfed5ef945aa2b44c6ce61079001',
   environmentTexels: '374708fff7719dd5979ec875d56cd2286f6d3cf7ec317a3b25632aab28ec37bb',
   instances: '3df2d7e9401c8d2496e079d72c063298e79bf509bf3d0a6dd48e349d6ee58186',
-  kernelParams: '40b03e08a41099a7cd7c75f3abb16163de889cd6f1ef747337ee2bd1c2f9ca1b',
+  kernelParams: '58647d68a49ed9b1ec1ca435be9c972bded3218a15dcd18d50598da1c88be96d',
   lightToTree: '363f012b74b9c88d828c809a568dc50627214866415aeb36ef6effbc3061741f',
   lightTreeEmitters: '07b5da35edf058375e8651d377e64187d81c65b885f2f587f455c9b19ceb128f',
   lightTreeNodes: 'ed8ee54927b117ebebb291c33752b0f94ee091db758c14049ebf05cea17f8ad5',

@@ -6,14 +6,14 @@ import * as pack from '../src/path-tracer-gpu-pack.js';
 import { buildTraceScene, resolveTexture } from '../src/path-tracer-scene.js';
 import { cookInstalled, cookModule, cookTest } from './support/cook.js';
 
-const { findNativeAddon, prepareCyclesInput, traceNative } = (await cookModule()) ?? {};
+const { STRUCT_STRIDES_V2, findNativeAddon, prepareCyclesInput, traceNative } = (await cookModule()) ?? {};
 const { buildFlattenedJobNativeInput } = (await cookModule('job-input')) ?? {};
 
 const skipWithoutAddon = !cookInstalled || findNativeAddon() === null ? 'the native addon is not built' : false;
 
 // `camera_env_scale` (byte 304) of KernelParamsV2; bytes 308 to 311 hold portal_count and 312 to 319 the tile origin, zero in a pack.
 const CAMERA_ENV_SCALE_BYTE_OFFSET = 304;
-const PARAMS_TAIL_END = 320;
+const PARAMS_TAIL_END = 320; // the end of the tile origin; the words after it (aperture_ratio) are not part of this check
 
 const SIZE = 128;
 function cameraFor(description) {
@@ -128,7 +128,7 @@ cookTest('the packed word holds the camera factor, and only it differs from a pa
   const plain = jobInputOf(roomParts(1), { map: skyMap(1) }, camera);
   const withField = jobInputOf(roomParts(1), { map: skyMap(1), cameraIntensity: 0.2 }, camera);
   assert.equal(scaleWord(plain), 0, 'a scene without the field leaves the word zero');
-  assert.equal(bytesOf(plain.kernelParams).length, 320);
+  assert.equal(bytesOf(plain.kernelParams).length, STRUCT_STRIDES_V2.kernelParams);
   const absentBytes = bytesOf(plain.kernelParams);
   const fieldBytes = bytesOf(withField.kernelParams);
   assert.equal(Buffer.compare(absentBytes.subarray(0, CAMERA_ENV_SCALE_BYTE_OFFSET), fieldBytes.subarray(0, CAMERA_ENV_SCALE_BYTE_OFFSET)), 0, 'no earlier word moves');
