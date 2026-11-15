@@ -153,7 +153,7 @@ Inspect or export the recipe before retrying. Context loss still permits recipe 
 | `scene_render_submit` | `sessionId`, `expectedRevision`, `settings` | Snapshot job ID and queued record |
 | `scene_render_status` | `jobId`, optional `response_format` | State and durable frame progress |
 | `scene_render_cancel` | `jobId` | Cancellation acknowledgement |
-| `scene_render_result` | `jobId`, optional `response_format` | Completed output paths, hashes and metrics |
+| `scene_render_result` | `jobId`, optional `response_format` | Completed output paths and metrics; `response_format: "detailed"` adds the SHA-256 of each file |
 | `scene_render_release` | `jobId` | Confirmation that owned job files were removed |
 
 `sessionId` is the scene ID: `scene_create` and `scene_create_asset` return it, and every scene tool takes it. It is optional: a call that leaves it out means the last used scene. An ID that names no open scene (an invented one, one from a disposed scene, or one that was evicted) is rejected with the open IDs in the message, because acting on a scene the caller did not name could edit the wrong one.
