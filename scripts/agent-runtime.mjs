@@ -14,7 +14,7 @@ import { USER_PASS_CAPABILITIES } from '../src/user-pass.js';
 import { GAME_CAPABILITIES } from '../src/game-setup-notes.js';
 import { MESH_BLEND_CAPABILITIES } from '../src/mesh-blend.js';
 import { MATERIAL_SNIPPET_CAPABILITIES } from '../src/material-snippet.js';
-import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_MEMORY_MIB, BAKE_WORKER_MAXIMUM_SECONDS } from '../src/agent-scene-capabilities.js';
+import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, MAXIMUM_MEMORY_MIB, BAKE_WORKER_MAXIMUM_SECONDS } from '../src/agent-scene-capabilities.js';
 import { PATH_TRACER_CAPABILITIES } from '../src/path-tracer-capabilities.js';
 import { chooseDenoiser, finishWithOidn } from './agent-path-trace-denoise.mjs';
 import { createNativeSequence } from './agent-native-sequence.mjs';
@@ -34,7 +34,7 @@ import { TEXTURE_SEQUENCE_CAPABILITIES } from '../src/texture-sequence-limits.js
 import { writeWebBuild } from './web-export.mjs';
 import { gameAssetIds } from '../src/game-assets.js';
 import { resolveJobRoot } from './agent-job-root.mjs';
-import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings } from './agent-render-jobs.mjs';
+import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError } from './agent-render-jobs.mjs';
 import { RENDER_QUALITY_NOTE, applyQuality, tierReport } from './agent-render-quality.mjs';
 import { RENDER_BUDGET_NOTE, chooseBudgetSettings, parseBudget } from './agent-render-budget.mjs';
 import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
@@ -690,6 +690,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       const width = settings.kind === 'video' ? Math.floor(created.render.width / 2) * 2 : created.render.width;
       const height = settings.kind === 'video' ? Math.floor(created.render.height / 2) * 2 : created.render.height;
       if (width < 64 || height < 64) throw new Error('Render budget reduced the job below its minimum output size.');
+      const oversizeError = oversizeFrameBudgetError({ requested: { width: settings.width, height: settings.height }, rendered: { width, height },
+        plan: created.render, memoryMiB: memory, maximumMemoryMiB: MAXIMUM_MEMORY_MIB });
+      if (oversizeError) throw oversizeError;
       await jobPage.setViewportSize({ width, height });
       session = await jobPage.context().newCDPSession(jobPage);
       const region = settings.region;
@@ -699,6 +702,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       if (region && (region.x + region.width > width || region.y + region.height > height)) {
         throw new Error(`The region lies outside the rendered frame, which the memory budget reduced to ${width}x${height}.`);
       }
+      const frameByteLimit = frameByteLimitFor(settings.width, settings.height, MAXIMUM_JOB_FRAME_BYTES);
       const outputWidth = region?.width ?? width;
       const outputHeight = region?.height ?? height;
       const format = settings.format ?? 'png';
@@ -815,7 +819,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           }
           if (traced.report.nativeSession) (metrics.nativeSessionRoutes ??= []).push(traced.report.nativeSession.path);
           const tracedBytes = Buffer.from(traced.data, 'base64');
-          if (tracedBytes.length > MAXIMUM_JOB_FRAME_BYTES) throw new Error('Path traced frame exceeded 12 MiB.');
+          if (tracedBytes.length > frameByteLimit) throw new Error(`Path traced frame exceeded ${frameByteLimit / 1024 ** 2} MiB.`);
           if (encoder) {
             await encoder.writeFrame(tracedBytes);
           } else {
@@ -858,7 +862,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             ...(settings.kind === 'video' ? { quality: 95 } : { optimizeForSpeed: true }) });
           const captureBytes = Buffer.from(captured.data, 'base64');
           metrics.captureSeconds += (performance.now() - captureStarted) / 1000;
-          if (captureBytes.length > MAXIMUM_JOB_FRAME_BYTES) throw new Error('Captured job frame exceeded 12 MiB.');
+          if (captureBytes.length > frameByteLimit) throw new Error(`Captured job frame exceeded ${frameByteLimit / 1024 ** 2} MiB.`);
           signal.throwIfAborted();
           return captureBytes;
         }
@@ -879,7 +883,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           const encodedBytes = encodeRenderOutput({ format, pixels, width: read.width, height: read.height, pass,
             hasAlpha: settings.transparent === true, depthRange: RENDER_PASS_DEPTH_RANGE });
           metrics.captureSeconds += (performance.now() - captureStarted) / 1000;
-          if (encodedBytes.length > MAXIMUM_JOB_FRAME_BYTES * HIGH_PRECISION_FRAME_FACTOR) throw new Error('Rendered frame exceeded the high-precision size limit.');
+          if (encodedBytes.length > frameByteLimit * HIGH_PRECISION_FRAME_FACTOR) throw new Error('Rendered frame exceeded the high-precision size limit.');
           signal.throwIfAborted();
           return encodedBytes;
         }
@@ -910,7 +914,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             }
             const encodedBytes = encodeMultilayerExr({ width: beautyRead.width, height: beautyRead.height, beauty: beautyRead.pixels, passes: passPixels, hasAlpha: settings.transparent === true, depthRange: RENDER_PASS_DEPTH_RANGE });
             metrics.captureSeconds += (performance.now() - captureStarted) / 1000;
-            if (encodedBytes.length > MAXIMUM_JOB_FRAME_BYTES * HIGH_PRECISION_FRAME_FACTOR) throw new Error('Rendered frame exceeded the high-precision size limit.');
+            if (encodedBytes.length > frameByteLimit * HIGH_PRECISION_FRAME_FACTOR) throw new Error('Rendered frame exceeded the high-precision size limit.');
             await writeArtifact(`${stem}.exr`, encodedBytes);
           } else {
           await writeArtifact(`${stem}.${artifactExtension}`, bytes);
@@ -1022,7 +1026,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           use: 'scene_asset_catalog lists packs: name, version, license, author, description and item ids. GLBs, images, looks and environments carry assetId values that work in scene_create_asset, look, hdri and texture fields. Materials and recipes are read with scene_asset_catalog { pack, material } or { pack, recipe }: pass a recipe to scene_create, and a material as a materials entry or a scene_apply set-material. Packs are installed by the user (unzip into the --packs folder); a tool call never downloads one. Invalid packs are skipped and listed under packs.rejected with the reason.',
         },
         jobs: { configured: Boolean(jobRoot), kinds: ['image', 'stills', 'video'], passes: RENDER_PASS_NAMES, pathTracer: PATH_TRACER_CAPABILITIES, maximumActiveJobs: 1, estimate: RENDER_ESTIMATE_NOTE, budget: RENDER_BUDGET_NOTE, quality: RENDER_QUALITY_NOTE, tiers: await deviceTiers(),
-          maximumWidth: MAXIMUM_JOB_SIDE, maximumHeight: MAXIMUM_JOB_SIDE, maximumPixels: MAXIMUM_JOB_PIXELS,
+          maximumWidth: MAXIMUM_JOB_SIDE, maximumHeight: MAXIMUM_JOB_SIDE, maximumPixels: MAXIMUM_JOB_PIXELS, maximumSequenceWidth: MAXIMUM_SEQUENCE_JOB_SIDE, maximumSequenceHeight: MAXIMUM_SEQUENCE_JOB_SIDE, maximumSequencePixels: MAXIMUM_SEQUENCE_JOB_PIXELS,
           maximumDuration: MAXIMUM_VIDEO_SECONDS, maximumFps: MAXIMUM_JOB_FPS, maximumFrames: MAXIMUM_JOB_FRAMES, maximumStills: 8,
           encoder: 'H.264', encoders: VIDEO_ENCODERS, audio: Boolean(audioRoot), timeline: true, previewSuspendedDuringJob: true,
           glbExport: { maximumBytes: MAXIMUM_GLB_BYTES, maximumKept: MAXIMUM_KEPT_GLBS, maximumTextureSize: 4096 },

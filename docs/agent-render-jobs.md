@@ -334,10 +334,10 @@ A job that traces on the native path tracer holds more in the Node process, beca
 | Retained records | 32 |
 | Total store bytes | 512 MiB |
 | Combined output bytes per job | 128 MiB |
-| PNG artifact bytes | 12 MiB each (a 1920x1080 frame); 48 MiB each for `png16` and `exr` |
+| PNG artifact bytes | 12 MiB each (a 1920x1080 frame; the limit grows with the pixels above that, 48 MiB at 3840x2160); 48 MiB each for `png16` and `exr` |
 | Snapshot JSON | 1 MiB |
 | Asset bytes | 64 MiB |
-| Dimensions | 64 to 1920 pixels each, at most 1920x1080 pixels in all (1080x1920 fits) |
+| Dimensions | An `image` job: 64 to 3840 pixels each, at most 3840x2160 pixels in all (2880x1620 fits). `stills` and `video`: 64 to 1920 each, at most 1920x1080 in all (1080x1920 fits). A frame larger than 1920x1080 that `--memory` cannot hold is refused with the `--memory` it needs, never shrunk; `--memory` tops out at 384 MiB, which holds about 2880x1620 (measured: a plain scene asks for `--memory 373` on the GPU backend; textures add to that, so it only just fits) |
 | Video frame rate | 1 to 60 fps |
 | Duration | 0.1 to 60 seconds |
 | Maximum video frames | 900 |
