@@ -27,7 +27,8 @@ function crowdCode() {
 }
 
 const ASSET_ID = /^[a-f0-9]{64}$/;
-const PLACEMENT_FIELDS = ['id', 'materials', 'clip', 'drive', 'crowd'];
+const PLACEMENT_FIELDS = ['id', 'materials', 'flatten', 'clip', 'drive', 'crowd'];
+const FLATTEN_FIELDS = ['color', 'unlit'];
 const CLIP_FIELDS = ['index', 'start', 'speed', 'loop'];
 const COLOR_FIELDS = ['color', 'emissiveColor'];
 const UNIT_FIELDS = ['metallic', 'roughness', 'opacity'];
@@ -93,6 +94,28 @@ function normalizeMaterialOverride(override, index) {
   return result;
 }
 
+// One call that flattens every material of a placement: `color` paints each one a single colour (textures dropped) and
+// `unlit` draws each one without lighting. Either or both; a named override in `materials` still wins over it.
+function normalizeFlatten(value) {
+  knownKeys(value, FLATTEN_FIELDS, 'asset.flatten');
+  if (value.color === undefined && value.unlit === undefined) {
+    throw invalidField('asset.flatten', value, 'at least one of color or unlit, such as { "unlit": true } or { "color": [0.8, 0.8, 0.8] }');
+  }
+  const result = {};
+  if (value.color !== undefined) {
+    const color = colorVector(value.color, 'asset.flatten.color');
+    if (color.some(component => component > 1)) {
+      throw invalidField('asset.flatten.color', value.color, 'an array of 3 linear RGB numbers from 0 to 1, such as [0.8, 0.8, 0.8]');
+    }
+    result.color = color;
+  }
+  if (value.unlit !== undefined) {
+    if (typeof value.unlit !== 'boolean') throw invalidField('asset.flatten.unlit', value.unlit, 'true or false', TypeError);
+    result.unlit = value.unlit;
+  }
+  return result;
+}
+
 /** Validate the `asset` field of a node. Returns the canonical form kept in the recipe. */
 export function normalizeAssetPlacement(value) {
   knownKeys(value, PLACEMENT_FIELDS, 'asset');
@@ -114,6 +137,7 @@ export function normalizeAssetPlacement(value) {
     }
     result.materials = overrides;
   }
+  if (value.flatten !== undefined) result.flatten = normalizeFlatten(value.flatten);
   if (value.clip !== undefined) {
     knownKeys(value.clip, CLIP_FIELDS, 'asset.clip');
     const { index, start = 0, speed = 1, loop = true } = value.clip;
@@ -205,8 +229,28 @@ function overrideFields(override) {
   return fields;
 }
 
-export function materialOutput(source, fields) {
+// What flatten changes on every source material. Lighting-only maps always go and so does any glow, so the surface reads
+// as one flat thing; a flat colour also drops the base map, and unlit keeps it.
+function flattenChanges(flatten) {
+  if (!flatten) return { fields: {}, droppedMaps: [] };
+  const droppedMaps = ['normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap'];
+  const fields = { emission: 0 };
+  if (flatten.color) {
+    droppedMaps.push('map');
+    fields.color = flatten.color;
+  }
+  if (flatten.unlit) {
+    fields.tag = 'unlit';
+  } else {
+    fields.metallic = 0;
+    fields.roughness = 1;
+  }
+  return { fields, droppedMaps };
+}
+
+export function materialOutput(source, fields, droppedMaps = []) {
   const output = { ...source };
+  for (const map of droppedMaps) delete output[map];
   for (const [field, value] of Object.entries(fields)) {
     output[field] = Array.isArray(value) ? Object.freeze([...value]) : value;
   }
@@ -241,7 +285,8 @@ export function expandAssetPlacements(recipe, assets, limits, outputCache = new 
   const handleOwners = new Map();
   const generatedNodes = [];
   for (const node of placed) {
-    const { id: assetId, materials: overrides = [], clip, drive, crowd } = node.asset;
+    const { id: assetId, materials: overrides = [], flatten, clip, drive, crowd } = node.asset;
+    const flattened = flattenChanges(flatten);
     const posed = posedNodes.has(node.id);
     let copy = 0;
     if (clip || drive || crowd || posed) {
@@ -279,20 +324,20 @@ export function expandAssetPlacements(recipe, assets, limits, outputCache = new 
         runtime.geometryParts.set(geometryId, part.geometry);
       }
       if (!materialIndexes.has(part.material)) materialIndexes.set(part.material, materialIndexes.size);
-      const fields = overrideFields(overrideByName.get(part.material.name));
       const override = overrideByName.get(part.material.name);
+      const fields = { ...flattened.fields, ...overrideFields(override) };
       const materialKey = override?.id === undefined
-        ? `asset:${assetId.slice(0, 12)}:${copy}:${materialIndexes.get(part.material)}:${JSON.stringify(fields)}`
+        ? `asset:${assetId.slice(0, 12)}:${copy}:${materialIndexes.get(part.material)}:${JSON.stringify(fields)}${flatten ? JSON.stringify(flattened.droppedMaps) : ''}`
         : handledMaterialKey(override.id, materialIndexes.get(part.material), handleOwners, recipe, node);
       if (!materialIds.has(materialKey)) {
         materialIds.set(materialKey, materialKey);
         recipe.materials.push({ id: materialKey, ...jsonMaterial(part.material), ...fields, assetSource: true, ...(override?.id === undefined ? {} : { animatable: true }) });
         // The same output object across stages keeps the renderer's batches and the parts' identity stable.
         // A handled material keeps its id when the override changes, so the cache also compares the override fields.
-        const fieldsKey = JSON.stringify(fields);
+        const fieldsKey = JSON.stringify([fields, flattened.droppedMaps]);
         const cached = outputCache.get(materialKey);
         if (cached?.source !== part.material || cached.fieldsKey !== fieldsKey) {
-          outputCache.set(materialKey, { source: part.material, fieldsKey, output: materialOutput(part.material, fields) });
+          outputCache.set(materialKey, { source: part.material, fieldsKey, output: materialOutput(part.material, fields, flattened.droppedMaps) });
         }
         runtime.materialOutputs.set(materialKey, outputCache.get(materialKey).output);
       }
