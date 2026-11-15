@@ -32,18 +32,25 @@ input[type=range][data-crucible-range]:focus-visible::-moz-range-thumb { box-sha
 
 // Runs inside the frame. It marks each slider, adds a value label, and keeps both in step with the slider.
 export const frameControlScript = `
+  let rangeCounter = 0;
   const enhanceRange = slider => {
     if (slider.dataset.crucibleRange) return;
     slider.dataset.crucibleRange = 'true';
     const decimals = (String(slider.step || '1').split('.')[1] || '').length;
     const value = document.createElement('output');
     value.className = 'crucible-value';
+    if (!slider.id) slider.id = 'crucible-range-' + (++rangeCounter);
+    value.htmlFor = slider.id;
+    let shownValue = null;
     const refresh = () => {
+      if (slider.value === shownValue) return;
+      shownValue = slider.value;
       const minimum = Number(slider.min || 0);
       const maximum = Number(slider.max || 100);
       const fraction = maximum > minimum ? (Number(slider.value) - minimum) / (maximum - minimum) : 0;
       slider.style.setProperty('--fill', Math.round(fraction * 100) + '%');
       value.textContent = Number(slider.value).toFixed(decimals);
+      slider.setAttribute('aria-valuetext', value.textContent);
     };
     let panel = slider.parentElement;
     if (getComputedStyle(slider).position === 'fixed') {
@@ -64,9 +71,10 @@ export const frameControlScript = `
     slider.addEventListener('input', refresh);
     slider.addEventListener('change', refresh);
     refresh();
-    setInterval(refresh, 250);
   };
   const enhanceRanges = () => document.querySelectorAll('input[type=range]').forEach(enhanceRange);
-  new MutationObserver(enhanceRanges).observe(document.documentElement, { childList: true, subtree: true });
+  new MutationObserver(records => {
+    if (records.some(record => record.addedNodes.length > 0)) enhanceRanges();
+  }).observe(document.documentElement, { childList: true, subtree: true });
   addEventListener('load', enhanceRanges);
 `;
