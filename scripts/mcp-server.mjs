@@ -291,7 +291,7 @@ const environment = z.strictObject({
   skyTop: color.optional(),
   skyBottom: color.optional(),
   fogColor: color.optional(),
-  fogDensity: bounded(0, 10).optional(),
+  fogDensity: bounded(0, 10).nullable().optional().describe('Null (what scene_export_recipe writes) leaves the fog density to the setup.'),
   volumeFog: volumeFog.optional().describe('Light-shaft fog; needs HDR.'),
   localVolumes: z.array(z.record(z.string(), z.unknown())).max(8).optional().describe('Up to 8 absorbing and emitting volumes; fields in scene_capabilities localVolumes.'),
   liquid: liquidOptics.optional().describe('Optics for materials tagged liquid or foam.'),
@@ -327,6 +327,8 @@ const effects = z.strictObject({
   depthOfField: z.strictObject({ blur: unit.optional(), focusDistance: bounded(0.01, 100000).optional() }).optional().describe('Lens blur: blur 0 to 1, focusDistance metres.'),
   motionBlur: z.strictObject({ shutter: bounded(0, 0.5).optional(), objects: bounded(0, 1).optional() }).optional().describe('Motion smear, shutter in seconds. objects 0 to 1 also smears each moving part along its own motion (off at 0).'),
   colorBalance: looseField,
+  flash: looseField,
+  distortion: looseField,
   glare: looseField,
   lensDistortion: looseField,
   stylize: looseField,
@@ -504,7 +506,7 @@ const geometry = z.discriminatedUnion('type', [
   z.strictObject({ id: identifier, type: z.literal('circle'), segments, innerRadius: finite.optional() }).describe('Unit disc facing +Z; innerRadius makes a ring.'),
   z.strictObject({ id: identifier, type: z.literal('line'), from: vector3, to: vector3, radius: finite.optional(), radialSegments: detail(3, 128) }),
   z.strictObject({ id: identifier, type: z.literal('fragment'), source: identifier, index: z.number().int().min(0).max(63), cells: z.number().int().min(2).max(64), seed: detail(0, 4294967295), impact: vector3.optional(), impactRadius: positive.optional() }).describe('Piece of a fractured geometry; made by fracture-node.'),
-  z.strictObject({ id: identifier, type: z.literal('mesh'), base: z.discriminatedUnion('type', primitiveGeometries(false)).describe('Starting shape, converted to welded quads with axis face tags.'), edits: recipeMeshEdits.optional().describe('Replayable edit log, applied in order. Each item has the shape of one mesh_edit edit; read that tool for every op and field.'), stack: recipeMeshStack.optional().describe('Non-destructive modifier stack evaluated after the edits. Each item has the shape of one mesh_stack node; read that tool for the ops.'), smoothAngle: bounded(0, 180).optional().describe('Edges bending more than this many degrees render hard. Defaults to 30.'), shapeKeys: recipeMeshEdits.optional().describe('Named morph targets, at most 16: { name, offsets | edits, value }. See scene_capabilities meshShapeKeys.') }),
+  z.strictObject({ id: identifier, type: z.literal('mesh'), base: z.discriminatedUnion('type', [...primitiveGeometries(false), z.strictObject({ type: z.enum(['grid', 'plane']), segments: detail(1, 64) })]).describe('Starting shape, converted to welded quads with axis face tags.'), edits: recipeMeshEdits.optional().describe('Replayable edit log, applied in order. Each item has the shape of one mesh_edit edit; read that tool for every op and field.'), stack: recipeMeshStack.optional().describe('Non-destructive modifier stack evaluated after the edits. Each item has the shape of one mesh_stack node; read that tool for the ops.'), smoothAngle: bounded(0, 180).optional().describe('Edges bending more than this many degrees render hard. Defaults to 30.'), shapeKeys: recipeMeshEdits.optional().describe('Named morph targets, at most 16: { name, offsets | edits, value }. See scene_capabilities meshShapeKeys.') }),
 ]);
 // No description: this field repeats in every motion track schema. A wrong name fails with every valid form, and docs/agent-motion.md lists them.
 const easingField = z.string().max(80).optional();
@@ -593,6 +595,16 @@ const ikSolver = z.discriminatedUnion('type', [
     weight: ikWeight,
   }).describe('Point a node, such as a head, lamp or camera, at a target.'),
 ]);
+const motionTrackFields = ['kind', 'id', 'property', 'interpolation', 'keyframes', 'extrapolation', 'modifiers'];
+// A union reports only "Invalid input"; name the field and the allowed ones the way set-motion does.
+function motionTrackUnionMessage(issue) {
+  const track = issue.input;
+  if (!track || typeof track !== 'object' || Array.isArray(track)) return 'A motion track is an object {kind, id, property, keyframes: [{time, value}]}.';
+  const unknownField = Object.keys(track).find(field => !motionTrackFields.includes(field));
+  if (unknownField !== undefined) return `Unknown or unsupported motion track field: ${unknownField}. Allowed fields: ${motionTrackFields.join(', ')}.`;
+  if (track.kind === undefined) return 'A motion track needs kind (node, material, camera, geometry, light, sun, sky or effects), id, property and keyframes.';
+  return undefined;
+}
 const motion = z.strictObject({
   duration: z.number().min(0.1).max(30),
   ik: z.array(ikSolver).max(16).optional().describe('Inverse kinematics run after the tracks and any selected clip, in order, on recipes and imported assets. IDs are recipe node IDs or an asset\'s node-N IDs; find them with scene_inspect kind hierarchy. scene_inspect reports motionIk: whether each solver reaches its target across the clip.'),
@@ -615,7 +627,7 @@ const motion = z.strictObject({
     motionTrack('camera', 'roll', finite, finite),
     motionTrack('geometry', 'oceanTime', finite.min(-1e6).max(1e6), finite),
     lookTrack,
-  ])).max(128),
+  ], { error: motionTrackUnionMessage })).max(128),
 }).describe('One absolute-time procedural clip. Local node transforms propagate through parents. Cubic tangents are derivatives per second. Backend checks references, duplicate tracks, 2048 total keys and every sampled pose.');
 const physicsBody = z.strictObject({
   node: identifier.describe('Root node with a geometry; the collider is fitted to it and the body drives its pose.'),
@@ -640,12 +652,17 @@ const physicsJoint = z.strictObject({
   anchorB: vector3.optional(),
   axis: vector3.optional().describe('Unit vector for revolute and prismatic joints.'),
   limits: z.tuple([finite, finite]).optional().describe('Radians for revolute, metres for prismatic.'),
+  name: identifier.optional().describe('Joint name that physics.events jointMotor events refer to; fracture-node writes glue-a-b.'),
+  breakImpulse: positive.optional().describe('Fixed joints only: contact impulse in N s that breaks the joint in one step.'),
 });
 const physics = z.strictObject({
   duration: z.number().min(0.1).max(10),
   gravity: vector3.optional().describe('Defaults to [0, -9.81, 0].'),
   bodies: z.array(physicsBody).min(1).max(64),
   joints: z.array(physicsJoint).max(64).optional().describe('Joint bodies are the node IDs of physics bodies.'),
+  events: z.array(z.record(z.string(), z.unknown())).max(128).optional().describe('Scheduled impulse, kinematicPose and jointMotor events by time or tick; docs/physics.md.'),
+  fields: z.array(z.record(z.string(), z.unknown())).max(8).optional().describe('Force fields: wind, turbulence, vortex, drag, magnet.'),
+  ragdoll: z.record(z.string(), z.unknown()).optional().describe('{ armature, density, friction, restitution, layer }: one body per bone of a recipe armature.'),
   ocean: z.record(z.string(), z.unknown()).optional().describe('Sea for floating bodies: geometry is a mesh geometry whose stack has an ocean node (axis y) whose waves they ride; level is the world height of the calm sea (leave it out to follow the drawn sea; a different value adds a warning to the scene_inspect physics report); waterDensity 1000 kg/m3. The sea clock at physics time 0 is the ocean node time, so drive an oceanTime track at 1 s per s to keep the drawn sea in step.'),
 }).describe('Rigid bodies recorded offline with Rapier (optional peer) at 60 fps and seeked by motionTime. scene_inspect reports contacts and resting state. A node cannot have a body and a motion translation or rotation track.');
 const looseRecord = z.record(z.string(), z.unknown()).meta({ id: 'LooseRecord' });

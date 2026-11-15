@@ -508,7 +508,7 @@ faces, so a tag confines them. Neither adds or removes faces, and the topology s
   is an error (`onMiss` "error") or stays put (`keep`). The queries use the BVH of `src/mesh-query.js`, at most 20
   million triangle tests per edit.
 
-A decal is a grid base shrunk onto a curved target and then solidified:
+A mesh base is a primitive or profile record, or a `grid` or `plane` sheet (`segments` 1 to 64). A decal is a grid base shrunk onto a curved target and then solidified:
 
 ```json
 { "id": "badge", "type": "mesh", "base": { "type": "grid", "segments": 16 }, "edits": [
