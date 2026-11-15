@@ -57,9 +57,22 @@ export function packNodes(bvh) {
   return table;
 }
 
+const GPU_MAP_FIELDS = ['texture', 'normalTexture', 'surfaceTexture', 'emissiveTexture'];
+
+/**
+ * The UV set the GPU kernels read for a material. They interpolate one UV pair per triangle corner, so every map of a
+ * material shares it: the base colour's set, or the first map's when there is no base colour. A material that mixes sets
+ * reads its other maps with that set too; the CPU tracer reads each map with its own.
+ */
+export function materialUvSet(material) {
+  const first = GPU_MAP_FIELDS.map(field => material[field]).find(Boolean);
+  return first?.uvSet === 1 ? 1 : 0;
+}
+
 /** Nine texels per triangle in leaf order: corner and material, two edges, three normals with u, three colours with v. */
 export function packTriangles(scene) {
-  const { positions, normals, uvs, colors, indices, triangleMaterial, bvh } = scene;
+  const { positions, normals, uvs, uvs1, colors, indices, triangleMaterial, bvh } = scene;
+  const secondSetMaterials = uvs1 ? scene.materials?.map(materialUvSet) : null;
   const order = bvh.triangleOrder;
   const table = createTable(order.length * TRIANGLE_TEXELS);
   const { data } = table;
@@ -67,6 +80,7 @@ export function packTriangles(scene) {
     const triangle = order[slot];
     const base = slot * TRIANGLE_TEXELS * 4;
     const corners = [indices[triangle * 3], indices[triangle * 3 + 1], indices[triangle * 3 + 2]];
+    const uvSource = secondSetMaterials?.[triangleMaterial[triangle]] === 1 ? uvs1 : uvs;
     for (let axis = 0; axis < 3; axis++) {
       const origin = positions[corners[0] * 3 + axis];
       data[base + axis] = origin;
@@ -80,8 +94,8 @@ export function packTriangles(scene) {
         data[base + (3 + corner) * 4 + axis] = normals[vertex * 3 + axis];
         data[base + (6 + corner) * 4 + axis] = colors[vertex * 3 + axis];
       }
-      data[base + (3 + corner) * 4 + 3] = uvs[vertex * 2];
-      data[base + (6 + corner) * 4 + 3] = uvs[vertex * 2 + 1];
+      data[base + (3 + corner) * 4 + 3] = uvSource[vertex * 2];
+      data[base + (6 + corner) * 4 + 3] = uvSource[vertex * 2 + 1];
     }
   }
   return table;
