@@ -97,13 +97,14 @@ Each problem has `kind`, `severity`, `count`, up to eight sample indices and a s
 | Kind | Severity | Sample indices |
 | --- | --- | --- |
 | `non-manifold-edge` | error | edges used by three or more faces |
-| `inconsistent-winding` | error | edges whose two faces wind the same way |
+| `inconsistent-winding` | error | edges whose two faces wind the same way; `count` is edges, `sample` lists the faces to flip with `flip_normals` |
 | `inverted-part` | error | closed parts with negative volume |
 | `degenerate-face` | error | faces with near-zero area |
 | `boundary-edge` | warning | edges with one face (open surfaces) |
 | `loose-vertex` | warning | vertices used by no face |
 | `non-planar-quad` | warning (`geometry: true`) | quads folded by more than 45 degrees across their diagonal |
 | `folded-face` | warning (`geometry: true`) | two neighbouring faces whose normals point opposite ways, so the surface doubles back on itself |
+| `skewed-quad` | warning (`geometry: true`) | quads with a corner more than 60 degrees from a right angle (outside radial pole fans) |
 
 `ok` is false when any error is present. With `geometry: true`, spatial checks (`intersecting-parts`, `self-intersection`, `thin-wall`, `floating-part`, `asymmetric`) and quad distortion warnings are included.
 

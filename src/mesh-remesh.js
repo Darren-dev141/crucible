@@ -25,7 +25,7 @@ function assertOutward(mesh) {
 
 // Surface nets can leave a saddle edge shared by four quads on thin, bumpy surfaces; that shell is still closed and is
 // kept. An edge with one quad is a hole, and a hole would pass for a solid in every later edit, so it fails.
-function assertNoHoles(mesh) {
+export function assertNoHoles(mesh) {
   const table = edgeCornerTable(mesh);
   for (let edge = 0; edge < mesh.edgeCount; edge++) {
     if (table.edgeOffsets[edge + 1] - table.edgeOffsets[edge] < 2) {

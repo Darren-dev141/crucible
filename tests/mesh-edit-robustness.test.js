@@ -5,6 +5,7 @@ import { box } from '../src/geometry.js';
 import { applyMeshEdits, createMeshData, lintMesh, meshFromGeometry } from '../src/mesh.js';
 import { MESH_EDIT_OPERATIONS } from '../src/mesh-operations.js';
 import { GEOMETRY_PROBLEMS, MESH_PROBLEMS } from '../src/mesh-lint.js';
+import { assertNoHoles } from '../src/mesh-remesh.js';
 import { loadMeshBooleans, meshBoolean } from '../src/mesh-boolean.js';
 
 await loadMeshBooleans();
@@ -62,4 +63,28 @@ test('every lint fix hint names only real operations', () => {
       assert.ok(name in MESH_EDIT_OPERATIONS, `"${name}" in "${hint}" is not an operation`);
     }
   }
+});
+
+test('inconsistent-winding lists the faces to flip, and flipping them gives a clean lint', () => {
+  const tagged = applyMeshEdits(cube(), [{ op: 'flip_normals', select: { tag: 'top' } }]).mesh;
+  const winding = lintMesh(tagged).problems.find(problem => problem.kind === 'inconsistent-winding');
+  assert.ok(winding.count > 0);
+  assert.ok(winding.sample.every(face => face >= 0 && face < tagged.faceCount));
+  assert.match(winding.fix, /flip_normals/);
+  const fixed = applyMeshEdits(tagged, [{ op: 'flip_normals', select: { faces: winding.sample } }]).mesh;
+  assert.deepEqual(lintMesh(fixed).problems, []);
+});
+
+test('meshBoolean on an inside-out cube says the mesh must be outward facing', () => {
+  assert.throws(() => meshBoolean(invertedCube(), cube(), 'union'), /closed and outward facing/);
+});
+
+test('assertNoHoles rejects a surface with a one-quad edge and accepts a closed one', () => {
+  const quad = createMeshData({
+    positions: Float32Array.from([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]),
+    faceOffsets: Uint32Array.from([0, 4]),
+    cornerVertices: Uint32Array.from([0, 1, 2, 3]),
+  });
+  assert.throws(() => assertNoHoles(quad), /could not close the surface/);
+  assert.doesNotThrow(() => assertNoHoles(cube()));
 });

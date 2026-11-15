@@ -10,7 +10,7 @@ const FOLDED_NORMAL_DOT = -0.99;
 // Every problem names the operation that usually fixes it, so an agent can act without another lookup.
 export const MESH_PROBLEMS = Object.freeze({
   'non-manifold-edge': { severity: 'error', fix: 'Delete the extra faces or split the edge; booleans and solidify need two faces per edge.' },
-  'inconsistent-winding': { severity: 'error', fix: 'Run flip_normals on the faces listed in sample so they wind like their neighbours.' },
+  'inconsistent-winding': { severity: 'error', fix: 'Run flip_normals with select { faces: sample }: sample lists faces (not edges) that wind against their neighbours.' },
   'inverted-part': { severity: 'error', fix: 'Run flip_normals on the part; its normals point inward.' },
   'degenerate-face': { severity: 'error', fix: 'Run merge_by_distance, or dissolve_faces on the zero-area faces.' },
   'loose-vertex': { severity: 'warning', fix: 'Run delete_loose to remove them; loose vertices do not render and confuse bounds.' },
@@ -258,9 +258,47 @@ function insideOtherPart(mesh, facePart, part) {
 }
 
 /**
+ * Faces to flip so every part with inconsistent winding becomes consistent. Faces are two-coloured by walking shared
+ * edges, switching colour across an inconsistently wound edge; the smaller colour of each part is the one to flip.
+ */
+function facesWoundAgainstNeighbours(mesh, table, facesOfCorners, facePart, partWindingBroken) {
+  const neighbours = Array.from({ length: mesh.faceCount }, () => []);
+  for (let edge = 0; edge < mesh.edgeCount; edge++) {
+    const start = table.edgeOffsets[edge];
+    if (table.edgeOffsets[edge + 1] - start !== 2) continue;
+    const first = facesOfCorners[table.edgeCorners[start]];
+    const second = facesOfCorners[table.edgeCorners[start + 1]];
+    const sameDirection = mesh.cornerVertices[table.edgeCorners[start]] === mesh.cornerVertices[table.edgeCorners[start + 1]] ? 1 : 0;
+    neighbours[first].push(second, sameDirection);
+    neighbours[second].push(first, sameDirection);
+  }
+  const colour = new Int8Array(mesh.faceCount).fill(-1);
+  const facesToFlip = [];
+  for (let seed = 0; seed < mesh.faceCount; seed++) {
+    if (colour[seed] !== -1 || !partWindingBroken[facePart[seed]]) continue;
+    const members = [seed];
+    colour[seed] = 0;
+    for (let cursor = 0; cursor < members.length; cursor++) {
+      const face = members[cursor];
+      for (let index = 0; index < neighbours[face].length; index += 2) {
+        const neighbour = neighbours[face][index];
+        if (colour[neighbour] !== -1) continue;
+        colour[neighbour] = colour[face] ^ neighbours[face][index + 1];
+        members.push(neighbour);
+      }
+    }
+    const flippedColour = members.filter(face => colour[face] === 1).length * 2 <= members.length ? 1 : 0;
+    for (const face of members) {
+      if (colour[face] === flippedColour) facesToFlip.push(face);
+    }
+  }
+  return facesToFlip.sort((a, b) => a - b);
+}
+
+/**
  * Check a mesh for problems that break later operations or rendering.
  * Returns { ok, counts, parts, tags, bounds, problems }, where each problem has kind, severity, count, a sample of
- * element indices (faces, edges or vertices by kind) and a suggested fix. ok is false when any error is present.
+ * element indices (faces, edges or vertices by kind; for inconsistent-winding the faces to flip) and a suggested fix. ok is false when any error is present.
  */
 export function lintMesh(mesh, { geometry = false } = {}) {
   const problems = new Map();
@@ -269,6 +307,7 @@ export function lintMesh(mesh, { geometry = false } = {}) {
   const { facePart, partCount } = faceParts(mesh, table, facesOfCorners);
   const partOpen = new Uint8Array(partCount);
   const partWindingBroken = new Uint8Array(partCount);
+  const woundEdges = [];
   for (let edge = 0; edge < mesh.edgeCount; edge++) {
     const start = table.edgeOffsets[edge];
     const faceCount = table.edgeOffsets[edge + 1] - start;
@@ -282,7 +321,12 @@ export function lintMesh(mesh, { geometry = false } = {}) {
     } else if (mesh.cornerVertices[table.edgeCorners[start]] === mesh.cornerVertices[table.edgeCorners[start + 1]]) {
       addProblem(problems, 'inconsistent-winding', edge);
       partWindingBroken[part] = 1;
+      woundEdges.push(edge);
     }
+  }
+  if (woundEdges.length) {
+    const facesToFlip = facesWoundAgainstNeighbours(mesh, table, facesOfCorners, facePart, partWindingBroken);
+    problems.get('inconsistent-winding').sample = facesToFlip.slice(0, SAMPLE_LIMIT);
   }
   const bounds = meshBounds(mesh);
   const diagonal = Math.hypot(...bounds.max.map((value, axis) => value - bounds.min[axis]));
