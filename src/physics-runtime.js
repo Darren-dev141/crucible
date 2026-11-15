@@ -165,8 +165,13 @@ function validateAdapter(adapter) {
   return adapter;
 }
 
+function requireQueryOptions(options) {
+  if (options === null || typeof options !== 'object') throw new TypeError('A physics query options value must be an object like { mask, excludeBody, includeSensors } or left out.');
+  return options;
+}
+
 function validateFilter(filter, bodyIndices) {
-  if (filter === null || typeof filter !== 'object') throw new TypeError('A physics query options value must be an object like { mask, excludeBody, includeSensors } or left out.');
+  requireQueryOptions(filter);
   const mask = filter.mask ?? MAX_GROUP_BITS;
   if (!Number.isInteger(mask) || mask < 0 || mask > MAX_GROUP_BITS) {
     throw new RangeError(`A physics query mask must be an integer from 0 to ${MAX_GROUP_BITS}, got ${String(filter.mask)}.`);
@@ -363,6 +368,9 @@ export async function createPhysicsSystem(definition, options = {}) {
     // Runtime hooks.
     fixedUpdate(stepSeconds, context) {
       assertAlive();
+      if (!Number.isFinite(stepSeconds)) {
+        throw new RangeError(`The runtime fixed step must be a finite number of seconds, got ${String(stepSeconds)}. Pass ${timestep}, the timestep this physics system was built with.`);
+      }
       if (Math.abs(stepSeconds - timestep) > STEP_TOLERANCE * Math.max(1, timestep)) {
         throw new RangeError(`The runtime fixed step is ${stepSeconds} s but this physics system was built with timestep ${timestep} s. Create the runtime with fixedStepSeconds: physics.timestep, or pass timestep: ${stepSeconds} to createPhysicsSystem.`);
       }
@@ -433,6 +441,7 @@ export async function createPhysicsSystem(definition, options = {}) {
     /** First hit along a ray, or null: { body, collider, distance, point, normal }. */
     raycast(origin, direction, queryOptions = {}) {
       assertAlive();
+      requireQueryOptions(queryOptions);
       const start = finiteVector(origin, 3, 'raycast origin');
       const unit = unitDirection(direction, 'raycast direction');
       const maximumDistance = queryDistance(queryOptions.maxDistance ?? 1000, 'raycast maxDistance');
@@ -442,6 +451,7 @@ export async function createPhysicsSystem(definition, options = {}) {
     /** Sweep a ball, cuboid or capsule along a direction and return the first hit, or null: { body, collider, distance, point, normal }. */
     shapeCast(shape, translation, direction, queryOptions = {}) {
       assertAlive();
+      requireQueryOptions(queryOptions);
       const validShape = validateShape(shape, 'shapeCast shape');
       const start = finiteVector(translation, 3, 'shapeCast translation');
       const unit = unitDirection(direction, 'shapeCast direction');
@@ -453,6 +463,7 @@ export async function createPhysicsSystem(definition, options = {}) {
     /** Names of the bodies whose colliders touch a ball, cuboid or capsule placed in the world, sorted. */
     overlap(shape, translation, queryOptions = {}) {
       assertAlive();
+      requireQueryOptions(queryOptions);
       const validShape = validateShape(shape, 'overlap shape');
       const start = finiteVector(translation, 3, 'overlap translation');
       const rotation = validateRotation(queryOptions.rotation, 'overlap rotation');
