@@ -101,6 +101,7 @@ The shadow vertex shader applies the same function, and the renderer redraws the
 `scatterVegetation({ area, density, terrainHeight, slopeLimit, exclusion, seed, mix, variants, leaves, scale, spacing })`:
 
 - Poisson-disk spacing (Bridson with restarts, so exclusion zones cannot strand regions). `density` is instances per square meter; spacing defaults to `sqrt(0.6 / density)`.
+- Options that would hang, run out of memory or crash throw a RangeError that says what to pass: `variants` 1 to 16, `mix` weights finite with one positive, `spacing` and `density` finite and above 0, `scale` minimum above 0, and a spacing needing over 16 million grid cells. `createGrassClump` takes 1 to 2048 `blades`, `createFlowerPatch` 1 to 256 `flowers`.
 - `slopeLimit` is in degrees, measured from `terrainHeight` over a 1.2 m span. `exclusion(x, z)` returns true to keep a spot clear.
 - `mix` weighs species (`broadleaf`, `birch`, `conifer`, `palm`, `bush`, `grass`, `flowers`); low-frequency noise groups species into stands.
 - `variants` (default 3) variants per species are shared by every instance, so the renderer batches each part by geometry identity. Instances differ by yaw, scale and tint.
