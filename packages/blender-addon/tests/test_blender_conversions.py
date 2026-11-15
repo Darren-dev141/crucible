@@ -149,14 +149,91 @@ class LightNodeTests(unittest.TestCase):
         self.assertLess(colour_factor[2], colour_factor[1])
         self.assertLess(colour_factor[1], colour_factor[0])
 
-    def test_blackbody_is_white_at_6500_and_blue_when_hot(self):
-        white = conversions.blackbody_linear_rgb(6500.0)
-        for channel in white:
+    def test_blackbody_values(self):
+        for channel in conversions.blackbody_linear_rgb(6500.0):
             self.assertAlmostEqual(channel, 1.0, places=6)
+        for channel, expected in zip(conversions.blackbody_linear_rgb(5800.0), [1.0, 0.934, 0.834]):
+            self.assertAlmostEqual(channel, expected, delta=0.01)
         hot = conversions.blackbody_linear_rgb(10000.0)
         self.assertGreater(hot[2], hot[0])
-        with self.assertRaisesRegex(ValueError, "800 to 12000"):
-            conversions.blackbody_linear_rgb(100.0)
+        self.assertEqual(max(hot), 1.0)
+
+    def test_blackbody_outside_the_range_is_clamped_not_an_error(self):
+        self.assertEqual(conversions.blackbody_linear_rgb(15000.0), conversions.blackbody_linear_rgb(12000.0))
+        self.assertEqual(conversions.blackbody_linear_rgb(100.0), conversions.blackbody_linear_rgb(800.0))
+
+    def test_out_of_range_temperature_is_clamped_and_reported(self):
+        tree = emission_tree(
+            {"value": 2.0, "linked_from": None},
+            {"value": [1.0, 1.0, 1.0, 1.0], "linked_from": "Blackbody"},
+            {"Blackbody": {"type": "BLACKBODY", "inputs": {"Temperature": {"value": 15000.0, "linked_from": None}}}},
+        )
+        strength, colour_factor, notes = conversions.resolve_light_nodes("Hot", tree)
+        self.assertEqual(strength, 2.0)
+        self.assertEqual(colour_factor, conversions.blackbody_linear_rgb(12000.0))
+        self.assertEqual(len(notes), 1)
+        self.assertIn("Hot", notes[0])
+        self.assertIn("15000 K", notes[0])
+        self.assertIn("clamped", notes[0])
+
+    def test_linked_blackbody_temperature_falls_back_and_is_reported(self):
+        tree = emission_tree(
+            {"value": 4.0, "linked_from": None},
+            {"value": [1.0, 1.0, 1.0, 1.0], "linked_from": "Blackbody"},
+            {"Blackbody": {"type": "BLACKBODY", "inputs": {"Temperature": {"value": 5000.0, "linked_from": "Value"}}}},
+        )
+        strength, colour_factor, notes = conversions.resolve_light_nodes("Lamp", tree)
+        self.assertEqual((strength, colour_factor), (4.0, [1.0, 1.0, 1.0]))
+        self.assertEqual(len(notes), 1)
+        self.assertIn("not reproduced", notes[0])
+        self.assertIn("Lamp", notes[0])
+
+
+class FakeSocket:
+    def __init__(self, name, default_value=None, source=None):
+        self.name = name
+        self.default_value = default_value
+        self.links = [mock.Mock(from_node=source)] if source is not None else []
+        self.is_linked = source is not None
+
+
+class FakeSocketList(list):
+    """Like bpy's socket collection: iterable, and indexable by socket name."""
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return next(socket for socket in self if socket.name == key)
+        return super().__getitem__(key)
+
+
+class FakeNode:
+    def __init__(self, name, node_type, inputs=(), is_active_output=False):
+        self.name = name
+        self.type = node_type
+        self.inputs = FakeSocketList(inputs)
+        self.is_active_output = is_active_output
+
+
+class FakeLight:
+    def __init__(self, node_tree, use_nodes=True):
+        self.node_tree = node_tree
+        self.use_nodes = use_nodes
+
+
+class LightNodeTreeSummaryTests(unittest.TestCase):
+    def default_light_tree(self, strength):
+        emission = FakeNode("Emission", "EMISSION", [FakeSocket("Color", (1.0, 1.0, 1.0, 1.0)), FakeSocket("Strength", strength)])
+        output = FakeNode("Light Output", "OUTPUT_LIGHT", [FakeSocket("Surface", None, emission)], is_active_output=True)
+        return mock.Mock(nodes=[emission, output])
+
+    def test_a_light_without_a_node_tree_gives_none(self):
+        self.assertIsNone(conversions.light_node_tree_summary(FakeLight(None)))
+
+    def test_use_nodes_false_does_not_hide_the_tree(self):
+        # Blender 5 keeps use_nodes True and a default tree on every light; the tree is what counts.
+        summary = conversions.light_node_tree_summary(FakeLight(self.default_light_tree(15.0), use_nodes=False))
+        strength, colour_factor, notes = conversions.resolve_light_nodes("Sun", summary)
+        self.assertEqual((strength, colour_factor, notes), (15.0, [1.0, 1.0, 1.0], []))
 
     def test_constant_colour_is_multiplied_in(self):
         tree = emission_tree({"value": 2.0, "linked_from": None}, {"value": [0.5, 0.25, 1.0, 1.0], "linked_from": None})

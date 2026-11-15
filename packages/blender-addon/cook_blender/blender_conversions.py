@@ -206,13 +206,35 @@ def _unscaled_blackbody_rgb(kelvin):
 
 
 def blackbody_linear_rgb(kelvin):
-    """Linear Rec.709 colour of a blackbody at `kelvin`: white at 6500 K, negative channels clamped to 0, brightest channel 1."""
+    """Linear Rec.709 colour of a blackbody at `kelvin` (clamped to BLACKBODY_RANGE_KELVIN): white at 6500 K, negative channels 0, brightest channel 1."""
     low, high = BLACKBODY_RANGE_KELVIN
-    if not low <= kelvin <= high:
-        raise ValueError(f"blackbody temperature {kelvin} K is outside {low:.0f} to {high:.0f} K; pass a temperature in that range")
+    kelvin = min(max(kelvin, low), high)
     white = _unscaled_blackbody_rgb(BLACKBODY_WHITE_KELVIN)
     balanced = [max(channel / white_channel, 0.0) for channel, white_channel in zip(_unscaled_blackbody_rgb(kelvin), white)]
     return [channel / max(balanced) for channel in balanced]
+
+
+def _socket_summary(socket):
+    linked_from = socket.links[0].from_node.name if socket.is_linked else None
+    value = getattr(socket, "default_value", None)
+    if hasattr(value, "__len__"):
+        value = [float(channel) for channel in value]
+    return {"value": value, "linked_from": linked_from}
+
+
+def light_node_tree_summary(light_data):
+    """The node tree of a light (a bpy Light or any object with the same attributes) as plain data for `resolve_light_nodes`.
+
+    None when the light has no node tree. `light_data.use_nodes` is not read: it is deprecated in Blender 5 and always True,
+    and a new light already carries a default Emission tree, so the tree itself is the test."""
+    node_tree = getattr(light_data, "node_tree", None)
+    if node_tree is None:
+        return None
+    output = next((node for node in node_tree.nodes if node.type == "OUTPUT_LIGHT" and node.is_active_output), None)
+    surface = output.inputs["Surface"] if output is not None else None
+    output_from = surface.links[0].from_node.name if surface is not None and surface.is_linked else None
+    nodes = {node.name: {"type": node.type, "inputs": {socket.name: _socket_summary(socket) for socket in node.inputs}} for node in node_tree.nodes}
+    return {"output_from": output_from, "nodes": nodes}
 
 
 def resolve_light_nodes(light_name, node_tree):
@@ -257,7 +279,12 @@ def _emission_colour_factor(light_name, nodes, colour_input):
     if source["type"] == "BLACKBODY":
         temperature = source["inputs"].get("Temperature", {})
         if temperature.get("linked_from") is None:
-            return blackbody_linear_rgb(float(temperature["value"])), None
+            kelvin = float(temperature["value"])
+            low, high = BLACKBODY_RANGE_KELVIN
+            if not low <= kelvin <= high:
+                note = f"light {light_name} blackbody temperature {kelvin:g} K is outside {low:.0f} to {high:.0f} K; clamped, Cook uses the colour at the nearest end of that range"
+                return blackbody_linear_rgb(kelvin), note
+            return blackbody_linear_rgb(kelvin), None
     note = f"light {light_name} colour comes from a {source['type']} node that is not a Blackbody with a constant temperature; not reproduced, Cook uses the plain colour"
     return list(NEUTRAL_COLOUR_FACTOR), note
 
