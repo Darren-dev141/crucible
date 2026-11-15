@@ -95,6 +95,11 @@ export function normalizeFilmTimeline(timeline, recipe, { checkCamera } = {}) {
   return { shots: normalized };
 }
 
+/** Frames needed for a duration. A sum such as 0.1 + 0.2 lands a hair above its exact value and must not gain a whole frame. */
+export function videoFrameCount(fps, durationSeconds) {
+  return Math.ceil(fps * durationSeconds - 1e-9);
+}
+
 export function filmTimelineDuration(timeline) {
   let total = 0;
   for (const shot of timeline.shots) total += shot.duration;

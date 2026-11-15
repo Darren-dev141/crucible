@@ -10,6 +10,8 @@ export const MAXIMUM_AUDIO_BYTES = 32 * 1024 ** 2;
 const PROBE_TIMEOUT_MS = 30000;
 // Every file is resampled to this rate: AAC adds one 1024-sample frame of delay, 21 ms here but 64 ms at 16 kHz.
 const OUTPUT_SAMPLE_RATE = 48000;
+// Decoded audio and video lengths of a finished file may differ by the encoder delay; more than this fails the job.
+export const SYNC_TOLERANCE_SECONDS = 0.05;
 
 /** Looks files up in `root`, refusing links and anything that resolves outside it. */
 export function createAudioLibrary(root) {
@@ -28,9 +30,23 @@ export function createAudioLibrary(root) {
   });
 }
 
+/** Seek time as a plain decimal: String(1e-7) is '1e-7', which ffmpeg rejects as a duration. */
+export function formatSeekSeconds(seconds) {
+  return seconds.toFixed(6);
+}
+
+/** Throws unless the sound still has enough left after its offset to cover the whole video. */
+export function assertAudioCoversVideo(fileSeconds, offsetSeconds, videoSeconds, toleranceSeconds = SYNC_TOLERANCE_SECONDS) {
+  const availableSeconds = fileSeconds - offsetSeconds;
+  if (availableSeconds + toleranceSeconds < videoSeconds) {
+    throw new RangeError(`Audio has ${availableSeconds.toFixed(2)} s after its offset but the video lasts ${videoSeconds.toFixed(2)} s.`);
+  }
+  return availableSeconds;
+}
+
 /** Input arguments for the encoder: the file is read at `offset` seconds and may only be opened as a plain file. */
 export function audioInputArguments(path, offsetSeconds) {
-  return ['-protocol_whitelist', 'file', '-ss', String(offsetSeconds), '-i', path, '-ar', String(OUTPUT_SAMPLE_RATE)];
+  return ['-protocol_whitelist', 'file', '-ss', formatSeekSeconds(offsetSeconds), '-i', path, '-ar', String(OUTPUT_SAMPLE_RATE)];
 }
 
 function parseSeconds(text) {
