@@ -14,7 +14,10 @@ export function resolveLiquidOptics(options = {}) {
   for (const name in LIQUID_OPTICS) {
     optics[name] = LIQUID_OPTICS[name][0];
   }
-  Object.assign(optics, options);
+  for (const name in options) {
+    if (!(name in LIQUID_OPTICS)) throw new RangeError(`Unknown liquid field ${name}. Use ${Object.keys(LIQUID_OPTICS).join(', ')}.`);
+    if (options[name] !== undefined) optics[name] = options[name];
+  }
   for (const name in LIQUID_OPTICS) {
     const [, minimum, maximum] = LIQUID_OPTICS[name];
     const value = optics[name];
