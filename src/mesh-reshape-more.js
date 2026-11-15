@@ -6,6 +6,8 @@ import { UnionFind } from './mesh-topology.js';
 // Split edges, delete loose vertices and flatten vertices after Blender's split edges, delete loose and flatten.
 // Every edit is deterministic: elements are visited in index order.
 
+const CANCELLED_NORMAL_SHARE = 1e-6;
+
 function positionOf(mesh, vertex) {
   return [mesh.positions[vertex * 3], mesh.positions[vertex * 3 + 1], mesh.positions[vertex * 3 + 2]];
 }
@@ -80,15 +82,18 @@ export function deleteLoose(mesh) {
 function averageSelectedFaceNormal(mesh, vertexMask) {
   const { normals, areas } = faceNormals(mesh);
   const total = [0, 0, 0];
+  let areaSum = 0;
   for (let face = 0; face < mesh.faceCount; face++) {
     let allSelected = true;
     for (let corner = mesh.faceOffsets[face]; corner < mesh.faceOffsets[face + 1]; corner++) {
       if (!vertexMask[mesh.cornerVertices[corner]]) allSelected = false;
     }
     if (!allSelected) continue;
+    areaSum += areas[face];
     for (let axis = 0; axis < 3; axis++) total[axis] += normals[face * 3 + axis] * areas[face];
   }
-  return total;
+  // On a closed surface the area-weighted normals cancel to rounding noise, which is not a direction.
+  return Math.hypot(...total) <= areaSum * CANCELLED_NORMAL_SHARE ? [0, 0, 0] : total;
 }
 
 /**
@@ -108,7 +113,7 @@ export function flattenVertices(mesh, vertexMask, { normal = null, factor = 1 } 
   for (let axis = 0; axis < 3; axis++) center[axis] /= count;
   const planeNormal = normal ?? averageSelectedFaceNormal(mesh, vertexMask);
   const planeLength = Math.hypot(...planeNormal);
-  if (planeLength === 0) throw new RangeError('No plane direction: no face has all of its vertices selected. Pass normal, such as [0, 1, 0].');
+  if (planeLength === 0) throw new RangeError('No plane direction: no face has all of its vertices selected, or their normals cancel out (a closed surface). Pass normal, such as [0, 1, 0].');
   const unit = planeNormal.map(value => value / planeLength);
   const positions = Float32Array.from(mesh.positions);
   for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
