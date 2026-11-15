@@ -163,6 +163,10 @@ class MaterialExporter:
                 self.note(material_name, f"{label} has a muted or invalid link; the constant {constant:g} is used")
             return constant, None, None
         if source_node.type == "TEX_IMAGE" and source_socket.name in ("Color", "Alpha") and source_node.image is not None:
+            image = source_node.image
+            if image.size[0] == 0 or image.size[1] == 0:
+                self.note(material_name, f"image {image.name} has no pixels (missing file?); the {label} constant {constant:g} is used")
+                return constant, None, None
             self.check_image_node(material_name, source_node)
             return constant, source_node, source_socket.name
         self.note(material_name, f"{label} is driven by a {source_node.type} node, which Cook does not read; the constant {constant:g} is used")

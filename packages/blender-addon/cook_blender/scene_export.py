@@ -94,6 +94,8 @@ def build_camera_entries(scene, width, height, report, camera_object=None, honor
             "apertureRatio": dof.aperture_ratio,
             "sensorWidth": effective_horizontal_sensor_width(camera_data, width, height),
         }
+        for note in conversions.lens_feature_notes(dof.aperture_ratio):
+            report["notes"].append(note)
     report["lens"] = lens_entry
     return camera_entry, lens_entry
 
