@@ -238,22 +238,22 @@ function colliderFor(collider, node, geometry) {
 }
 
 // The weights of the sheet's pin group per render vertex, or null without one. A name the mesh lacks is an error that lists the groups it has.
-function groupWeights(sheet, geometry, field) {
+function groupWeights(sheet, geometry, field, sheetPath) {
   const name = sheet[field];
   if (!name) return null;
   const weights = geometry.vertexGroups?.[name];
   if (!weights) {
     const known = Object.keys(geometry.vertexGroups ?? {});
-    throw invalidField(`cloth.sheets[].${field}`, name, `a vertex group of node ${sheet.node} (known groups: ${known.join(', ') || 'none'}); make one with a vertex_group mesh edit`);
+    throw invalidField(`${sheetPath}.${field}`, name, `a vertex group of node ${sheet.node} (known groups: ${known.join(', ') || 'none'}); make one with a vertex_group mesh edit`);
   }
   return weights;
 }
 
-const pinGroupWeights = (sheet, geometry) => groupWeights(sheet, geometry, 'pinGroup');
+const pinGroupWeights = (sheet, geometry, sheetPath) => groupWeights(sheet, geometry, 'pinGroup', sheetPath);
 
 // One 0.05 to 1 stiffness weight per particle from the sheet's stiffness group, or undefined without one.
-function stiffnessWeights(sheet, geometry, representatives) {
-  const weights = groupWeights(sheet, geometry, 'stiffnessGroup');
+function stiffnessWeights(sheet, geometry, representatives, sheetPath) {
+  const weights = groupWeights(sheet, geometry, 'stiffnessGroup', sheetPath);
   if (!weights) return undefined;
   return Float64Array.from(representatives, vertex => Math.max(weights[vertex], MIN_GROUP_STIFFNESS));
 }
@@ -410,6 +410,7 @@ function createMovingBodies(sheet, pinned, worldPositions, movingSetup, frameCou
 }
 
 function bakeSheet(sheet, cloth, node, geometry, colliders, frameCount, movingSetup) {
+  const sheetPath = `cloth.sheets[${cloth.sheets.indexOf(sheet)}]`;
   const welded = weldVertices(geometry.positions, geometry.indices);
   const matrix = nodeMatrix(node);
   const worldPositions = new Float64Array(welded.representatives.length * 3);
@@ -421,12 +422,12 @@ function bakeSheet(sheet, cloth, node, geometry, colliders, frameCount, movingSe
     }
     worldPositions.set(world, particle * 3);
   });
-  const pinned = pinnedParticles(geometry.positions, welded.representatives, sheet.pin, pinGroupWeights(sheet, geometry));
+  const pinned = pinnedParticles(geometry.positions, welded.representatives, sheet.pin, pinGroupWeights(sheet, geometry, sheetPath));
   const needsMoving = Boolean(movingSetup && (sheet.pinTo || movingSetup.specs.length));
   const moving = needsMoving ? createMovingBodies(sheet, pinned, worldPositions, movingSetup, frameCount) : null;
   const recording = Object.freeze({ ...runKernel('cloth', [worldPositions, welded.triangles, {
     pinned: sheet.pinTo ? [] : pinned, moving,
-    stiffnessWeights: stiffnessWeights(sheet, geometry, welded.representatives), softBody: sheet.softBody, selfCollision: sheet.selfCollision,
+    stiffnessWeights: stiffnessWeights(sheet, geometry, welded.representatives, sheetPath), softBody: sheet.softBody, selfCollision: sheet.selfCollision,
     gravity: cloth.gravity, wind: cloth.wind, fields: cloth.fields, stiffness: sheet.stiffness, bend: sheet.bend, bendModel: sheet.bendModel,
     bendYield: sheet.bendYield, bendSet: sheet.bendSet,
     density: sheet.density, damping: sheet.damping, friction: sheet.friction, staticFriction: sheet.staticFriction, thickness: sheet.thickness,
@@ -463,7 +464,7 @@ function sampleLiveGeometry(baked, time) {
   return live;
 }
 
-function sheetReport(baked, node, sheet) {
+function sheetReport(baked, node, sheet, sheetPath) {
   const { recording, welded, geometry } = baked;
   const last = new Float32Array(recording.particleCount * 3);
   sampleClothFrames(recording, Infinity, last);
@@ -478,7 +479,7 @@ function sheetReport(baked, node, sheet) {
   const round = values => values.map(value => Number(value.toFixed(4)));
   return {
     node: node.id, particles: recording.particleCount, triangles: welded.triangles.length / 3, vertices: geometry.positions.length / 3,
-    pinned: pinnedParticles(geometry.positions, welded.representatives, sheet.pin, pinGroupWeights(sheet, geometry)).length,
+    pinned: pinnedParticles(geometry.positions, welded.representatives, sheet.pin, pinGroupWeights(sheet, geometry, sheetPath)).length,
     finalBoundsMin: round(minimum), finalBoundsMax: round(maximum),
   };
 }
@@ -511,7 +512,7 @@ export function bakeAgentCloth(cloth, recipe, geometries, motionSampler = null) 
     report() {
       reportCache ??= {
         duration: cloth.duration, frames: frameCount, gravity: cloth.gravity ?? [0, -9.81, 0], wind: cloth.wind ?? [0, 0, 0], fields: cloth.fields ?? [],
-        sheets: cloth.sheets.map(sheet => sheetReport(baked.get(sheet.node), nodes.get(sheet.node), sheet)),
+        sheets: cloth.sheets.map(sheet => sheetReport(baked.get(sheet.node), nodes.get(sheet.node), sheet, `cloth.sheets[${cloth.sheets.indexOf(sheet)}]`)),
       };
       return structuredClone(reportCache);
     },
