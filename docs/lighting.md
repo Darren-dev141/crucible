@@ -206,6 +206,10 @@ Three opt-in looks share one lazy module (`crucible/addons/light-shapes`, loaded
 
 Frame time on an RTX 3060 at 480x270 with 4 samples (`node bench/lighting/soft-lights.mjs`, median of 3 runs of 60 frames, shared machine, read the spread as load): hard sun 0.94 ms (range 0.73 to 0.99), soft sun 0.92 (0.79 to 0.99); unshadowed area light 0.88 (0.71 to 0.93), shadowed 0.97 (0.82 to 1.08); spot 0.79 (0.63 to 1.17), spot with an IES profile 0.71 (0.60 to 0.96). The scene is tiny and the machine was loaded, so the differences are inside the spread: the soft paths cost under a tenth of a millisecond here, and cost more as more of the frame is penumbra. Render tests: \`tests/light-shapes.test.js\` (state, shaders inputs, tracer agreement) and the stills the bench writes.
 
+## Default sun shadow view
+
+When `shadowBounds` sets neither `target` nor `extent`, a `world: true` renderer fits the sun's shadow box to the parts that cast shadows: the floor and parts with `castShadow: false` do not count. A 6 m room gets a box about 11 m across instead of the fixed 130 m one, so the shadow bias falls from about 22 cm to about 2 cm, and sun no longer leaks through walls 0.2 m thick (issue #1695). Scenes as large as the fixed box, and scenes with skinned, morphed or crowd casters, keep the fixed box. Other `shadowBounds` fields such as `eye` or `near` still apply on top of the fitted box.
+
 ## Cascaded sun shadows
 
 The directional light uses one 2048 x 2048 map over the box that `shadowBounds` gives. In a scene as long as a street that box is 100 m or more across, so a texel is 6 to 8 cm and a lamp post near the camera is two texels wide. Cascades cut the camera's view into up to four slices by depth and fit one map to each, so the slice near the camera has texels of about 1 cm.

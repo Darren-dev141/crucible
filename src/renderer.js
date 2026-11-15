@@ -23,7 +23,7 @@ import { MaterialSnapshot } from './material-snapshot.js';
 import { wearUniformValues } from './material-wear.js';
 import { fittedFogDensity } from './fog-fit.js';
 import { InstanceSelection, extractFrustumPlanes, geometryBoundingSphere, selectInstances } from './render-culling.js';
-import { resolveShadowLight, shadowBiasPerSlope } from './shadow-light.js';
+import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope } from './shadow-light.js';
 import { MAX_MORPH_TARGETS, requireFeatureCode, deformationSupport, requireDeformationSupport, texturedReplaceSupport, textureUpdateSupport } from './shader-registry.js';
 
 const SHADOW_MAP_SIZE = 2048;
@@ -1728,7 +1728,7 @@ export class CrucibleRenderer {
       if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) throw new Error('Shadow framebuffer is incomplete.');
       this.shadowFramebufferCheckedSize = mapSize;
     }
-    const light = resolveShadowLight(this.world, this.activeLightDirection, this.shadowBounds);
+    const light = resolveShadowLight(this.world, this.activeLightDirection, this.shadowBounds, this.fittedWorldShadowView());
     const lightView = mat4.lookAt(mat4.create(), light.eye, light.target, light.up ?? [0, 1, 0]);
     mat4.ortho(this.lightProjection, -light.extent, light.extent, -light.extent, light.extent, light.near, light.far);
     mat4.multiply(this.lightProjection, this.lightProjection, lightView);
@@ -1854,6 +1854,15 @@ export class CrucibleRenderer {
 
   // `mainMap` is true for the sun's map, where blended and transmissive casters draw into the tint map instead. Elsewhere
   // (cascades, point and spot tiles) they draw as opaque casters, except a blended part that did not ask to cast.
+  // A world scene that sets neither shadowBounds.target nor extent gets a sun view fitted to its casters (issue #1695).
+  // Skinned, morphed or crowd casters can leave any box, so they keep the fixed view.
+  fittedWorldShadowView() {
+    if (!this.world || this.shadowBounds?.target !== undefined || this.shadowBounds?.extent !== undefined) return null;
+    const casters = this.batches.filter(batch => !batch.floor && batch.castShadow).flatMap(batch => batch.parts);
+    if (casters.length === 0) return null;
+    return fitWorldShadowView(sceneBoundsOfParts(casters));
+  }
+
   drawShadowCasters(lightMatrix = this.lightProjection, resolution = null, mainMap = false) {
     const context = this.context;
     context.useProgram(this.depthProgram);
