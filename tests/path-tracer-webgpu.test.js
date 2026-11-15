@@ -72,8 +72,8 @@ test('the wavefront kernel refuses a scene with fog or subsurface scattering bef
   const fogScene = buildTraceScene(parts, { volumeFog: { minimum: [-30, 1, -30], maximum: [30, 2, 30], density: 0.5 } });
   const subsurfaceParts = [{ ...parts[0], material: { color: [0.7, 0.4, 0.3], subsurface: { weight: 1, radius: [1, 0.2, 0.1], scale: 0.05 } } }];
   const subsurfaceScene = buildTraceScene(subsurfaceParts, {});
-  await assert.rejects(traceOnWebGpu(fogScene, {}, { kernel: 'wavefront' }, () => {}), /wavefront kernel does not trace volume fog or subsurface/);
-  await assert.rejects(traceOnWebGpu(subsurfaceScene, {}, { kernel: 'wavefront' }, () => {}), /wavefront kernel does not trace volume fog or subsurface/);
+  await assert.rejects(traceOnWebGpu(fogScene, {}, { kernel: 'wavefront' }, () => {}), /wavefront kernel does not trace volume fog, local volumes or subsurface/);
+  await assert.rejects(traceOnWebGpu(subsurfaceScene, {}, { kernel: 'wavefront' }, () => {}), /wavefront kernel does not trace volume fog, local volumes or subsurface/);
 });
 
 test('both kernels share the scene bindings and the wavefront adds its path state', () => {

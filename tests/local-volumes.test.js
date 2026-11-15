@@ -190,8 +190,8 @@ test('the path tracer attenuates by exp(-density * thickness) and adds emission 
   assert.equal(nothing, clear);
 });
 
-test('the path tracer refuses local volumes on every non-CPU backend instead of dropping them', async () => {
-  for (const backend of ['gpu', 'webgpu']) {
+test('the path tracer refuses local volumes on the WebGL backend instead of dropping them (webgpu draws boxes and spheres, #1048)', async () => {
+  for (const backend of ['gpu']) {
     await assert.rejects(
       renderPathTracedImage({ parts: ground(1), environment: { localVolumes: [{ shape: 'sphere', center: [0, 1, 0], radius: 1 }] }, camera: LOOKING_DOWN }, { ...IMAGE, backend }),
       new RegExp(`environment\\.localVolumes is traced by the CPU path tracer only; backend "${backend}" cannot draw them`),
