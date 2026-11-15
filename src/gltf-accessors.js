@@ -12,6 +12,11 @@ const SPARSE_INDEX_COMPONENT_TYPES = [5121, 5123, 5125];
 const COMPONENT_COUNTS = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 };
 const NORMALIZATION_DIVISORS = { 5120: 127, 5121: 255, 5122: 32767, 5123: 65535 };
 
+// Only the four integer types scale; a normalized flag on a float or 32-bit integer accessor changes nothing, as in three.js.
+function divisorOf(attribute) {
+  return attribute.normalized ? NORMALIZATION_DIVISORS[attribute.componentType] ?? 1 : 1;
+}
+
 function fillFloats(attribute, values, divisor, from, to) {
   for (let index = from; index < to; index++) {
     const value = attribute.array[index];
@@ -23,7 +28,7 @@ function fillFloats(attribute, values, divisor, from, to) {
 export function attributeFloats(attribute) {
   const length = attribute.count * attribute.itemSize;
   const values = new Float32Array(length);
-  fillFloats(attribute, values, attribute.normalized ? NORMALIZATION_DIVISORS[attribute.componentType] : 1, 0, length);
+  fillFloats(attribute, values, divisorOf(attribute), 0, length);
   return values;
 }
 
@@ -31,7 +36,7 @@ export function attributeFloats(attribute) {
 export async function attributeFloatsInSlices(attribute, checkpoint) {
   const length = attribute.count * attribute.itemSize;
   const values = new Float32Array(length);
-  const divisor = attribute.normalized ? NORMALIZATION_DIVISORS[attribute.componentType] : 1;
+  const divisor = divisorOf(attribute);
   await forEachChunk(length, checkpoint, (from, to) => fillFloats(attribute, values, divisor, from, to));
   return values;
 }
@@ -53,6 +58,9 @@ function strideOf(view, elementBytes, viewIndex) {
 }
 
 function checkElementsFit(source, offset, stride, count, elementBytes) {
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new Error(`Invalid glTF byteOffset ${JSON.stringify(offset)}: it must be a non-negative integer. Fix: use an offset from 0 up to the buffer view length.`);
+  }
   if (count > 0 && offset + (count - 1) * stride + elementBytes > source.length) {
     throw new Error('glTF accessor exceeds its buffer view.');
   }
