@@ -111,6 +111,7 @@ function filletCorner(previous, corner, next, radius, arcSegments) {
  */
 export function filletCurve(points, radius, arcSegments, closed = false) {
   requireFiniteInRange('filletCurve', 'radius', radius, 1e-9, MAX_FILLET_RADIUS);
+  requireFiniteInRange('filletCurve', 'arcSegments', arcSegments, 1, MAX_FILLET_ARC_SEGMENTS, true);
   const result = [];
   const count = points.length;
   for (let index = 0; index < count; index++) {
