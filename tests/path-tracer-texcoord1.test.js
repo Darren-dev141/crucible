@@ -4,7 +4,7 @@ import test from 'node:test';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { buildTraceScene } from '../src/path-tracer-scene.js';
 import { cookModule, cookTest } from './support/cook.js';
-import { materialUvSetMask, NATIVE_TRIANGLE_TEXELS, packAtlas, packMaterials, packTriangles, UV_SET_SLOT } from '../src/path-tracer-gpu-pack.js';
+import { materialUvSet, materialUvSetMask,NATIVE_TRIANGLE_TEXELS, packAtlas, packMaterials, packTriangles, UV_SET_SLOT } from '../src/path-tracer-gpu-pack.js';
 import { buildFragmentSource, TRIANGLE_TEXELS } from '../src/path-tracer-gpu-shader.js';
 import { MEGAKERNEL_SOURCE } from '../src/path-tracer-webgpu-kernel.js';
 
@@ -120,7 +120,17 @@ test('the default triangle record keeps the nine texels the native tracer reads'
   const { corners, base } = packedTriangle(scene, table.data, 1, NATIVE_TRIANGLE_TEXELS);
   assert.equal(table.data[base + 3], 0, 'material index of the single material');
   assert.equal(table.data[base + 4 + 3], 0, 'no second set in the edge texel');
-  assert.equal(table.data[base + 3 * 4 + 3], Math.fround(FIRST_SET[corners[0]][0]), 'first set stays where the native packer expects it');
+  assert.equal(table.data[base + 3 * 4 + 3], Math.fround(SECOND_SET[corners[0]][0]), 'the base colour set (here TEXCOORD_1) stays where the native readers expect it');
+});
+
+test('the native record carries TEXCOORD_1 for a base colour on that set, as the v1 readers expect', () => {
+  const second = buildTraceScene([mixedPart(1)]);
+  const first = buildTraceScene([mixedPart(0)]);
+  assert.equal(materialUvSet(second.materials[0]), 1);
+  assert.equal(materialUvSet(first.materials[0]), 0);
+  assert.equal(packTriangles(second).data[3 * 4 + 3], 0.75);
+  assert.equal(packTriangles(first).data[3 * 4 + 3], 0.25);
+  assert.equal(packTriangles(second, { secondUvSet: true }).data[3 * 4 + 3], 0.25, 'the ten-texel record always keeps TEXCOORD_0 there');
 });
 
 function maskOf(...maps) {

@@ -116,7 +116,7 @@ function atlasWords(atlas) {
   return new Uint32Array(atlas.data.buffer, atlas.data.byteOffset, Math.floor(atlas.data.byteLength / 4));
 }
 
-function uploadScene(device, scene, requestedLightSelection = 'uniform') {
+export function uploadScene(device, scene, requestedLightSelection = 'uniform') {
   const atlas = packAtlas(scene.materials);
   const lights = packLights(scene.lights);
   // With the light tree the node table follows the light table in the same buffer; treeBase is the vector index of its first node.
