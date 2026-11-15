@@ -1,5 +1,3 @@
-- entry:core: null-entry checks for glTF arrays, about 60 bytes gzip, turn raw TypeErrors into errors that name the field and index.
-- entry:core+lazy: the same code as entry:core.
-- scene:gltf-box: the same null-entry checks, about 56 bytes gzip.
+- scene:gltf-box: the same null-entry checks for 13 arrays, about 102 bytes gzip.
 - scene:gltf-box+lazy: the same code as scene:gltf-box.
-- goal:gltf-box: 56 bytes of bounds checking on untrusted input, no render path change.
+- goal:gltf-box: 102 bytes of bounds checking on untrusted input, no render path change; the maintainer accepts this line.

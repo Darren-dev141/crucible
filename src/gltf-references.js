@@ -7,12 +7,11 @@ function requireIndex(value, listName, list, fieldPath) {
 }
 
 function requireObject(value, fieldPath) {
-  if (!value || typeof value !== 'object') throw new Error(`Invalid glTF ${fieldPath}: expected an object.`);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Invalid glTF ${fieldPath}: expected an object. Fix: remove the entry or fix the exporter.`);
 }
 
 function validateMeshReferences(document) {
   (document.meshes ?? []).forEach((mesh, meshIndex) => {
-    requireObject(mesh, `meshes[${meshIndex}]`);
     if (!Array.isArray(mesh.primitives)) throw new Error(`Invalid glTF meshes[${meshIndex}].primitives: expected an array.`);
     mesh.primitives.forEach((primitive, primitiveIndex) => {
       const path = `meshes[${meshIndex}].primitives[${primitiveIndex}]`;
@@ -24,7 +23,6 @@ function validateMeshReferences(document) {
 
 function validateAccessorReferences(document) {
   (document.accessors ?? []).forEach((accessor, accessorIndex) => {
-    requireObject(accessor, `accessors[${accessorIndex}]`);
     if (accessor.bufferView !== undefined) requireIndex(accessor.bufferView, 'bufferViews', document.bufferViews, `accessors[${accessorIndex}].bufferView`);
   });
 }
@@ -38,13 +36,13 @@ function validateSceneReferences(document) {
   });
 }
 
-const ENTRY_ARRAYS = ['nodes', 'meshes', 'accessors', 'bufferViews', 'materials', 'textures', 'images'];
+const ENTRY_ARRAYS = ['nodes', 'meshes', 'accessors', 'bufferViews', 'buffers', 'materials', 'textures', 'images', 'samplers', 'skins', 'animations', 'cameras', 'scenes'];
 
 function validateEntryObjects(document) {
   for (const arrayName of ENTRY_ARRAYS) {
     const entries = document[arrayName];
     if (entries === undefined) continue;
-    if (!Array.isArray(entries)) throw new Error(`Invalid glTF ${arrayName}: expected an array.`);
+    if (!Array.isArray(entries)) throw new Error(`Invalid glTF ${arrayName}: expected an array of objects. Fix: remove the field or fix the exporter.`);
     entries.forEach((entry, entryIndex) => requireObject(entry, `${arrayName}[${entryIndex}]`));
   }
 }
