@@ -632,7 +632,7 @@ test('blend batches draw their opaque texels with depth writes before the blende
   assert.ok(draws.slice(1).every(draw => draw.blend && !draw.depthMask));
   assert.deepEqual(draws.map(draw => draw.alphaMode), ['mask', 'blend', 'blend', 'add'], 'add draws after every blend batch');
   assert.equal(draws[3].blendFunction, 'SRC_ALPHA,ONE,ZERO,ONE', 'add sums source and frame');
-  assert.equal(draws[1].blendFunction, 'SRC_ALPHA,ONE_MINUS_SRC_ALPHA,ONE,ONE_MINUS_SRC_ALPHA');
+  assert.equal(draws[1].blendFunction, 'ONE,ONE_MINUS_SRC_ALPHA,ONE,ONE_MINUS_SRC_ALPHA', 'blend parts are premultiplied (blend-output.js): glass specular is not faded by alpha');
   assert.equal(draws.filter(draw => draw.opacity === Math.fround(0.3)).length, 1, 'a translucent material has no opaque texels to draw first');
   assert.equal(baked.alphaCutoff, 0);
 });
