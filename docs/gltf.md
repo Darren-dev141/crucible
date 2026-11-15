@@ -32,6 +32,7 @@ GLB files can contain their buffers and images without external resources.
 HTTP, HTTPS, blob URLs, and base64 data URIs are supported.
 External requests use bounded streaming fetches.
 The optional `signal` aborts those fetches.
+`allowExternalResources: false` refuses every non-data resource uri with an error that names it, before any request. The MCP server decodes catalog files with it, so a file there carries its buffers and images as GLB or data URIs.
 
 | Option | Default | Limit |
 | --- | ---: | --- |
