@@ -167,7 +167,9 @@ export function createCamera(camera, width, height) {
   for (let axis = 0; axis < 3; axis++) right[axis] /= rightLength;
   const above = [right[1] * forward[2] - right[2] * forward[1], right[2] * forward[0] - right[0] * forward[2], right[0] * forward[1] - right[1] * forward[0]];
   const halfHeight = Math.tan(fov * Math.PI / 360);
-  const view = { eye, forward, right, above, halfHeight, halfWidth: halfHeight * width / height };
+  const clipStart = camera.clipStart ?? 0;
+  if (typeof clipStart !== 'number' || !Number.isFinite(clipStart) || clipStart < 0 || clipStart > 1e5) throw new RangeError(`Path tracer camera clipStart must be a distance from 0 to 100000 scene units along the view axis, got ${JSON.stringify(camera.clipStart)}. Leave it out to start rays at the eye.`);
+  const view = { eye, forward, right, above, halfHeight, halfWidth: halfHeight * width / height, ...(clipStart > 0 ? { clipStart } : {}) };
   // A camera with an fStop adds its thin lens (apertureRadius, focalDistance, apertureBlades, apertureRotation). Only the
   // native "cycles" kernel draws it; every other tracer ignores the extra fields, and a pinhole view is unchanged.
   const thinLens = resolveThinLens(camera, { aspect: width / height, eye, target });
@@ -1027,8 +1029,9 @@ export function toneMapToRgba8(linear, width, height, { viewTransform = 'aces', 
 }
 
 /** Names what this scene asks for that the path tracer does not draw, so a result never claims more than it traced. */
-export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { kernelMaterials = false } = {}) {
+export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { kernelMaterials = false, clipStart = 0 } = {}) {
   const notes = new Set();
+  if (clipStart > 0 && (backend === 'gpu' || kernelMaterials)) notes.add('camera.clipStart is ignored: only the CPU and WebGPU tracers start camera rays at it, so geometry between the eye and the clip start is drawn.');
   const fog = environment?.volumeFog;
   if (fog?.density > 0 && (fog.noiseAmount ?? 0.5) > 0) notes.add('volumeFog is traced as a uniform medium: noiseAmount, noiseScale and drift are ignored.');
   if (fog?.density > 0 && fog.ambient) notes.add('volumeFog.ambient is not added: the fog is lit by the traced lights and sky.');
@@ -1104,7 +1107,12 @@ export function renderBand(scene, camera, options, rowStart, rowEnd, shouldStop 
         const directionY = camera.forward[1] + camera.right[1] * screenX + camera.above[1] * screenY;
         const directionZ = camera.forward[2] + camera.right[2] * screenX + camera.above[2] * screenY;
         const length = Math.hypot(directionX, directionY, directionZ);
-        tracer.trace(camera.eye[0], camera.eye[1], camera.eye[2], directionX / length, directionY / length, directionZ / length, pixel, sample);
+        // clipStart is a distance along the view axis, as Cycles' clip start: a ray from the eye starts where it has gone that far along the axis.
+        const rayDirectionX = directionX / length;
+        const rayDirectionY = directionY / length;
+        const rayDirectionZ = directionZ / length;
+        const clipDistance = camera.clipStart ? camera.clipStart / (rayDirectionX * camera.forward[0] + rayDirectionY * camera.forward[1] + rayDirectionZ * camera.forward[2]) : 0;
+        tracer.trace(camera.eye[0] + rayDirectionX * clipDistance, camera.eye[1] + rayDirectionY * clipDistance, camera.eye[2] + rayDirectionZ * clipDistance, rayDirectionX, rayDirectionY, rayDirectionZ, pixel, sample);
         const { radiance, features } = tracer;
         const sampleLuminance = luminance(radiance[0], radiance[1], radiance[2]);
         sumLuminance += sampleLuminance;
@@ -1262,7 +1270,7 @@ export async function renderPathTracedImage({ parts, environment = {}, camera },
       backend: options.backend, ...(gpuName ? { gpu: gpuName, gpuCompileSeconds, gpuKernelCompiles } : {}),
       averageSamples: totalSamples(samplesTaken) / pixelCount, noiseThreshold: options.noiseThreshold,
       triangles: scene.indices.length / 3, tracedSeconds, seconds: (performance.now() - started) / 1000,
-      ignored: describeIgnoredFeatures(parts, environment, options.backend),
+      ignored: describeIgnoredFeatures(parts, environment, options.backend, { clipStart: view.clipStart }),
     },
   };
 }

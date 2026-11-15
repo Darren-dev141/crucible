@@ -561,6 +561,11 @@ fn samplePortalDirection(point: vec3<f32>, portalUnit: f32, acrossUnit: f32, alo
   return pdf;
 }
 
+// Where a camera ray starts: at the eye, or with a clip start (forward.w, a distance along the view axis) where the ray has gone that far along it.
+fn cameraOrigin(rayDirection: vec3<f32>) -> vec3<f32> {
+  return params.eye.xyz + rayDirection * (params.forward.w / dot(rayDirection, params.forward.xyz));
+}
+
 // ---- Microfacet pieces ----
 
 fn ggxDistribution(alpha: f32, cosineHalf: f32) -> f32 {
@@ -1127,7 +1132,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let screenX = ((f32(id.x) + jitterX) / f32(width) * 2.0 - 1.0) * params.cameraAndClamp.x;
   let screenY = (1.0 - (f32(id.y) + jitterY) / f32(height) * 2.0) * params.cameraAndClamp.y;
   let rayDirection = normalize(params.forward.xyz + params.right.xyz * screenX + params.above.xyz * screenY);
-  tracePath(params.eye.xyz, rayDirection, pixel, sampleIndex, true);
+  tracePath(cameraOrigin(rayDirection), rayDirection, pixel, sampleIndex, true);
   if (!(all(radiance >= vec3<f32>(0.0)) && all(radiance < vec3<f32>(1e30)))) { radiance = vec3<f32>(0.0); }
   if (!(featureDepth >= 0.0 && featureDepth < 1e30)) { featureDepth = 0.0; }
   if (!(all(featureNormal >= vec3<f32>(-1.5)) && all(featureNormal < vec3<f32>(1.5)))) { featureNormal = vec3<f32>(0.0, 0.0, 1.0); }
@@ -1400,7 +1405,7 @@ fn generatePaths(@builtin(global_invocation_id) id: vec3<u32>) {
   let rayDirection = normalize(params.forward.xyz + params.right.xyz * screenX + params.above.xyz * screenY);
   resetRandom(pixel, sampleIndex, seed);
   let base = id.x * PATH_STATE_VECTORS;
-  storeVector(base, vec4<f32>(params.eye.xyz, 0.0));
+  storeVector(base, vec4<f32>(cameraOrigin(rayDirection), 0.0));
   storeVector(base + 1u, vec4<f32>(rayDirection, 1.0));
   storeVector(base + 2u, vec4<f32>(1.0, 1.0, 1.0, 1e30));
   storeVector(base + 3u, vec4<f32>(0.0));

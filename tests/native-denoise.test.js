@@ -102,6 +102,9 @@ cookTest('denoiseAtrous rejects a plane of the wrong length', { skip: skipWithou
   );
 });
 
+// The a-trous filter in Cook is a port of the CPU filter as it was before issue #1335 added the guide average and lowered the sigma.
+const GPU_PORT_SETTINGS = { luminanceSigma: 3, guideRadius: 0 };
+
 cookTest('the GPU filter matches the CPU wavelet filter it was written from', { skip: skipWithoutAddon }, () => {
   const image = buildImage();
   const gpu = denoiseAtrous({ width: WIDTH, height: HEIGHT, ...image });
@@ -113,7 +116,7 @@ cookTest('the GPU filter matches the CPU wavelet filter it was written from', { 
     normal: unitNormals(image.normal),
     depth: image.depth,
     variance: image.variance,
-  });
+  }, GPU_PORT_SETTINGS);
   let largestRelativeDifference = 0;
   for (let pixel = 0; pixel < WIDTH * HEIGHT; pixel++) {
     assert.equal(gpu.rgba[pixel * 4 + 3], 1);
