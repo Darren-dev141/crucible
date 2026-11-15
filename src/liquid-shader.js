@@ -1,6 +1,7 @@
 import { environmentLookupGlsl } from './environment-shading.js';
 import { registerShaderFeatureCode } from './shader-registry.js';
 import { drawLiquidPass } from './liquid-renderer.js';
+import { waterMirrorFunctionsGlsl, waterMirrorUniformsGlsl } from './water-mirror-glsl.js';
 
 // Importing this module registers the liquid and foam shader. A renderer with a transmissive, liquid or foam part
 // needs it; any other renderer never carries it.
@@ -18,6 +19,7 @@ in vec4 shadowPosition;
 in vec2 textureUV;
 in vec3 vertexTint;
 uniform vec3 eye;
+uniform float time;
 uniform mat4 viewProjection;
 uniform sampler2D sceneColor;
 uniform vec2 resolution;
@@ -46,6 +48,8 @@ vec3 toneMap(vec3 color) {
 
 ${environmentLookupGlsl}
 uniform float environmentEnabled;
+// Water that transmits light shows the same mirror picture as water that does not (water-reflection.js binds it for a flagged batch).
+${waterMirrorUniformsGlsl}${waterMirrorFunctionsGlsl}
 
 vec3 environmentColor(vec3 direction, float roughness) {
   if (environmentEnabled > 0.5) return environmentRadiance(direction, roughness * environmentLevelMax);
@@ -86,6 +90,8 @@ vec3 displayed(vec3 radiance) {
 }
 
 void main() {
+  // While the mirror picture is drawn, nothing under the water plane is part of it.
+  if (waterClip.y > 0.5 && worldPosition.y < waterClip.x + 0.05) discard;
   vec3 normal = normalize(worldNormal);
   if (!gl_FrontFacing) normal = -normal;
   vec3 viewDirection = normalize(eye - worldPosition);
@@ -125,6 +131,7 @@ void main() {
   // The share of a PBR material that does not transmit is lit like a diffuse surface.
   vec3 diffuseShare = glass ? color * (1.0 - glassState.x) * (ambientLight(normal) + keyColor * max(dot(normal, light), 0.0) / PI) : vec3(0.0);
   vec3 reflection = environmentColor(reflect(-viewDirection, normal), roughness) * ambientIntensity;
+  if (waterReflectionEnabled > 0.5) reflection = mix(reflection, waterMirrorColor(worldPosition, roughness), waterMirrorWeight(roughness));
   vec3 highlight = keyColor * specularLobe(normal, viewDirection, light, roughness);
   vec3 surfaceLight = (inScatter + diffuseShare) * (1.0 - reflectance) + reflection * reflectance + highlight;
   surfaceLight = mix(surfaceLight, fogColor, fog);
