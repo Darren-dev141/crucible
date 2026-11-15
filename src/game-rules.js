@@ -561,7 +561,7 @@ export function createGameRules(document, options = {}) {
     setPartPosition(partId, position) {
       findPart(partId, 'setPartPosition').position = requireVector(position, `setPartPosition("${partId}") position`);
     },
-    /** Tell the rules two parts touched during the coming step. Physics calls this from its contact callback. */
+    /** Tell the rules two parts touched during the coming step. Physics calls this from its contact callback. Calls are ignored once the game is won or lost, so a finished game does not collect contacts. */
     reportContact(firstPartId, secondPartId) {
       const firstPart = findPart(firstPartId, 'reportContact');
       const secondPart = findPart(secondPartId, 'reportContact');

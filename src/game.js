@@ -124,8 +124,14 @@ function describeState(state, restartHint) {
 function rulesWithNodeVisibility(rulesDocument, nodes) {
   if (rulesDocument.parts === undefined) return rulesDocument;
   const hiddenNodeIds = new Set(nodes.filter(node => node.visible === false).map(node => node.id));
-  const parts = rulesDocument.parts.map(part => (part.visible === undefined && hiddenNodeIds.has(part.id) ? { ...part, visible: false } : part));
+  const parts = rulesDocument.parts.map(part => partWithNodeVisibility(part, hiddenNodeIds));
   return { ...rulesDocument, parts };
+}
+
+function partWithNodeVisibility(part, hiddenNodeIds) {
+  const followsHiddenNode = part.visible === undefined && hiddenNodeIds.has(part.id);
+  if (!followsHiddenNode) return part;
+  return { ...part, visible: false };
 }
 
 async function loadAnimationRuntime() {
