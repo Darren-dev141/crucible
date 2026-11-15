@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
 import { loadAgentSceneModules } from '../src/agent-scene-modules.js';
-import { closedRoomShare, CLOSED_ROOM_SHARE, CLOSED_ROOM_MAXIMUM_TRIANGLES } from '../src/closed-room.js';
+import { closedRoomShare, CLOSED_ROOM_SHARE, CLOSED_ROOM_MAXIMUM_TRIANGLES, skyGridSize, skyVisibilityGrid } from '../src/closed-room.js';
 import { fittedClosedRoomShare } from '../src/fitted-closed-room.js';
 
 const WALL = 0.2;
@@ -162,4 +162,21 @@ test('a closed room with a prop at its centre still gets the diagnostic from a f
   const recipe = roomRecipe();
   recipe.nodes.push(wall('table', [0, -2, 0], [2, 2, 2]));
   assert.ok(diagnosticKinds(recipe).includes('closed-room-without-bake'));
+});
+
+test('skyGridSize gives a box with no extent the smallest grid instead of NaN cells', () => {
+  assert.deepEqual(skyGridSize([1, 1, 1], [1, 1, 1]), [2, 2, 2]);
+  assert.deepEqual(skyGridSize([0, 0, 0], [4, 0, 4]), [32, 2, 32]);
+});
+
+test('skyVisibilityGrid returns data that matches its size for a zero-size box', () => {
+  const part = {
+    name: 'plate',
+    matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    geometry: { positions: new Float32Array([-1, 5, -1, 1, 5, -1, 0, 5, 1]), indices: new Uint32Array([0, 1, 2]) },
+    material: {},
+  };
+  const grid = skyVisibilityGrid([part], [0, 0, 0], [0, 0, 0]);
+  assert.deepEqual(grid.size, [2, 2, 2]);
+  assert.equal(grid.data.length, 8);
 });
