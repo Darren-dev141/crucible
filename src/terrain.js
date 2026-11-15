@@ -146,7 +146,10 @@ function heightFromArray(heights, size) {
 
 function resolveHeightFunction(height, size, seed) {
   if (typeof height === 'function') return height;
-  if (height instanceof Float32Array) return heightFromArray(height, size);
+  if (Array.isArray(height) || (ArrayBuffer.isView(height) && !(height instanceof DataView))) return heightFromArray(height, size);
+  if (height !== undefined && height !== null && typeof height !== 'object') {
+    throw new TypeError('height must be a function (x, z) => metres, a square array of heights, or an options object such as { amplitude: 10 }.');
+  }
   return createNoiseHeight(height ?? {}, seed);
 }
 
@@ -225,8 +228,11 @@ export function createTerrain({ size = 512, resolution = 32, chunks = 8, levels 
   const gridHeight = (column, row) => heights[clamp(row, 0, gridCells) * gridSide + clamp(column, 0, gridCells)];
 
   function gridNormal(column, row, step, target, offset) {
-    const slopeX = (gridHeight(column + step, row) - gridHeight(column - step, row)) / (2 * step * spacing);
-    const slopeZ = (gridHeight(column, row + step) - gridHeight(column, row - step)) / (2 * step * spacing);
+    // On the outer border one neighbour is clamped to the vertex itself, so the difference spans fewer cells.
+    const spanColumns = clamp(column + step, 0, gridCells) - clamp(column - step, 0, gridCells);
+    const spanRows = clamp(row + step, 0, gridCells) - clamp(row - step, 0, gridCells);
+    const slopeX = (gridHeight(column + step, row) - gridHeight(column - step, row)) / (spanColumns * spacing);
+    const slopeZ = (gridHeight(column, row + step) - gridHeight(column, row - step)) / (spanRows * spacing);
     const inverseLength = 1 / Math.hypot(slopeX, 1, slopeZ);
     target[offset] = -slopeX * inverseLength;
     target[offset + 1] = inverseLength;
@@ -460,6 +466,9 @@ export function createTerrain({ size = 512, resolution = 32, chunks = 8, levels 
   let triangleTotal = 0;
   function update(eyePosition) {
     if (!Array.isArray(eyePosition) && !(eyePosition instanceof Float32Array)) throw new TypeError('update needs an eye position [x, y, z].');
+    if (eyePosition.length < 3 || !(Number.isFinite(eyePosition[0]) && Number.isFinite(eyePosition[1]) && Number.isFinite(eyePosition[2]))) {
+      throw new TypeError('update needs an eye position [x, y, z] of finite numbers.');
+    }
     for (const state of chunkStates) state.targetLevel = levelFor(state, eyePosition);
     const changed = [];
     for (const state of chunkStates) {

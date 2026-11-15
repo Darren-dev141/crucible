@@ -3,6 +3,7 @@ import { createSurfaceDistance } from './mesh-surface-distance.js';
 import { meshBounds } from './mesh-data.js';
 import { meshFromGeometry } from './mesh-convert.js';
 import { extractRender } from './mesh-render.js';
+import { simplifyGeometry } from './geometry-simplify.js';
 
 // Levels of detail for runtime selection (issue 37). Level 0 is the input; each next level keeps the given ratio of
 // the input's triangles. Every level reports the farthest its vertices lie from the input surface, in the input's
@@ -58,11 +59,41 @@ export function generateMeshLods(mesh, { ratios = DEFAULT_LOD_RATIOS } = {}) {
   return levels;
 }
 
+/** A geometry with uvs, light uvs, colours or sky visibility: welding it into mesh data would lose them. */
+function hasPerVertexLook(geometry) {
+  return Boolean(geometry.uvs || geometry.lightUvs || geometry.colors || geometry.skyVisibility);
+}
+
+/**
+ * Levels for a textured or coloured geometry: edge collapses that keep every vertex attribute as it was and never
+ * touch a UV seam, a hard edge or an open border (see geometry-simplify.js). `error` is the quadric estimate of how
+ * far the surface moved, in the geometry's units; `relativeError` is that over the bounds diagonal.
+ */
+function generateAttributeLods(geometry, { ratios }) {
+  checkRatios(ratios);
+  const bounds = geometry.positions;
+  const low = [Infinity, Infinity, Infinity];
+  const high = [-Infinity, -Infinity, -Infinity];
+  for (let index = 0; index < bounds.length; index += 3) {
+    for (let axis = 0; axis < 3; axis++) {
+      low[axis] = Math.min(low[axis], bounds[index + axis]);
+      high[axis] = Math.max(high[axis], bounds[index + axis]);
+    }
+  }
+  const diagonal = Math.hypot(...high.map((value, axis) => value - low[axis])) || 1;
+  const levels = [{ level: 0, ratio: 1, triangles: geometry.indices.length / 3, error: 0, relativeError: 0, geometry }];
+  simplifyGeometry(geometry, { ratios }).forEach((reduced, index) => {
+    levels.push({ level: index + 1, ratio: reduced.ratio, triangles: reduced.triangles, error: reduced.error, relativeError: reduced.error / diagonal, geometry: reduced.geometry });
+  });
+  return levels;
+}
+
 /**
  * Levels for renderer geometry, such as a recipe part from generateMeshGeometry or an imported asset's part. Each
  * level carries a geometry made by extractRender, with edges sharper than `smoothAngle` degrees kept hard.
  */
 export function generateGeometryLods(geometry, { ratios = DEFAULT_LOD_RATIOS, smoothAngle = 30 } = {}) {
+  if (hasPerVertexLook(geometry)) return generateAttributeLods(geometry, { ratios });
   const mesh = meshFromGeometry(geometry, { quads: false, tags: 'none' });
   return generateMeshLods(mesh, { ratios }).map(({ mesh: levelMesh, ...rest }) => ({
     ...rest,

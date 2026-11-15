@@ -119,3 +119,28 @@ test('kernel keys follow the bytes of the input and refuse data that cannot be c
 test('without a session a kernel computes inline', () => {
   assert.equal(runKernel('pattern', [2, 3], (left, right) => left + right), 5);
 });
+
+test('kernel keys differ for inputs whose text only looks alike', () => {
+  assert.notEqual(kernelKey('cloth', [{ 'a=string:1': 1 }]), kernelKey('cloth', [{ a: '1=number:1' }]));
+  assert.notEqual(kernelKey('cloth', [{ a: '1;b=string:2', c: 3 }]), kernelKey('cloth', [{ a: '1', b: '2' }]));
+});
+
+test('a self-referencing kernel input has no key and the build computes it inline', async () => {
+  const loop = {};
+  loop.self = loop;
+  assert.equal(kernelKey('cloth', [loop]), null);
+  const build = buildWithKernels(() => runKernel('cloth', [loop], () => 'inline'), { createWorker: () => createInProcessWorker(), available: true });
+  assert.equal(await build, 'inline');
+});
+
+test('a worker answer the page cannot read leaves the work to the inline path instead of hanging', async () => {
+  const unreadable = {
+    postMessage() {
+      setTimeout(() => unreadable.onmessageerror?.({}), 0);
+    },
+    terminate() {},
+  };
+  const build = buildWithKernels(() => runKernel('pattern', [{ size: 1 }], () => 'inline'), { createWorker: () => unreadable, available: true });
+  const timeout = new Promise(resolve => setTimeout(() => resolve('hung'), 1000));
+  assert.equal(await Promise.race([build, timeout]), 'inline');
+});

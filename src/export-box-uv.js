@@ -4,6 +4,7 @@
 
 /** The lengths of a part matrix's three columns: the shader projects scaled object positions. */
 export function columnLengths(matrix) {
+  if (!matrix) return [1, 1, 1];
   return [0, 4, 8].map(offset => Math.hypot(matrix[offset], matrix[offset + 1], matrix[offset + 2]));
 }
 

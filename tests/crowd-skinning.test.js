@@ -216,3 +216,13 @@ test('morph targets stay on their own crowd part when the rig asks for them', as
   const set = createCrowdParts({ rig: withMorphs, palette, instances: [{ matrix: mat4.create() }] });
   assert.ok(set.parts.filter(part => part.morph).every(part => !part.lods), 'a morphed part draws at full detail');
 });
+
+test('a clip that would bake more frames than the limit is refused before any pose is read', () => {
+  const rig = { jointCount: 4 };
+  let posesRead = 0;
+  assert.throws(
+    () => bakeCrowdPalette(rig, () => { posesRead += 1; }, { duration: 100000, frameRate: 30 }),
+    /frames/i,
+  );
+  assert.equal(posesRead, 0);
+});
