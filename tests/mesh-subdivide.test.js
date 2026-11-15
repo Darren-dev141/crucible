@@ -109,3 +109,50 @@ test('subdivide runs as a stack node after the edits', () => {
   assert.equal(result.mesh.faceCount, 96);
   assert.equal(result.results[0].levels, 2);
 });
+
+function quadWithPointAttributes() {
+  return createMeshData({
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]),
+    faceOffsets: new Uint32Array([0, 4]),
+    cornerVertices: new Uint32Array([0, 1, 2, 3]),
+    attributes: { point: {
+      heat: { data: new Float32Array([0, 4, 8, 4]), size: 1 },
+      'group:lid': { data: new Float32Array([1, 1, 0, 0]), size: 1 },
+      region: { data: new Int32Array([7, 3, 3, 9]), size: 1 },
+    } },
+  });
+}
+
+test('point attributes carry through subdivision: edge points average their ends, face points the corners, integers take the first source', () => {
+  const source = quadWithPointAttributes();
+  const refined = subdivide(source, { levels: 1 });
+  const { heat, region } = refined.attributes.point;
+  assert.equal(heat.data.length, refined.vertexCount);
+  assert.equal(region.data.constructor, Int32Array);
+  // The first four points are the old ones, then one per old edge, then the face point.
+  assert.deepEqual([...heat.data.subarray(0, 4)], [0, 4, 8, 4]);
+  for (let edge = 0; edge < source.edgeCount; edge++) {
+    const [first, second] = [source.edgeVertices[edge * 2], source.edgeVertices[edge * 2 + 1]];
+    assert.equal(heat.data[4 + edge], (heat.data[first] + heat.data[second]) / 2);
+    assert.equal(region.data[4 + edge], source.attributes.point.region.data[first]);
+  }
+  assert.equal(heat.data[4 + source.edgeCount], 4);
+  assert.equal(region.data[4 + source.edgeCount], 7);
+  assert.deepEqual([...refined.attributes.point['group:lid'].data.subarray(0, 4)], [1, 1, 0, 0]);
+});
+
+test('carrying point attributes leaves the subdivided positions byte for byte the same', () => {
+  const plain = quadWithPointAttributes();
+  for (const levels of [1, 3]) {
+    const withAttributes = subdivide(quadWithPointAttributes(), { levels });
+    const without = subdivide(createMeshData({ positions: plain.positions, faceOffsets: plain.faceOffsets, cornerVertices: plain.cornerVertices }), { levels });
+    assert.deepEqual(new Uint8Array(withAttributes.positions.buffer), new Uint8Array(without.positions.buffer));
+    assert.equal(withAttributes.attributes.point.heat.data.length, withAttributes.vertexCount);
+  }
+  const cubeWithout = subdivide(cube(), { levels: 2 });
+  const heatCube = cube();
+  const cubeWith = subdivide(createMeshData({ positions: heatCube.positions, faceOffsets: heatCube.faceOffsets, cornerVertices: heatCube.cornerVertices,
+    attributes: { point: { heat: { data: new Float32Array(heatCube.vertexCount).fill(2), size: 1 } } } }), { levels: 2 });
+  assert.deepEqual(new Uint8Array(cubeWith.positions.buffer), new Uint8Array(cubeWithout.positions.buffer));
+  assert.ok(cubeWith.attributes.point.heat.data.every(value => value === 2));
+});

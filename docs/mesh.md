@@ -370,7 +370,8 @@ From each selected edge the ring is walked across quads to the opposite edge, un
 not a quad. Every ring edge is split at the same fractions from the ring's low side (the end of the first seed edge
 with the lower coordinate along it), and every quad in the ring is split into bands tagged `<name>.band-0` (low side)
 to `<name>.band-<cuts>`; bands keep the quad's other tags. Faces beside an open ring get the new points on their
-shared edges, so no T-junctions appear. Corner UVs and colours are interpolated at the new points. Rings that cross
+shared edges, so no T-junctions appear. Corner UVs and colours are interpolated at the new points, and point attributes
+(vertex groups too) blend by the cut fraction, with integer values taken from the low end. Rings that cross
 each other in one edit are refused; cut them in separate edits. The result reports `rings`, `closedRings` and
 `splitEdges`.
 
@@ -447,7 +448,8 @@ published and OpenSubdiv implements. Every n-gon becomes n quads, so faces multi
 
 Open boundary edges are always sharp, and a boundary vertex with a single face stays a corner (Blender's Keep Corners).
 Faces keep their tags, and corner attributes such as `uv` blend linearly. Edge attributes follow each half of a split
-edge; point attributes are not carried. The size is checked before anything is built, so `levels: 4` on a mesh that
+edge. Point attributes carry over: an edge point averages its two ends and a face point the face's corners, while integer
+and boolean values take the first source instead. The size is checked before anything is built, so `levels: 4` on a mesh that
 would pass the face limit fails with the counts instead of running. Put `subdivide` before `uv_unwrap`.
 
 Blender comparison (`tests/fixtures/blender`): vertex, edge and face counts, face sizes, area and every vertex match a
