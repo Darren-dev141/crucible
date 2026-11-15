@@ -117,12 +117,30 @@ test('dispose while prepareFrame waits for a program started by its own draw res
     const result = await liveObjectsAfter(page, `${SIMULATE_SLOW_LINKS_ON_DEMAND}${SETTLES_OR_HANGS}
       await renderer.programsReady();
       context.linksAreSlow = true;
+      const linkStatusReads = new Set();
+      const programsStartedByTheDraw = new Set();
+      const parameterBeforeSpy = context.getProgramParameter.bind(context);
+      context.getProgramParameter = (program, parameter) => {
+        if (parameter === context.LINK_STATUS) linkStatusReads.add(program);
+        return parameterBeforeSpy(program, parameter);
+      };
+      const createBeforeSpy = context.createProgram.bind(context);
+      context.createProgram = () => {
+        const program = createBeforeSpy();
+        programsStartedByTheDraw.add(program);
+        return program;
+      };
+      const deleteBeforeSpy = context.deleteProgram.bind(context);
+      context.deleteProgram = (program) => {
+        if (programsStartedByTheDraw.has(program) && !linkStatusReads.has(program)) throw new Error('a started program was deleted before its link status was read');
+        return deleteBeforeSpy(program);
+      };
       const errorsBefore = context.getError();
       const prepared = renderer.prepareFrame(${AMBIENT_OCCLUSION_FRAME});
       await new Promise(resolve => setTimeout(resolve, 50));
       if (await Promise.race([prepared, 'waiting']) !== 'waiting') throw new Error('the frame never waited for a program, got ' + await prepared);
+      // The links stay slow after dispose, so only the disposed guard in the second wait can end it.
       renderer.dispose();
-      context.linksAreSlow = false;
       if (await settlement(prepared) !== 'settled') throw new Error('prepareFrame kept waiting after dispose');
       const outcome = await prepared;
       if (outcome !== false) throw new Error('prepareFrame must resolve false on a disposed renderer, got ' + outcome);
