@@ -18,7 +18,7 @@ const HOLDER_SCRIPT = `process.stdout.write(${JSON.stringify(`${GRANTED_LINE}\n`
  * first item is the executable and the rest its arguments, such as ["bash", "/home/me/gpu-lock.sh"]. The executable is an
  * absolute path to an existing file, or a bare command name looked up on PATH (like --ffmpeg). No shell reads the value.
  */
-export function parseGpuQueueCommand(value) {
+export function parseGpuQueueCommand(value, platform = process.platform) {
   const hint = 'Pass --gpu-queue an absolute executable path, or a JSON array such as ["bash","/path/to/queue.sh"]; the queue command is run with a program appended and must run it once the GPU has room.';
   if (typeof value !== 'string' || value.trim() === '') throw new TypeError(`--gpu-queue is empty. ${hint}`);
   let words;
@@ -39,7 +39,17 @@ export function parseGpuQueueCommand(value) {
   if (!bareName && (!isAbsolute(executable) || !existsSync(executable))) {
     throw new TypeError(`--gpu-queue executable ${executable} must be an existing absolute path or a command name on PATH. ${hint}`);
   }
+  rejectScriptWithoutInterpreter(executable, platform);
   return { executable, arguments: argumentsList };
+}
+
+// Windows cannot start a script directly (spawn fails with EINVAL for .cmd and .bat, EFTYPE or ENOENT for .sh and .ps1), so say how to pass it now, not at the first call.
+function rejectScriptWithoutInterpreter(executable, platform) {
+  const extension = /\.([A-Za-z0-9]+)$/.exec(executable)?.[1]?.toLowerCase();
+  const interpreters = { cmd: '["cmd.exe","/c","<path>"]', bat: '["cmd.exe","/c","<path>"]', ps1: '["powershell.exe","-File","<path>"]', sh: '["bash","<path>"]' };
+  const windowsOnly = platform === 'win32' && extension in interpreters;
+  if (!windowsOnly) return;
+  throw new TypeError(`--gpu-queue ${executable} is a .${extension} script, which cannot be started directly on Windows. Pass it with its interpreter as a JSON array, for example ${interpreters[extension].replace('<path>', executable.replaceAll('\\', '/'))}.`);
 }
 
 export function parseGpuQueueWaitSeconds(value) {
@@ -62,11 +72,17 @@ export function createGpuQueue({ command, waitSeconds = DEFAULT_GPU_QUEUE_WAIT_S
   function acquire(weight, signal) {
     return new Promise((resolve, reject) => {
       signal?.throwIfAborted();
-      const holder = spawnProcess(command.executable, [...command.arguments, process.execPath, '-e', HOLDER_SCRIPT], {
-        env: { ...process.env, CRUCIBLE_GPU_WEIGHT: weight },
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
+      let holder;
+      try {
+        holder = spawnProcess(command.executable, [...command.arguments, process.execPath, '-e', HOLDER_SCRIPT], {
+          env: { ...process.env, CRUCIBLE_GPU_WEIGHT: weight },
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+        });
+      } catch (error) {
+        reject(new Error(`The GPU queue command could not start (${error.message}). Pass --gpu-queue an executable program, or a JSON array with its interpreter such as ["bash","/path/to/queue.sh"].`));
+        return;
+      }
       let settled = false;
       let output = '';
       let errorOutput = '';
@@ -138,7 +154,7 @@ export function createGpuQueueFromFlags({ queue, wait }) {
   return createGpuQueue({ command: parseGpuQueueCommand(queue), waitSeconds: parseGpuQueueWaitSeconds(wait) });
 }
 
-const WEIGHT_RANK =Object.freeze({ light: 1, heavy: 2 });
+const WEIGHT_RANK = Object.freeze({ light: 1, heavy: 2 });
 
 /**
  * One server-side GPU slot on top of the person's queue, so the server never queues against itself. While the server holds the
@@ -148,7 +164,15 @@ const WEIGHT_RANK =Object.freeze({ light: 1, heavy: 2 });
  * holding the runtime's call queue, because the wait can be long.
  */
 export function createSharedGpuCard(queue) {
-  let current;
+  const slots = new Set();
+
+  // A unit of work joins a slot that already holds the card at its weight or heavier, or one still waiting at exactly its weight.
+  // It never joins a waiting heavier slot: that would hold a look behind a render job's wait instead of asking the queue itself.
+  function findSlot(weight) {
+    const rank = WEIGHT_RANK[weight];
+    const all = [...slots];
+    return all.find(slot => slot.granted && WEIGHT_RANK[slot.weight] >= rank) ?? all.find(slot => !slot.granted && slot.weight === weight);
+  }
 
   function openSlot(weight) {
     const slot = { weight, users: 0, granted: false, controller: new AbortController(), finish: undefined };
@@ -160,13 +184,14 @@ export function createSharedGpuCard(queue) {
       }, { signal: slot.controller.signal }).catch(rejectReady);
     });
     slot.ready.catch(() => {});
+    slots.add(slot);
     return slot;
   }
 
   function leave(slot) {
     slot.users--;
     if (slot.users > 0) return;
-    if (current === slot) current = undefined;
+    slots.delete(slot);
     if (slot.granted) slot.finish();
     else slot.controller.abort();
   }
@@ -175,8 +200,7 @@ export function createSharedGpuCard(queue) {
     async take(weight, signal) {
       if (!GPU_QUEUE_WEIGHTS.includes(weight)) throw new RangeError(`GPU queue weight must be light or heavy, not ${weight}.`);
       signal?.throwIfAborted();
-      if (!current || WEIGHT_RANK[current.weight] < WEIGHT_RANK[weight]) current = openSlot(weight);
-      const slot = current;
+      const slot = findSlot(weight) ?? openSlot(weight);
       slot.users++;
       let onAbort;
       const cancelled = new Promise((resolveCancelled, rejectCancelled) => {

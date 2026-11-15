@@ -15,11 +15,13 @@ const STATES = ['queued', 'running', 'finalizing', 'completed', 'cancelling', 'c
 const TERMINAL = new Set(['completed', 'cancelled', 'failed', 'interrupted']);
 /** Hard ceiling on one job's elapsed time. The deadline below it grows with the job's frames and pixels. */
 export const MAXIMUM_JOB_DEADLINE_MS = 30 * 60 * 1000;
+/** How long a job may wait behind other calls and for the scene page handoff before its render clock starts. */
+export const MAXIMUM_QUEUE_WAIT_MS = 5 * 60 * 1000;
 const BASE_DEADLINE_MS = 60 * 1000;
 const FRAME_ALLOWANCE_MS = 2000;
 const REFERENCE_FRAME_PIXELS = 1024 * 576;
 /** A 1920x1080 PNG of a busy scene runs to several MiB, so a frame may be up to 12 MiB. */
-const DEFAULT_LIMITS = Object.freeze({ maxRecords: 32, maxStoreBytes: 512 * 1024 ** 2, maxOutputBytes: 128 * 1024 ** 2, maxFrameBytes: 12 * 1024 ** 2, deadlineMs: MAXIMUM_JOB_DEADLINE_MS, cleanupMs: 5000 });
+const DEFAULT_LIMITS = Object.freeze({ maxRecords: 32, maxStoreBytes: 512 * 1024 ** 2, maxOutputBytes: 128 * 1024 ** 2, maxFrameBytes: 12 * 1024 ** 2, deadlineMs: MAXIMUM_JOB_DEADLINE_MS, queueWaitMs: MAXIMUM_QUEUE_WAIT_MS, cleanupMs: 5000 });
 
 /** Time the page needs to start, draw the scene and encode the PNG around a path trace that runs for its whole maxSeconds. */
 const PATH_TRACE_OVERHEAD_MS = 60 * 1000;
@@ -816,30 +818,40 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
   async function finish(job, snapshot) {
     const { record, controller } = job;
     let timer;
-    // The elapsed deadline covers the render, not the wait for the person's GPU queue, so its clock starts once the card is taken.
-    function startDeadline() {
-      timer = setTimeout(() => {
-        job.failure = 'Render job exceeded its elapsed deadline. If another process was using the GPU, submit the job again.';
-        record.state = 'cancelling';
-        record.reason = job.failure;
-        controller.abort(new Error(job.failure));
-        persist(job).catch(() => {});
-      }, jobDeadlineMs(record.settings, limits.deadlineMs));
+    const expire = message => {
+      job.failure = message;
+      record.state = 'cancelling';
+      record.reason = job.failure;
+      controller.abort(new Error(job.failure));
+      persist(job).catch(() => {});
+    };
+    // Two clocks: the wait behind other calls is bounded on its own, and the elapsed deadline starts when the runner says rendering began.
+    // The wait for the person's GPU queue is bounded by --gpu-queue-wait instead, so the call-queue clock starts once the card is taken.
+    const { queueWaitMs } = limits;
+    function startQueueWaitClock() {
+      timer = setTimeout(() => expire(`Render job exceeded its queue wait deadline of ${Math.round(queueWaitMs / 1000)} seconds before rendering started. Submit the job again.`), queueWaitMs);
     }
+    let renderClockStarted = false;
+    const startRenderClock = () => {
+      if (renderClockStarted) return;
+      renderClockStarted = true;
+      clearTimeout(timer);
+      timer = setTimeout(() => expire('Render job exceeded its elapsed deadline. If another process was using the GPU, submit the job again.'), jobDeadlineMs(record.settings, limits.deadlineMs));
+    };
     let releaseGpu;
     const renamed = [];
     try {
       if (controller.signal.aborted) throw controller.signal.reason;
       // The state stays queued while the job waits for the GPU queue.
       if (acquireGpu) releaseGpu = await acquireGpu(controller.signal);
-      startDeadline();
+      startQueueWaitClock();
       if (controller.signal.aborted) throw controller.signal.reason;
       record.state = 'running';
       await persist(job);
       const runnerDirectory = await directoryFor(record.jobId);
       if (controller.signal.aborted) throw controller.signal.reason;
       const completed = await run({
-        jobId: record.jobId, sessionId: job.sessionId, directory: runnerDirectory, snapshot, settings: structuredClone(record.settings), signal: controller.signal,
+        jobId: record.jobId, sessionId: job.sessionId, directory: runnerDirectory, snapshot, settings: structuredClone(record.settings), signal: controller.signal, startRenderClock,
         progress(update) {
           objectKeys(update, ['frames', 'maximumPendingFrames'], 'progress');
           if (controller.signal.aborted) throw controller.signal.reason;

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createGpuQueue, createGpuQueueFromFlags, createSharedGpuCard, parseGpuQueueCommand, parseGpuQueueWaitSeconds } from '../scripts/agent-gpu-queue.mjs';
@@ -168,6 +169,49 @@ test('a heavy request while only a light hold exists asks the queue again, and a
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.deepEqual(queue.log.filter(line => line.startsWith('grant')), ['grant:light', 'grant:heavy']);
   assert.equal(queue.log.at(-1), 'release:heavy');
+});
+
+test('a look while a render job still waits for the card asks the queue itself instead of joining the job wait', async () => {
+  const log = [];
+  const grants = [];
+  const queue = {
+    run(weight, work, { signal } = {}) {
+      log.push(`request:${weight}`);
+      return new Promise((resolve, reject) => {
+        grants.push({ weight, resolve: () => work().then(resolve, reject) });
+        signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      });
+    },
+  };
+  const card = createSharedGpuCard(queue);
+  const heavyWaiting = card.take('heavy');
+  heavyWaiting.catch(() => {});
+  const lightTaken = card.take('light');
+  assert.deepEqual(log, ['request:heavy', 'request:light']);
+  grants.find(grant => grant.weight === 'light').resolve();
+  const releaseLight = await lightTaken;
+  releaseLight();
+  grants.find(grant => grant.weight === 'heavy').resolve();
+  (await heavyWaiting)();
+});
+
+test('a script path that Windows cannot start directly is refused at launch with the array form to pass', () => {
+  const script = join(tmpdir(), 'queue.cmd');
+  writeFileSync(script, '');
+  assert.throws(() => parseGpuQueueCommand(script, 'win32'), /\.cmd script.*JSON array.*cmd\.exe/);
+  const shellScript = join(tmpdir(), 'queue.sh');
+  writeFileSync(shellScript, '');
+  assert.throws(() => parseGpuQueueCommand(shellScript, 'win32'), /\.sh script.*\["bash"/);
+  assert.deepEqual(parseGpuQueueCommand(shellScript, 'linux'), { executable: shellScript, arguments: [] });
+  assert.deepEqual(parseGpuQueueCommand(JSON.stringify(['cmd.exe', '/c', script]), 'win32').executable, 'cmd.exe');
+});
+
+test('a queue command the system refuses to spawn fails the call with the launch advice, not a raw spawn error', async () => {
+  const queue = createGpuQueue({
+    command: { executable: 'queue.cmd', arguments: [] },
+    spawnProcess() { throw Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL' }); },
+  });
+  await assert.rejects(queue.run('light', async () => {}), /could not start \(spawn EINVAL\).*JSON array/);
 });
 
 test('a queue failure reaches every caller waiting on the shared card', async () => {
