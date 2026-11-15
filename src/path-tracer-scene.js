@@ -582,10 +582,10 @@ export function attachTracer(scene) {
   return { ...scene, tracer: createTracer({ positions: scene.positions, indices: scene.indices, bvh: scene.bvh }) };
 }
 
-/** Local volumes are traced by the CPU path tracer only. Every other tracer entry point calls this so none drops them silently. */
+/** Local volumes are traced by the CPU path tracer and, for boxes and spheres, the WebGPU final tracer. Every other tracer entry point calls this so none drops them silently. */
 export function refuseLocalVolumes(scene, tracerName) {
   if (!scene.localVolumes) return;
-  throw new RangeError(`environment.localVolumes is traced by the CPU path tracer only; ${tracerName} cannot draw them. Use backend "cpu" or remove the volumes.`);
+  throw new RangeError(`environment.localVolumes is traced by the CPU path tracer only; ${tracerName} cannot draw them. Use backend "cpu" (backend "webgpu" draws box and sphere volumes) or remove the volumes.`);
 }
 
 // The volumes of the trace, and the hidden parts that only bound a mesh volume: the rasterizer does not draw a part with
