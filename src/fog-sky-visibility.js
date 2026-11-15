@@ -72,6 +72,8 @@ export function fogSkyVisibility(parts, volume, context, environment = {}) {
     const bounce = !grid ? null
       : irradianceGrid ? gridBounce(irradianceGrid, grid.size, volume.minimum, volume.maximum)
         : fogBounceGrid(parts, grid.size, volume.minimum, volume.maximum, { pointLights: environment.pointLights });
+    // The texture of the box this replaces would never be used again, so a fog box that moves would leak one texture per change.
+    if (entry?.context === context && entry.texture) context.deleteTexture(entry.texture);
     entry = { context, key, texture: grid && uploadGrid(context, grid, bounce) };
     uploaded.set(parts, entry);
   }
