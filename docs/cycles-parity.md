@@ -1015,6 +1015,8 @@ Picture (Cook left, Cycles right, 1024 samples, depth of field on, grey diffuse)
 
 [`run-classroom-parity.py`](../bench/cycles-parity/run-classroom-parity.py) (started by `run-classroom-parity.sh`) does everything in one call: download once, export, Cook and Cycles renders, comparisons, depth, a figure and the diagnostic experiments. Small changes elsewhere in `bench/`: `trace-native.mjs --instancing` keeps shared geometry as instances (through `instanced-scene.mjs`, below), parts may carry `rayVisibility` (read by `render-cycles.py` and by Cook's instance visibility bits), and `render-cycles.py` reads `environment.sunAngularRadius` as Cook does.
 
+The Classroom depth gate needs the driver's default sample count (1024). Measured from empty outputs (RTX 4090, Blender 5.3), the same scene gives 316 disagreeing pixels (99.939 percent at 1 percent, pass) at 1024 samples and 783 (99.849 percent, under the 99.9 gate) at 256 samples, on `main` and on the branch that moved the bridge onto the shared scene reader alike (#1110). All the disagreeing pixels sit on silhouettes: both depth images average a pixel's samples with misses counted as 0, so a mixed edge pixel reads a blend whose noise falls with the sample count, and interior pixels agree at any count. The gate is not loosened; run the depth check at the default 1024 samples, and expect it to fail below that on this scene. A per-pixel hit count from the tracer would let edge pixels be normalised and remove the dependence; that is a Cook change, not tracked here.
+
 The Classroom holds 427,769 unique triangles, above the 400,000 of the CPU and WebGL tracers. `instanced-scene.mjs` builds it directly with the native bound (`maximumTriangles`, see "Triangle bound of a native scene" below); `buildTraceScene` reads the parts' `rayVisibility` itself (#1054); the two-batch workaround of the first slice is gone (tests: `tests/cycles-parity-instanced-scene.test.js`, `tests/cycles-parity-instancing-option.test.js`). The instance order is now the part order, as in a flattened scene, where the batches listed one batch after the other. This has not been re-run against Cycles `[not measured]`: the Classroom needs Blender and its download.
 
 ### Counts `[measured]`
@@ -1078,7 +1080,7 @@ The sun and the area lights agree to 0.2 percent, and the point lights agree to 
 
 ### The bridge against the original file `[measured]`
 
-The bridge is not exact. Cycles on the exported JSON has a mean radiance of 0.17 against 0.668 for Cycles on the original `.blend` with the same drops and override (ratio 0.24 to 0.27), and the depth passes of the two agree on 91.2 percent of pixels, with the disagreement in the central tiles (rows 1 to 4, columns 2 and 3: the blackboard wall). Sun-only is 0.0388 against 0.376. The likely causes are the 22 unexported instances and lights whose file settings the format cannot carry (shadows off on `exterior_fillLight`, per-light bounce limits), but the experiments to separate them were not run, so the cause is open. This does not affect the Cook against Cycles comparison above, which reads one file on both sides; it means the scene Cook was tested on is a faithful reading of the Classroom only in its camera, the 886 instances it exports, the sun and the world.
+The bridge is not exact. Cycles on the exported JSON has a mean radiance of 0.17 against 0.668 for Cycles on the original `.blend` with the same drops and override (ratio 0.24 to 0.27), and the depth passes of the two agree on 91.2 percent of pixels, with the disagreement in the central tiles (rows 1 to 4, columns 2 and 3: the blackboard wall). Sun-only is 0.0388 against 0.376. The likely causes are the 22 unexported instances and lights whose file settings the format cannot carry (shadows off on `exterior_fillLight`, per-light bounce limits), but the experiments to separate them were not run, so the cause is open. One cause is fixed in the code (#1153): the Classroom sun has energy 1.0 but an Emission node with Strength 15 and a Blackbody 5800 K colour, which the bridge ignored, so the export was about 15 times too dim and untinted; the bridge now reads it. The sun-only comparison has not been re-measured since, so 0.0388 against 0.376 is the value before the fix [not measured]. This does not affect the Cook against Cycles comparison above, which reads one file on both sides; it means the scene Cook was tested on is a faithful reading of the Classroom only in its camera, the 886 instances it exports, the sun and the world.
 
 ### Commands
 
@@ -1701,3 +1703,21 @@ Cook's packer capped every environment texel at 16 unless `hdriRadianceLimit` sa
 The whole Pavilion gap was the cap. Since Cook `5d9eda8` the default is no limit; `hdriRadianceLimit` (a number above 0) still caps for a caller that asks, and the `--hdri-radiance-limit` flag of `trace-native.mjs` passes it. The parity scenes above that carry `radianceLimit: 16` in their scene file are unchanged: the bench bridge applies that cap to both Cook and Cycles before either reads the map.
 
 Not measured: noise. A sun texel in the tens of thousands gives more fireflies at low sample counts than the capped map did; the pictures above were compared at their converged sample counts only.
+
+## Cook switch to Cycles setting, for splitting a gap (#1105)
+
+To split a gap between Cook and Cycles, switch the same feature off on both sides and render again. `render-cycles.py` takes the Cycles side:
+
+| Cook switch | Cycles setting in `render-cycles.py` | Same on both sides? |
+| --- | --- | --- |
+| `--filter-glossy 0` of `trace-native.mjs` (`1.0` is the default) | `--cycles-property filter_glossy=0` (Blender's own name is `blur_glossy`; both work) | Yes: both widen glossy lobes after a bounce that spread the light |
+| `--clamp-direct N` / `--clamp-indirect N` of `trace-native.mjs` | `--cycles-property sample_clamp_direct=N` / `sample_clamp_indirect=N` (`0` is off) | Same idea; compare the clamp value, not the name |
+| none (Cook has no caustics switch) | `--cycles-property caustics_reflective=false` / `caustics_refractive=false` | Cycles only |
+| `--direct-lighting bsdf-only` on emissive triangles | `--emission-sampling off` (emissive materials leave next event estimation, so only bounce rays find them) | Yes for emissive meshes; `[inferred]`, not rendered yet |
+| `--direct-lighting bsdf-only` on point, spot and area lights | none | No: Cook ignores it for point and spot lights |
+| `--direct-lighting nee-only` on emissive triangles | none | No exact pair: Cycles cannot hide an emitter from bounce rays and still light the scene with it, because `visible_diffuse` and `visible_glossy` hide the whole object, geometry included |
+| `--direct-lighting nee-only` on point, spot and area lights | `--light-mis off` (lamps are sampled by light sampling only) | Cook counts a lamp hit by a bounce ray as well, so its `nee-only` rows run about 5 percent high; compare Cycles `--light-mis off` against Cook's `both` rows |
+
+`--cycles-property` takes only the names it checks: `blur_glossy`, `sample_clamp_direct`, `sample_clamp_indirect`, `caustics_reflective`, `caustics_refractive`, `light_sampling_threshold`, `use_light_tree`, `min_light_bounces`, `min_transparent_bounces`, `max_bounces`, `diffuse_bounces`, `glossy_bounces`, `transmission_bounces` and `use_adaptive_sampling`, each with a type and range. Any other name stops the run with that list. The parsing lives in `bench/cycles-parity/cycles_switches.py`; `uv run --no-project python -m unittest bench/cycles-parity/test_cycles_switches.py` tests it without Blender.
+
+`[not measured]`: no Blender render ran for this change. `--emission-sampling off` sets `material.cycles.emission_sampling = "NONE"` (or `sample_as_light = False` on older builds) and stops with a message if the build has neither; check it with a `bsdf-only` Cook render on an emissive scene before relying on it.

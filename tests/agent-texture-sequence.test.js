@@ -148,3 +148,12 @@ test('the catalog skips an image whose header gives no readable size and keeps a
     assert.doesNotMatch(entry.reason, /Resize it/);
   }
 });
+
+test('a non-finite time is refused instead of returning a NaN frame index', () => {
+  const sequence = { frames: ['a', 'b', 'c'], fps: 10, loop: true };
+  for (const time of [NaN, Infinity, -Infinity, '1']) {
+    assert.throws(() => sequenceFrameIndex(sequence, time), /time: got .*finite number of seconds/, String(time));
+  }
+  assert.equal(sequenceFrameIndex(sequence, undefined), 0);
+  assert.equal(sequenceFrameIndex(sequence, -1), 0);
+});

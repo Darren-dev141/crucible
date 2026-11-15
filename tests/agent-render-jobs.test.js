@@ -640,13 +640,23 @@ test('a path tracer job runs on the cpu unless it asks for the gpu, and film job
 
 test('the elapsed deadline starts when rendering starts, so queue wait does not count against it (#1256)', async context => {
   const root = await temporary(context);
+  // Mocked timers make the clocks deterministic: no wall-clock stall on a shared runner can expire the deadline.
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const queueWaitedPastDeadline = deferred();
   const controller = await createAgentRenderJobs({ root, limits: { ...limits, deadlineMs: 100, queueWaitMs: 2000 }, async run(argumentsValue) {
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await queueWaitedPastDeadline.promise;
     argumentsValue.startRenderClock();
     return writeImage(argumentsValue);
   } });
   const { jobId } = await controller.submit(request());
-  assert.equal((await terminal(controller, jobId)).state, 'completed');
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  while (controller.status(jobId).state !== 'running') await settle();
+  context.mock.timers.tick(300);
+  assert.equal(controller.status(jobId).state, 'running', 'queue wait past the deadline must not fail the job');
+  queueWaitedPastDeadline.resolve();
+  while (!['completed', 'failed'].includes(controller.status(jobId).state)) await settle();
+  assert.equal(controller.status(jobId).state, 'completed');
+  context.mock.timers.reset();
   await controller.close();
 });
 

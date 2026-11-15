@@ -79,10 +79,12 @@ export function sampleBezierSpans(handles, closed, resolution) {
   return { points, tangents: fillZeroTangents(points, tangents, closed) };
 }
 
-// A handle that sits on its knot makes the derivative zero there; the chord to a neighbour stands in.
+// A handle that sits on its knot makes the derivative zero there; the chord to a neighbour stands in. A tangent that
+// is null (the poly and NURBS samplers return null for a zero direction) is treated the same way.
 export function fillZeroTangents(points, tangents, closed) {
   const count = points.length;
   const unit = tangents.map(tangent => {
+    if (!tangent) return null;
     const length = lengthOf(tangent);
     return length > ZERO_LENGTH ? scale(tangent, 1 / length) : null;
   });
@@ -92,6 +94,12 @@ export function fillZeroTangents(points, tangents, closed) {
       const neighbour = closed ? (index + offset) % count : index + offset;
       if (neighbour >= count) break;
       const chord = subtract(points[neighbour], points[index]);
+      const length = lengthOf(chord);
+      if (length > ZERO_LENGTH) return scale(chord, 1 / length);
+    }
+    // An open curve whose last points coincide has nothing ahead of them: arrive from the nearest point behind.
+    for (let offset = 1; !closed && offset <= index; offset++) {
+      const chord = subtract(points[index], points[index - offset]);
       const length = lengthOf(chord);
       if (length > ZERO_LENGTH) return scale(chord, 1 / length);
     }

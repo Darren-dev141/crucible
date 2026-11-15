@@ -45,6 +45,9 @@ export function normalizeMapSequence(value) {
 /** The frame shown at a scene time: floor(time * fps), wrapped when the sequence loops and held on the last frame otherwise. */
 export function sequenceFrameIndex(sequence, time) {
   const count = sequence.frames.length;
+  if (time !== undefined && time !== null && !Number.isFinite(time)) {
+    throw invalidField('time', time, 'a finite number of seconds, such as 0.5', RangeError);
+  }
   // The small offset keeps a time such as 0.29 s at 100 fps on frame 29 despite binary rounding.
   const raw = Math.floor(Math.max(0, time ?? 0) * sequence.fps + 1e-9);
   return sequence.loop ? raw % count : Math.min(raw, count - 1);

@@ -29,8 +29,6 @@ const root = document.querySelector('.hero-loop');
 const stage = document.querySelector('#stage');
 const tabs = document.querySelector('#scene-tabs');
 const attribution = document.querySelector('#attribution');
-const creditsToggle = document.querySelector('#credits-toggle');
-const creditsPanel = document.querySelector('#credits-panel');
 
 const fadeSeconds = prefersReducedMotion ? REDUCED_FADE_SECONDS : FADE_SECONDS;
 const flights = SCENES.map(scene => createFlight({ keys: scene.keys, duration: scene.seconds + FADE_SECONDS, near: scene.near, far: scene.far }));
@@ -197,39 +195,25 @@ function paintScene(index) {
   stage.setAttribute('aria-label', `A live 3D scene: ${scene.name}`);
   ringMarks.forEach(mark => { mark.fill.style.strokeDashoffset = String(RING_LENGTH); });
   attribution.hidden = scene.credits.length === 0;
-  attribution.replaceChildren(...scene.credits.map(credit => {
+  // One caption line under the picture: the credits of the scene on screen, joined by a middle dot.
+  const links = scene.credits.map(credit => {
     const link = document.createElement('a');
     link.href = credit.href;
     link.target = '_blank';
     link.rel = 'noopener';
     link.textContent = `${credit.label}, ${credit.licence}`;
     return link;
-  }));
+  });
+  attribution.replaceChildren(...links.flatMap((link, index) => index === 0 ? [link] : [separator(), link]));
 }
 
-// ---- Credits: every attribution the five worlds need, one list.
-function buildCredits() {
-  const items = SCENES.flatMap(scene => scene.credits.map(credit => ({ ...credit, scene: scene.name })));
-  creditsPanel.replaceChildren(...items.map(credit => {
-    const row = document.createElement('a');
-    row.href = credit.href;
-    row.target = '_blank';
-    row.rel = 'noopener';
-    row.innerHTML = '<span class="credit-name"></span><span class="credit-meta"></span>';
-    row.querySelector('.credit-name').textContent = credit.label;
-    row.querySelector('.credit-meta').textContent = `${credit.scene}, ${credit.licence}`;
-    return row;
-  }));
-  const rest = document.createElement('p');
-  rest.textContent = 'Everything else is CodePawl work (MIT) or CC0 from Poly Haven and ambientCG.';
-  creditsPanel.append(rest);
+function separator() {
+  const dot = document.createElement('span');
+  dot.className = 'credit-separator';
+  dot.setAttribute('aria-hidden', 'true');
+  dot.textContent = '·';
+  return dot;
 }
-buildCredits();
-creditsToggle.addEventListener('click', () => {
-  const open = creditsPanel.hidden;
-  creditsPanel.hidden = !open;
-  creditsToggle.setAttribute('aria-expanded', String(open));
-});
 
 function requestScene(index) {
   if (!active || incoming || index === active.index) return;

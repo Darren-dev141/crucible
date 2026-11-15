@@ -28,7 +28,7 @@ export function resolveEffects(effects = {}) {
     },
     // `objects` (0 to 1, how much of each part's own motion to smear) appears only when set, so a scene without it resolves as before.
     motionBlur: { shutter: numberInRange(motionBlur.shutter, 0, 0, 0.5, 'Motion blur shutter'),
-      ...(motionBlur.objects > 0 ? { objects: numberInRange(motionBlur.objects, 0, 0, 1, 'Motion blur objects') } : {}) },
+      ...(motionBlur.objects !== undefined && numberInRange(motionBlur.objects, 0, 0, 1, 'Motion blur objects') > 0 ? { objects: motionBlur.objects } : {}) },
     saturation: numberInRange(effects.saturation, 1, 0, 2, 'Saturation'),
     contrast: numberInRange(effects.contrast, 1, 0.1, 2, 'Contrast'),
     temperature: numberInRange(effects.temperature, 0, -1, 1, 'Temperature'),

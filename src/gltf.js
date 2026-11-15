@@ -1,6 +1,6 @@
 import { mat4 } from 'gl-matrix';
 import { applyClip } from './gltf-animation.js';
-import { GLTF_LAYER_EXTENSIONS, layerTextureReferences, materialLayersFromGltf } from './gltf-layers.js';
+import { GLTF_LAYER_EXTENSIONS, clampedIorWarnings, layerTextureReferences, materialLayersFromGltf } from './gltf-layers.js';
 import { attributeFloatsInSlices } from './gltf-accessors.js';
 import { createSlicer, forEachChunk } from './cooperative.js';
 import { describeCompressedImage } from './compressed-texture.js';
@@ -350,13 +350,13 @@ function validateDocument(document, limits, allowedExtensions) {
   let vertices = 0;
   let indices = 0;
   let morphBytes = 0;
-  for (const mesh of document.meshes ?? []) {
+  for (const [meshIndex, mesh] of (document.meshes ?? []).entries()) {
     const targetCount = morphCount(mesh);
     if (targetCount > MAX_STORED_MORPH_TARGETS) throw new Error('Morph target count exceeds 256.');
     validateDefaultWeights(mesh.weights, targetCount);
-    for (const primitive of mesh.primitives ?? []) {
+    for (const [primitiveIndex, primitive] of (mesh.primitives ?? []).entries()) {
       if (isLinePrimitive(primitive)) continue;
-      if ((primitive.mode ?? 4) !== 4) throw new Error('Only glTF TRIANGLES primitives are supported. POINTS, LINES, LINE_LOOP and LINE_STRIP are skipped with a warning.');
+      if ((primitive.mode ?? 4) !== 4) throw new Error(unsupportedModeMessage(primitive.mode, meshIndex, primitiveIndex));
       const position = document.accessors?.[primitive.attributes?.POSITION];
       if (!position || position.type !== 'VEC3' || !Number.isSafeInteger(position.count) || position.count < 3) {
         throw new Error('Each mesh primitive requires a valid POSITION accessor.');
@@ -528,6 +528,13 @@ function sumMeshoptViewBytes(document) {
 }
 
 const LINE_MODE_NAMES = ['POINTS', 'LINES', 'LINE_LOOP', 'LINE_STRIP'];
+const OTHER_MODE_NAMES = { 5: 'TRIANGLE_STRIP', 6: 'TRIANGLE_FAN' };
+
+function unsupportedModeMessage(mode, meshIndex, primitiveIndex) {
+  const name = OTHER_MODE_NAMES[mode];
+  const found = name ? `${name} (mode ${mode})` : `mode ${JSON.stringify(mode)}`;
+  return `Only glTF TRIANGLES primitives are supported, found ${found} in meshes[${meshIndex}].primitives[${primitiveIndex}]. Fix: re-export the mesh as triangles (mode 4).`;
+}
 
 /** One warning per mesh that has point or line primitives, which Crucible does not draw. */
 function skippedPrimitiveWarnings(document) {
@@ -613,8 +620,13 @@ function validateHierarchy(nodes) {
 
 function dataUriBytes(uri) {
   const comma = uri.indexOf(',');
-  if (comma < 0 || !uri.slice(0, comma).endsWith(';base64')) throw new Error('Embedded glTF resources must use base64 data URIs.');
-  const binary = atob(uri.slice(comma + 1));
+  if (comma < 0 || !uri.slice(0, comma).toLowerCase().endsWith(';base64')) throw new Error('Embedded glTF resources must use base64 data URIs.');
+  let binary;
+  try {
+    binary = atob(uri.slice(comma + 1));
+  } catch {
+    throw new Error('Invalid base64 in a glTF data URI. Fix: encode it with standard base64 (A-Z a-z 0-9 + /, no - or _) and keep it complete.');
+  }
   return Uint8Array.from(binary, character => character.charCodeAt(0));
 }
 
@@ -707,6 +719,7 @@ async function prepareResources(document, data, dataBytes, options, limits, over
       resourceBytes.set(uri, dataUriBytes(uri));
       continue;
     }
+    if (options.allowExternalResources === false) throw new Error(`External glTF uri "${uri}" is not fetched here. Embed it (GLB or data URI).`);
     if (!options.baseUrl && !/^(https?:|blob:)/.test(uri)) throw new Error('External glTF resources require baseUrl. Use GLB for a self-contained local file.');
     const resolved = new URL(uri, options.baseUrl || undefined).href;
     if (!/^(https?:|blob:)/.test(resolved)) throw new Error('Only HTTP, HTTPS, blob and embedded data resources are supported.');
@@ -1250,7 +1263,7 @@ export async function parseGltf(data, options = {}) {
   }
   const { ignoredExtensions, overruns } = validated;
   await loadLayerShadersFor(document);
-  const warnings = [...fallbackWarnings, ...ignoredExtensions.map(extension => `${extension} is accepted but not rendered.`), ...skippedPrimitiveWarnings(document), ...unusablePrimitiveWarnings];
+  const warnings = [...fallbackWarnings, ...ignoredExtensions.map(extension => `${extension} is accepted but not rendered.`), ...skippedPrimitiveWarnings(document), ...unusablePrimitiveWarnings, ...clampedIorWarnings(document)];
   const dataBytes = typeof data === 'string' ? new TextEncoder().encode(data).byteLength : data.byteLength;
   const { resourceBytes, textureScaling } = await prepareResources(document, data, dataBytes, options, limits, overruns);
   if (textureScaling.scaledTextures.length) {
