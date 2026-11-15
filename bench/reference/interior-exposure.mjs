@@ -28,6 +28,10 @@ const backendIndex = argumentsGiven.indexOf('--backend');
 const backend = backendIndex >= 0 ? argumentsGiven[backendIndex + 1] : 'gpu';
 // --sealed fills the window with a wall, so no light can enter: the room has to come out black from both renderers.
 const sealed = argumentsGiven.includes('--sealed');
+// --no-lawn drops the large ground slab, which stretches the shadow map and shows whether the room's shadows depend on it.
+const withoutLawn = argumentsGiven.includes('--no-lawn');
+// --tight-shadow fits the sun's shadow map to the room instead of the default 130 m world view.
+const tightShadow = argumentsGiven.includes('--tight-shadow');
 const WIDTH = 960;
 const HEIGHT = 540;
 
@@ -55,7 +59,7 @@ function roomNodes() {
     box('front-sill', [0, WINDOW.bottom / 2, frontZ], [WINDOW.halfWidth * 2, WINDOW.bottom, wall]),
     box('front-head', [0, (WINDOW.top + height) / 2, frontZ], [WINDOW.halfWidth * 2, height - WINDOW.top, wall]),
     ...(sealed ? [box('window-pane', [0, (WINDOW.bottom + WINDOW.top) / 2, frontZ], [WINDOW.halfWidth * 2, WINDOW.top - WINDOW.bottom, wall])] : []),
-    box('lawn', [0, -wall / 2 - 0.05, front - 20], [80, wall, 40], 'grass'),
+    ...(withoutLawn ? [] : [box('lawn', [0, -wall / 2 - 0.05, front - 20], [80, wall, 40], 'grass')]),
   ];
 }
 
@@ -75,6 +79,7 @@ const recipe = {
     viewTransform: 'agx',
   },
   effects: { exposure },
+  ...(tightShadow ? { shadow: { target: [0, 1.5, 0.3], extent: 6, distance: 14, near: 1, far: 30 } } : {}),
 };
 
 const workDirectory = await mkdtemp(join(tmpdir(), 'crucible-interior-'));
