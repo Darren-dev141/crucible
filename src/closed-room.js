@@ -9,7 +9,7 @@ export const CLOSED_ROOM_SHARE = 0.9;
 export const CLOSED_ROOM_MAXIMUM_TRIANGLES = 150_000;
 const PARALLEL_EPSILON = 1e-9;
 
-function worldTriangles(parts, worldMatrices) {
+export function worldTriangles(parts, worldMatrices) {
   let triangleCount = 0;
   for (const part of parts) {
     triangleCount += part.geometry.indices.length / 3;
@@ -64,7 +64,7 @@ function insideAnyPart(point, triangles) {
  * within the bounds. A ray that starts inside a part (a mug, a lamp, a table) tests that part, not the room around it.
  * Null when every candidate is inside a part.
  */
-function freeOrigin(triangles) {
+export function freeOrigin(triangles) {
   for (const heightFraction of ORIGIN_FRACTIONS) {
     for (const offsetFraction of ORIGIN_FRACTIONS) {
       for (const depthFraction of ORIGIN_FRACTIONS) {
@@ -90,7 +90,7 @@ export function fibonacciDirection(index, count, out) {
 }
 
 // Moller-Trumbore, counting only a triangle whose front face looks at the ray (det > 0).
-function hitsFrontFace(corners, offset, origin, direction) {
+export function hitsFrontFace(corners, offset, origin, direction) {
   const edgeOneX = corners[offset + 3] - corners[offset];
   const edgeOneY = corners[offset + 4] - corners[offset + 1];
   const edgeOneZ = corners[offset + 5] - corners[offset + 2];

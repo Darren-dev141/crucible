@@ -8,7 +8,7 @@ Release `0.6.0` includes five MCP tools for asynchronous image and video renderi
 2. Launch `npx crucible-mcp --backend cpu --jobs C:/projects/my-scene/render-jobs`.
 3. Create a scene and inspect its current revision.
 4. Submit `scene_render_submit` with the session ID, current revision and render settings.
-5. Poll `scene_render_status` until the job reaches a terminal state.
+5. Poll `scene_render_status` until the job reaches a terminal state. The job tools take `jobId` alone; a `sessionId` is refused with that hint. A path traced job on the default cpu backend whose scene is estimated above twice 400000 triangles (the estimate can run 1.5 times high on non-indexed geometry) is refused at submit with the count, instead of failing after it started; a scene between the cap and that margin is checked exactly when the trace starts.
 6. Read `scene_render_result` after completion to obtain output paths, and SHA-256 hashes with `response_format: "detailed"`.
 7. Release unwanted outputs with `scene_render_release`.
 
