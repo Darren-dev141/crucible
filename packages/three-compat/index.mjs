@@ -715,16 +715,19 @@ export function createThreeCompat(core) {
       this.yaw = Math.atan2(offset[0], offset[2]);
       this.pitch = Math.asin(offset[1] / (this.distance || 1));
       domElement.style.touchAction = 'none';
-      domElement.addEventListener('pointerdown', event => domElement.setPointerCapture?.(event.pointerId));
-      domElement.addEventListener('pointermove', event => {
-        if (!this.enabled || !domElement.hasPointerCapture?.(event.pointerId)) return;
-        this.rotate(-event.movementX * 0.01, event.movementY * 0.01);
-      });
-      domElement.addEventListener('wheel', event => {
-        event.preventDefault();
-        this.distance = Math.min(1000, Math.max(0.01, this.distance * Math.exp(event.deltaY * 0.001)));
-        this.update();
-      }, { passive: false });
+      this.listeners = [
+        ['pointerdown', event => domElement.setPointerCapture?.(event.pointerId), undefined],
+        ['pointermove', event => {
+          if (!this.enabled || !domElement.hasPointerCapture?.(event.pointerId)) return;
+          this.rotate(-event.movementX * 0.01, event.movementY * 0.01);
+        }, undefined],
+        ['wheel', event => {
+          event.preventDefault();
+          this.distance = Math.min(1000, Math.max(0.01, this.distance * Math.exp(event.deltaY * 0.001)));
+          this.update();
+        }, { passive: false }],
+      ];
+      for (const [type, listener, options] of this.listeners) domElement.addEventListener(type, listener, options);
     }
 
     rotate(yawChange, pitchChange) {
@@ -745,7 +748,10 @@ export function createThreeCompat(core) {
       return true;
     }
 
-    dispose() {}
+    dispose() {
+      for (const [type, listener, options] of this.listeners) this.domElement.removeEventListener?.(type, listener, options);
+      this.listeners = [];
+    }
   }
 
   class GLTFLoader {

@@ -238,3 +238,16 @@ test('each three.js-style snippet draws a frame through the addon', { skip: !ren
     await server.close();
   }
 });
+
+test('OrbitControls.dispose removes every listener it added', () => {
+  const added = new Map();
+  const canvas = {
+    style: {},
+    addEventListener(type, listener) { added.set(type, listener); },
+    removeEventListener(type, listener) { if (added.get(type) === listener) added.delete(type); },
+  };
+  const controls = new THREE.OrbitControls(new THREE.PerspectiveCamera(), canvas);
+  assert.deepEqual([...added.keys()].sort(), ['pointerdown', 'pointermove', 'wheel']);
+  controls.dispose();
+  assert.equal(added.size, 0, 'listeners still attached after dispose');
+});
