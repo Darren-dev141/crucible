@@ -49,7 +49,7 @@ The first argument is any object with `render(frame)`, such as `CrucibleRenderer
 
 ## Runtime methods
 
-- `start()` initialises the systems once and schedules frames. `stop()` ends the loop and drops the partial step; systems stay initialised, so `start()` continues the same world.
+- `start()` initialises the systems once and schedules frames; a system whose `init` threw is initialised again by the next `start()`. `stop()` ends the loop and drops the partial step; systems stay initialised, so `start()` continues the same world.
 - `pause()` and `resume()` hold and release the loop. The time spent paused is never simulated. A hidden tab pauses the same way and resumes when it shows again.
 - `step(milliseconds)` runs one frame without a scheduler, for tests and for stepping while paused.
 - `addSystem(system, index)`, `replaceSystem(name, system)`, `removeSystem(name)`, `getSystem(name)` and `systems` (the names, in order). A system added to a started runtime is initialised at once; a replaced or removed one is disposed.

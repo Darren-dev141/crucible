@@ -575,7 +575,8 @@ test('skin preflight guards joints, influence shapes, raw zero weights, indices 
     [document => { delete document.meshes[0].primitives[0].attributes.WEIGHTS_0; }, /JOINTS_0/],
     [(document, append, chunks) => { chunks[document.meshes[0].primitives[0].attributes.WEIGHTS_0].fill(0); }, /positive total/],
     [(document, append, chunks) => { chunks[document.meshes[0].primitives[0].attributes.JOINTS_0][0] = 9; }, /index/],
-    [(document, append, chunks) => { chunks[document.meshes[0].primitives[0].attributes.WEIGHTS_0][0] = -0.2; }, /weights/],
+    [(document, append, chunks) => { chunks[document.meshes[0].primitives[0].attributes.WEIGHTS_0][0] = NaN; }, /finite values within zero and one/],
+    [(document, append, chunks) => { chunks[document.meshes[0].primitives[0].attributes.WEIGHTS_0][0] = Infinity; }, /finite values within zero and one/],
   ];
   for (const [edit, expected] of cases) await assert.rejects(parseGltf(skinnedStripAsset(edit)), expected);
   await assert.rejects(parseGltf(skinnedStripAsset(), { maxJoints: 1 }), /maxJoints/);
@@ -583,6 +584,47 @@ test('skin preflight guards joints, influence shapes, raw zero weights, indices 
     document.nodes.push({ name: 'Second strip', mesh: 0, skin: 0 });
     document.nodes[0].children.push(4);
   }), { maxJoints: 2 }), /skin pose joints/);
+});
+
+test('negative skin weights are clamped to zero and renormalised, with one warning that counts them', async () => {
+  const asset = await parseGltf(skinnedStripAsset((document, append, chunks) => {
+    const weights = chunks[document.meshes[0].primitives[0].attributes.WEIGHTS_0];
+    weights.set([1, -1, 0, 0], 0);
+    weights.set([0.75, 0.25, -0.5, 0], 4);
+  }));
+  const weights = asset.parts[0].geometry.skinWeights;
+  assert.deepEqual(Array.from(weights.subarray(0, 4)), [1, 0, 0, 0]);
+  assert.deepEqual(Array.from(weights.subarray(4, 8)), [0.75, 0.25, 0, 0]);
+  const repairs = asset.warnings.filter(warning => /negative skin weight/.test(warning));
+  assert.equal(repairs.length, 1);
+  assert.match(repairs[0], /2 negative skin weight[(]s[)] were clamped to 0/);
+  assert.doesNotMatch(repairs[0], /joint 0/);
+  asset.dispose();
+});
+
+test('a vertex whose weights are all negative is bound fully to joint 0 and counted in the warning', async () => {
+  const asset = await parseGltf(skinnedStripAsset((document, append, chunks) => {
+    const attributes = document.meshes[0].primitives[0].attributes;
+    chunks[attributes.JOINTS_0].set([1, 1, 0, 0], 0);
+    chunks[attributes.WEIGHTS_0].set([-0.5, -0.5, 0, 0], 0);
+  }));
+  const { skinIndices, skinWeights } = asset.parts[0].geometry;
+  assert.deepEqual(Array.from(skinIndices.subarray(0, 4)), [0, 1, 0, 0]);
+  assert.deepEqual(Array.from(skinWeights.subarray(0, 4)), [1, 0, 0, 0]);
+  assert.match(asset.warnings.join(' '), /2 negative skin weight[(]s[)] were clamped to 0.*1 vertex[(]es[)] bound to joint 0/);
+  asset.dispose();
+});
+
+test('a lone raw skin weight of 2.0 is normalised and accepted, while NaN is still refused', async () => {
+  const asset = await parseGltf(skinnedStripAsset((document, append, chunks) => {
+    chunks[document.meshes[0].primitives[0].attributes.WEIGHTS_0].set([2, 0, 0, 0], 0);
+  }));
+  assert.deepEqual(Array.from(asset.parts[0].geometry.skinWeights.subarray(0, 4)), [1, 0, 0, 0]);
+  assert.equal(asset.warnings.some(warning => /skin weight/.test(warning)), false);
+  asset.dispose();
+  await assert.rejects(parseGltf(skinnedStripAsset((document, append, chunks) => {
+    chunks[document.meshes[0].primitives[0].attributes.WEIGHTS_0].set([2, NaN, 0, 0], 0);
+  })), /finite values within zero and one/);
 });
 
 test('a skeletal animation that scales a joint to zero collapses it to a point and restores with the base pose', async () => {

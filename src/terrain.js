@@ -4,6 +4,7 @@
 
 import './world-material-shader.js';
 import { createSkyVisibilitySampler } from './terrain-sky.js';
+import { requireSeed } from './seeded-random.js';
 
 const DEFAULT_NOISE = Object.freeze({
   amplitude: 14,
@@ -103,6 +104,7 @@ function ridgedNoise(worldX, worldZ, noise, seed, scratch) {
 
 /** Height function (x, z) -> metres from noise options: domain warped hills blended into ridged mountains. */
 export function createNoiseHeight(options = {}, seed = 1) {
+  requireSeed(seed, 'terrain seed');
   const noise = { ...DEFAULT_NOISE, ...options };
   const scratch = new Float64Array(3);
   const warpScratch = new Float64Array(3);

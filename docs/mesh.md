@@ -394,7 +394,7 @@ boundary edges whose midpoint is in a box, which picks one hole among several.
 | `bisect_plane` | `point`, `normal`, `distance`, `clearInner`, `clearOuter`, `fill` | `inner`, `outer`, `cap` | Cuts at a plane. `clearInner` removes the side behind the normal, `clearOuter` the side in front. `fill` caps the cut; with both sides kept the halves separate into two closed shells. |
 | `bridge_edge_loops` | `edges`, `segments`, `twistOffset` | `bridge` | Joins exactly two boundary loops with the same edge count by a strip of quads, `segments` deep. |
 | `subdivide_edges` | `edges`, `cuts` | `split` | Splits each selected edge into `cuts` + 1 pieces. Quads with two opposite edges split become bands, with four split a grid, and any other face keeps one n-gon with the new points inserted. |
-| `grid_fill` | `edges` | `fill` | Fills each closed boundary loop of an even number of edges (4 or more) with a grid of quads. |
+| `grid_fill` | `edges` | `fill` | Fills each closed boundary loop of an even number of edges (4 or more) with a grid of quads, up to 65,536 grid vertices. |
 | `knife_project` | `path`, `direction` | `cut` | Cuts along a polyline of object-space points projected along `direction`, through front and back faces. |
 
 `dissolve_verts` rules: `{ "all": true }`, `{ "vertices": [indices] }`, `{ "valence": 2 }` (vertices with exactly that many
@@ -422,8 +422,8 @@ lower index, so the same input always gives the same bytes. Faces they keep carr
 | `symmetrize` | `axis` (default x), `keep` (`positive` or `negative`), `distance` | `mirrored` | Cuts faces that cross the plane through the origin, drops the other half and mirrors the kept half. Left and right (top and bottom, front and back) tags swap on the mirrored half. |
 | `scale_elements` | `select`, `scale` (above 0) | none | Scales each group of selected faces that share a vertex about the group's average vertex position. Unselected neighbours follow along shared vertices. |
 | `extrude_edges` | `edges`, `offset` | `side` | Copies the vertices of the selected edges, moves the copies by `offset` and joins each edge to its copy with a quad. Select a surface boundary with `{ "open": true }`. |
-| `split_edges` | `edges` | none | Opens the surface along the selected edges: the faces on each side stop sharing the edge's vertices, which are copied once per group of faces that still meet around them. Faces keep their tags and attributes; the result has boundary edges. |
-| `delete_loose` | none | none | Removes every vertex that no face uses (the lint problem `loose-vertex`). Fails when there is none. |
+| `split_edges` | `edges` | none | Opens the surface along the selected edges: the faces on each side stop sharing the edge's vertices, which are copied once per group of faces that still meet around them. Faces keep their tags and attributes, and a copied vertex keeps the point attributes (vertex groups too) of the vertex it was copied from; the result has boundary edges. |
+| `delete_loose` | none | none | Removes every vertex that no face uses (the lint problem `loose-vertex`). Point attributes of the kept vertices stay. Fails when there is none. |
 | `flatten` | `verts`, `normal`, `factor` (0 to 1, default 1) | none | Moves the selected vertices toward the plane through their average point. `normal` is the plane direction; without it the area-weighted normal of the faces whose vertices are all selected is used. |
 
 | `unsubdivide` | none | none | Reverses one Catmull-Clark level: the original vertices and the coarse faces they make (n-gons too) are kept, every face point and edge point is dropped. The survivors stay where they are, so the smoothing is not undone. Fails, naming the quad that breaks the pattern, when the mesh has a non-quad face or is not one level of subdivision. |

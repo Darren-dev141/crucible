@@ -222,6 +222,7 @@ function measureCrowdBounds(rig, palette) {
 
 /** The two frames and the blend between them for a clip time: [firstTexel, secondTexel, blend], as the shader reads them. */
 export function crowdFrameBlend(palette, seconds, output = [0, 0, 0]) {
+  if (!Number.isFinite(seconds)) seconds = 0; // a frame never throws: a bad clip time shows the first frame
   const lastFrame = palette.frameCount - 1;
   let position;
   if (palette.loop) {
@@ -378,6 +379,7 @@ export function createCrowdParts({ rig, palette, instances, lods = true, cells, 
     setTimes(times, eye = null) {
       blends.forEach((blend, index) => {
         let seconds = typeof times === 'function' ? times(index) : times[index];
+        if (!Number.isFinite(seconds)) throw new RangeError(`setTimes instance ${index} needs finite seconds, got ${seconds}. Pass the clip time in seconds.`);
         if (farPose && eye) {
           const matrix = instances[index].matrix;
           if (Math.hypot(matrix[12] - eye[0], matrix[13] - eye[1], matrix[14] - eye[2]) > farPose.distance) {

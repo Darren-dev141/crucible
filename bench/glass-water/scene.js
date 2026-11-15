@@ -10,12 +10,16 @@ export const WATER_VARIANTS = {
 export const GLASS_VARIANTS = {
   transmission: { color: [0.75, 0.95, 0.85], roughness: 0.02, transmission: 1, ior: 1.5, thickness: 0.02 },
   blend: { color: [0.55, 0.75, 0.65], roughness: 0.02, alphaMode: 'blend', opacity: 0.3 },
+  blendOpaque: { color: [0.55, 0.75, 0.65], roughness: 0.02, alphaMode: 'blend', opacity: 1 },
 };
 
 function placed(name, translation, scale, material) {
   const matrix = new Float32Array([scale[0], 0, 0, 0, 0, scale[1], 0, 0, 0, 0, scale[2], 0, translation[0], translation[1], translation[2], 1]);
   return { name, geometry: box(0, 1), matrix, material: { tag: 'surface', metallic: 0, emission: 0, ...material } };
 }
+
+// Where the glass wall stands, for the harness to find it on screen and to put a probe in front of it.
+export const GLASS_WALL = { x: 5, bottom: 0, top: 3, near: -3, far: 5, probeX: 4.6 };
 
 export function pavilionParts({ water = 'plain', glass = 'transmission' } = {}) {
   return [

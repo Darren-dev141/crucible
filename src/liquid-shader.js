@@ -1,6 +1,7 @@
 import { environmentLookupGlsl } from './environment-shading.js';
 import { registerShaderFeatureCode } from './shader-registry.js';
 import { drawLiquidPass } from './liquid-renderer.js';
+import { probeLookupGlsl, probeUniformsGlsl } from './probe-glsl.js';
 import { waterMirrorFunctionsGlsl, waterMirrorUniformsGlsl } from './water-mirror-glsl.js';
 
 // Importing this module registers the liquid and foam shader. A renderer with a transmissive, liquid or foam part
@@ -48,10 +49,13 @@ vec3 toneMap(vec3 color) {
 
 ${environmentLookupGlsl}
 uniform float environmentEnabled;
+// A part with a reflection probe reflects that room (reflection-probes.js binds it for a batch that has one).
+${probeUniformsGlsl}${probeLookupGlsl}
 // Water that transmits light shows the same mirror picture as water that does not (water-reflection.js binds it for a flagged batch).
 ${waterMirrorUniformsGlsl}${waterMirrorFunctionsGlsl}
 
 vec3 environmentColor(vec3 direction, float roughness) {
+  if (probeEnabled > 0.5) return environmentRadiance(probeSampleDirection(direction, worldPosition), roughness * environmentLevelMax);
   if (environmentEnabled > 0.5) return environmentRadiance(direction, roughness * environmentLevelMax);
   if (worldMode > 0.5) {
     vec3 zenith = vec3(0.20, 0.38, 0.52) * max(daylight, 0.08);

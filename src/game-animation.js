@@ -48,8 +48,11 @@ export function characterDescendants(nodes, characterId) {
   }
   const found = [];
   const queue = [characterId];
+  const visited = new Set([characterId]);
   while (queue.length > 0) {
     for (const child of childrenByParent.get(queue.shift()) ?? []) {
+      if (visited.has(child.id)) continue;
+      visited.add(child.id);
       found.push(child);
       queue.push(child.id);
     }

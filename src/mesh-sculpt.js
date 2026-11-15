@@ -39,6 +39,7 @@ export function checkSculptBudget(mesh, strokeCount) {
 
 /** Apply strokes to the vertices of the faces `select` picks (every face without a rule). */
 export function sculptMesh(mesh, { select, strokes }) {
+  if (!Array.isArray(strokes)) throw new TypeError('A sculpt edit needs strokes: an array such as [{ "type": "inflate", "center": [0, 0, 0], "radius": 1, "strength": 0.1 }].');
   const prepared = prepareStrokes(strokes);
   const needsNeighbours = prepared.some(stroke => stroke.type === 'smooth');
   const groups = strokeGroups(mesh, needsNeighbours);

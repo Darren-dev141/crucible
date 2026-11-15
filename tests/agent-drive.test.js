@@ -167,7 +167,17 @@ test('a bad drive names the problem', async () => {
   });
 });
 
-const sceneRecipe = (drive, translation = [10, 0, 0]) => ({
+test('a tail light with a non-numeric off or on emission is refused instead of driving NaN', () => {
+  for (const field of ['off', 'on']) {
+    for (const bad of ['bright', NaN, null]) {
+      const drive = { path: CURVE, lights: { tailLights: [{ material: 'tail', signal: 'brake', [field]: bad }] } };
+      assert.throws(() => normalizeDrive(drive), new RegExp(`lights\\.tailLights\\[0\\]\\.${field}: got`), `${field} ${String(bad)}`);
+    }
+  }
+  assert.doesNotThrow(() => normalizeDrive({ path: CURVE, lights: { tailLights: [{ material: 'tail', signal: 'brake', off: 0.2, on: 6 }] } }));
+});
+
+const sceneRecipe = (drive,translation = [10, 0, 0]) => ({
   format: 'crucible.scene', schemaVersion: 1,
   geometries: [{ id: 'ground', type: 'box' }],
   materials: [{ id: 'grass', color: [0.2, 0.5, 0.2] }],

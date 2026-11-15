@@ -1,3 +1,4 @@
+import { mat4, vec3 } from 'gl-matrix';
 import { invalidField } from './field-error.js';
 import { createCrowd } from './retarget.js';
 import { bakeCrowdPalette, createCrowdParts, createCrowdRig } from './crowd-skinning.js';
@@ -8,6 +9,27 @@ import { jsonMaterial, materialOutput, registerCrowdModule } from './agent-scene
 // placed-asset channel of agent-scene.js: generated geometries (type "asset"), materials (assetSource) and part nodes
 // (assetPart), so exports and edits already skip them. The pose of every instance is a pure function of the scene
 // time, the seed and the recipe camera, so a seek equals playing.
+
+/** The static world matrix of a recipe node: its own transform multiplied up the parent chain. */
+function staticWorldMatrix(recipeNodes, node) {
+  const world = mat4.create();
+  const local = mat4.create();
+  const visited = new Set();
+  for (let current = node; current && !visited.has(current.id); current = recipeNodes.find(candidate => candidate.id === current.parent)) {
+    visited.add(current.id);
+    mat4.fromRotationTranslationScale(local, current.rotation ?? [0, 0, 0, 1], current.translation ?? [0, 0, 0], current.scale ?? [1, 1, 1]);
+    mat4.multiply(world, local, world);
+  }
+  return world;
+}
+
+/** The camera eye in the space of the crowd instance matrices, so far distances compare like with like when the placement has a moved parent. */
+function eyeInCrowdSpace(recipe, node) {
+  const eye = recipe.camera?.eye;
+  if (!eye) return null;
+  const inverseWorld = mat4.invert(mat4.create(), staticWorldMatrix(recipe.nodes, node));
+  return inverseWorld ? Array.from(vec3.transformMat4(vec3.create(), eye, inverseWorld)) : eye;
+}
 
 export const CROWD_LIMITS = Object.freeze({ maxInstances: 1000, maxCachedCrowds: 4 });
 const CROWD_FIELDS = ['clip', 'count', 'seed', 'layout', 'spacing', 'columns', 'size', 'rateJitter', 'randomYaw', 'speed', 'frameRate', 'morphs', 'lods', 'farDistance', 'farRate'];
@@ -124,7 +146,7 @@ export function expandCrowd(recipe, node, asset, copy, cache, runtime, limits) {
     });
     runtime.partExtras.set(id, { group: node.id, crowd: part.crowd, assembly: part.assembly, ...(part.lods ? { lods: part.lods } : {}), ...(part.morph ? { morph: part.morph } : {}) });
   });
-  const eye = recipe.camera?.eye ?? null;
+  const eye = eyeInCrowdSpace(recipe, node);
   const record = {
     node: node.id, assetId, copy, asset, partNodeIds, clip: null, drive: null, drivePose: null,
     crowd: {
