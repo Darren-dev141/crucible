@@ -19,7 +19,7 @@ const testFiles = readdirSync(testsDirectory)
 function runTestFile(name) {
   return new Promise(resolve => {
     const startedAt = Date.now();
-    const child = spawn(process.execPath, ['--test', '--import', './scripts/test-hang-guard.mjs', '--test-timeout=150000', join('tests', name)], {
+    const child = spawn(process.execPath, ['--test', '--import', './scripts/test-hang-guard.mjs', '--test-timeout=100000', join('tests', name)], {
       cwd: repositoryRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

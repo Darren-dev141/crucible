@@ -61,7 +61,7 @@ jobs:
           start=$(date +%s)
           # The summary step decides pass or fail: lavapipe loses the device on every trace, and those tests are counted apart.
           set +e
-          node --test --test-reporter=tap --test-reporter-destination=addon-tests.tap $(git grep -l "support/cook.js" -- tests)
+          node --test --import ./scripts/test-hang-guard.mjs --test-timeout=100000 --test-reporter=tap --test-reporter-destination=addon-tests.tap $(git grep -l "support/cook.js" -- tests)
           status=$?
           echo "test_seconds=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
           echo "node --test exit code $status"

@@ -48,3 +48,10 @@ test('the workflow matrix and the shard count in its test command agree', () => 
   const count = Number(workflow.match(/shard-test-files\.mjs \$\{\{ matrix\.shard \}\} (\d+)/)[1]);
   assert.deepEqual(matrix, Array.from({ length: count }, (_, index) => index + 1));
 });
+
+test('the coverage gate expects as many shards as the workflow matrix has', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/test.yml', import.meta.url), 'utf8');
+  const matrix = workflow.match(/shard: \[([\d, ]+)\]/)[1].split(',');
+  const expected = Number(workflow.match(/coverage-gate\.mjs [^\n]*--expect-shards (\d+)/)[1]);
+  assert.equal(expected, matrix.length);
+});

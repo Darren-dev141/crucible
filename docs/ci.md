@@ -20,12 +20,18 @@ All jobs start at once.
 
 ## A test that hangs
 
-`npm test`, `npm run test:coverage` and `npm run test:isolated` start every test file with `--test-timeout=150000`, so a test without its own `timeout` option fails after 2.5 minutes with `test timed out after ...` and its name, instead of waiting for the 15 minute job limit. `node --test` alone does not end the file: the process stays alive while a Chrome or a dev server it started keeps a handle open. So each file also loads `scripts/test-hang-guard.mjs`, which:
+`npm test`, `npm run test:coverage`, `npm run test:isolated` and the Cook jobs (`unit-without-cook`, `cook-addon.yml`) start every test file with `--test-timeout=100000`, so a test without its own `timeout` option fails after 100 seconds with `test timed out after ...` and its name, instead of waiting for the 15 minute job limit. `node --test` alone does not end the file: the process stays alive while a Chrome or a dev server it started keeps a handle open. So each file also loads `scripts/test-hang-guard.mjs`, which:
 
-- stops the file after `CRUCIBLE_TEST_FILE_LIMIT_MS` (default 660000, above the longest `timeout` a test sets), kills every child process the file started with its tree, prints `TEST FILE HUNG: <file>` and exits 1;
+- stops the file `CRUCIBLE_TEST_GRACE_AFTER_TIMEOUT_MS` (default 10000) after node:test reports a test timeout, so a hang ends about 110 seconds after it starts (a test that sets its own longer `timeout` ends that much after its own limit, up to 610 seconds for the tests that set 600000);
+- also stops the file after `CRUCIBLE_TEST_FILE_LIMIT_MS` (default 660000) for a hang that never trips a test timeout;
+- a stop kills every child process the file started together with its descendants (`taskkill /T` on Windows, a walk over `ps` on Linux and macOS), prints `TEST FILE HUNG: <file>` and exits 1;
 - kills a child a file left running when it exits normally (a child started with `detached: true` is left alone there).
 
-`tests/test-hang-guard.test.js` proves it on `tests/fixtures/hanging-test-file.js`, a file that hangs on purpose with a child process: it fails in about 7 seconds with shortened limits, names the test and leaves no child running. A test that needs longer than 2.5 minutes sets `{ timeout: <ms> }` on itself, and one above 660 seconds also needs a higher file limit.
+A stop ends the whole file, so tests after the hung one in that file do not run; the run is already failed.
+
+Limit: the guard lives on the file's own event loop. A test that blocks it, such as a `spawnSync`, `execFileSync` or `execSync` without a `timeout` option, is not stopped until the call returns (measured: a 15 second block passed with limits of 2 and 4 seconds). Give every synchronous child call in a test a `timeout`; nothing enforces this yet.
+
+`tests/test-hang-guard.test.js` proves it on `tests/fixtures/hanging-test-file.js`, a file that hangs on purpose with a child and a grandchild: with a 2 second test timeout and a 2 second grace it stops in about 5 seconds, names the test and leaves neither process running; a second case covers the file limit and a third covers the exit cleanup with `tests/fixtures/leftover-child-test-file.js`. A test that needs longer than 100 seconds sets `{ timeout: <ms> }` on itself, and one above 650 seconds also needs a higher file limit.
 
 ## Coverage
 

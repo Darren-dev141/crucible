@@ -156,7 +156,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: npm run build:lib
-      - run: node --test $(git grep -l "support/cook.js" -- tests)
+      - run: node --test --import ./scripts/test-hang-guard.mjs --test-timeout=100000 $(git grep -l "support/cook.js" -- tests)
 
   test:
     if: always()
