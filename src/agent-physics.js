@@ -430,25 +430,25 @@ function scaledBounds(positions, scale) {
   return { center, halfExtents };
 }
 
-function convexPoints(positions, scale, nodeId) {
+function convexPoints(positions, scale, nodeIndex) {
   if (positions.length / 3 > MAX_SOURCE_VERTICES) {
-    throw invalidField(`nodes[${nodeId}].geometry`, `${positions.length / 3} vertices`, `at most ${MAX_SOURCE_VERTICES} vertices for a convex collider; use shape box or a coarser geometry, such as shape "box"`);
+    throw invalidField(`nodes[${nodeIndex}].geometry`, `${positions.length / 3} vertices`, `at most ${MAX_SOURCE_VERTICES} vertices for a convex collider; use shape box or a coarser geometry, such as shape "box"`);
   }
   const distinct = new Map();
   for (let index = 0; index < positions.length; index += 3) {
     const point = [positions[index] * scale[0], positions[index + 1] * scale[1], positions[index + 2] * scale[2]];
     distinct.set(point.map(component => component.toFixed(5)).join(','), point);
     if (distinct.size > MAX_HULL_POINTS) {
-      throw invalidField(`nodes[${nodeId}].geometry`, `more than ${MAX_HULL_POINTS} distinct vertices`, `at most ${MAX_HULL_POINTS} distinct vertices for a convex collider; use shape box or a coarser geometry, such as shape "box"`);
+      throw invalidField(`nodes[${nodeIndex}].geometry`, `more than ${MAX_HULL_POINTS} distinct vertices`, `at most ${MAX_HULL_POINTS} distinct vertices for a convex collider; use shape box or a coarser geometry, such as shape "box"`);
     }
   }
   return [...distinct.values()].flat();
 }
 
-function trimeshArrays(geometry, scale, nodeId) {
+function trimeshArrays(geometry, scale, nodeIndex) {
   const triangleCount = geometry.indices.length / 3;
   if (triangleCount > MAX_TRIMESH_TRIANGLES) {
-    throw invalidField(`nodes[${nodeId}].geometry`, `${triangleCount} triangles`, `at most ${MAX_TRIMESH_TRIANGLES} triangles for a trimesh collider; use a coarser geometry or shape box, such as shape "box"`);
+    throw invalidField(`nodes[${nodeIndex}].geometry`, `${triangleCount} triangles`, `at most ${MAX_TRIMESH_TRIANGLES} triangles for a trimesh collider; use a coarser geometry or shape box, such as shape "box"`);
   }
   const vertices = [];
   for (let index = 0; index < geometry.positions.length; index += 3) {
@@ -457,7 +457,7 @@ function trimeshArrays(geometry, scale, nodeId) {
   return { vertices, indices: Array.from(geometry.indices) };
 }
 
-function colliderFromGeometry(body, node, geometry) {
+function colliderFromGeometry(body, node, nodeIndex, geometry) {
   const { center, halfExtents } = scaledBounds(geometry.positions, node.scale);
   if (body.shape === 'box') {
     return { shape: 'cuboid', halfExtents, translation: center };
@@ -474,9 +474,9 @@ function colliderFromGeometry(body, node, geometry) {
     return { shape: body.shape, radius, halfHeight: halfExtents[1], translation: center };
   }
   if (body.shape === 'convex') {
-    return { shape: 'convexHull', points: convexPoints(geometry.positions, node.scale, node.id) };
+    return { shape: 'convexHull', points: convexPoints(geometry.positions, node.scale, nodeIndex) };
   }
-  return { shape: 'trimesh', ...trimeshArrays(geometry, node.scale, node.id) };
+  return { shape: 'trimesh', ...trimeshArrays(geometry, node.scale, nodeIndex) };
 }
 
 function layerBits(layers) {
@@ -524,7 +524,7 @@ function physicsDefinition(physics, recipe, geometries, ragdoll) {
       const collider = {
         name: node.id,
         ...commonCollider,
-        ...colliderFromGeometry(body, node, geometries.get(node.geometry)),
+        ...colliderFromGeometry(body, node, recipe.nodes.indexOf(node), geometries.get(node.geometry)),
       };
       if (collider.shape !== 'trimesh') {
         if (body.mass !== undefined) collider.mass = body.mass;
