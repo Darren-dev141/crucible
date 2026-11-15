@@ -241,3 +241,16 @@ cookTest('only the TEXCOORD_1 map of a flattened scene selects the second UV set
 cookTest('only the TEXCOORD_1 map of an instanced scene selects the second UV set in the native input', () => {
   assert.equal(mapsOnSecondUvSet(buildTraceScene(sharedGeometryParts(true), undefined, { instancing: true })), 1);
 });
+
+cookTest('a baked part in an instanced scene keeps its second UV set and the descriptor bit in the native input', () => {
+  const sharedPair = sharedGeometryParts(true);
+  const bakedGeometry = floorQuad();
+  bakedGeometry.triangleMaterial = new Uint32Array([0, 0]);
+  const bakedPart = { ...mixedPart(1), name: 'baked', geometry: bakedGeometry };
+  const scene = buildTraceScene([...sharedPair, bakedPart], undefined, { instancing: true });
+  const bakedInstance = scene.instances[2];
+  assert.notEqual(bakedInstance.geometry, bakedGeometry, 'the part was baked into world space');
+  assert.equal(bakedInstance.geometry.uv1s[0], 0.75);
+  assert.equal(secondSetCornerCount(scene), 12, 'the shared quad is packed once and the baked quad once, six corner floats each');
+  assert.equal(mapsOnSecondUvSet(scene), 1, 'one second-set descriptor for the base colour map the three parts share');
+});
