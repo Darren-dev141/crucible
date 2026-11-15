@@ -393,6 +393,10 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
     get physics() {
       return physics?.system ?? null;
     },
+    /** The error of a restart that could not rebuild the physics world, or null. */
+    get physicsError() {
+      return physics?.failure ?? null;
+    },
     animation: playerAnimation?.graph ?? null,
     npcs,
     restart,
