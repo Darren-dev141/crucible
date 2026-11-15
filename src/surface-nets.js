@@ -161,14 +161,14 @@ function splitBySheetPoints(quads, sheetPoints, positions) {
  * saddle); when a four-quad edge is left, by their shared outside point (a concave one). When neither pairing separates
  * the sheets, it throws. Returns new quads and positions; the input is left as it was.
  */
-export function splitSaddleVertices(quads, insidePoints, positions, outsidePoints = null) {
+export function splitSaddleVertices(quads, insidePoints, positions, outsidePoints = null, fixHint = 'Use a smaller or a different voxelSize.') {
   if (!hasFourQuadEdge(quads)) return { quads, positions };
   const attempts = outsidePoints ? [insidePoints, outsidePoints] : [insidePoints];
   for (const sheetPoints of attempts) {
     const split = splitBySheetPoints(quads, sheetPoints, positions);
     if (!hasFourQuadEdge(split.quads)) return split;
   }
-  throw new RangeError('remesh met a saddle it could not separate: the surface is thinner than the voxel size where two parts touch at a corner. Use a smaller or a different voxelSize.');
+  throw new RangeError(`the mesh met a saddle it could not separate: the surface is thinner than one cell where two parts touch at a corner. ${fixHint}`);
 }
 
 function rebuildWithCopies(quads, positions, parents) {
