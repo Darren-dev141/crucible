@@ -40,6 +40,14 @@ async function bandOf(image, width, slice, flipY) {
   });
 }
 
+/** Refuses a size or byte run that would allocate nothing or read past the end of the data, before any GL call. */
+function validateUploadImage(image, width, height) {
+  for (const [name, value] of [['width', width], ['height', height]]) {
+    if (!(value > 0)) throw new RangeError(`Texture image ${name} must be positive, got ${value}.`);
+  }
+  if (image.data?.length < width * height * 4) throw new RangeError(`Texture image.data has ${image.data.length} bytes, expected ${width * height * 4}.`);
+}
+
 /** WebGL ignores UNPACK_FLIP_Y_WEBGL for an ImageBitmap, whose orientation was fixed when it was made. */
 const ignoresFlip = image => typeof ImageBitmap === 'function' && image instanceof ImageBitmap;
 
@@ -52,6 +60,7 @@ const ignoresFlip = image => typeof ImageBitmap === 'function' && image instance
 export async function uploadTextureInSlices(context, texture, internalFormat, image, { flipY: requestedFlipY = false, maximumBytes = TEXTURE_SLICE_BYTES, checkpoint = async () => {} } = {}) {
   const width = image.naturalWidth ?? image.width;
   const height = image.naturalHeight ?? image.height;
+  validateUploadImage(image, width, height);
   const flipY = requestedFlipY && !ignoresFlip(image);
   const target = context.TEXTURE_2D;
   const previousAllocationBinding = context.getParameter(context.TEXTURE_BINDING_2D);

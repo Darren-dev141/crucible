@@ -171,3 +171,30 @@ test('preloadTextures uploads a large texture in bands and createTexture then re
     assert.equal(result.error, 0);
   });
 });
+
+function callNameRecorder() {
+  const calls = [];
+  const context = new Proxy({}, {
+    get: (target, name) => {
+      if (name === 'getParameter') return () => null;
+      if (name === 'TEXTURE_2D') return 3553;
+      return () => { calls.push(name); };
+    },
+  });
+  return { context, calls };
+}
+
+test('an upload whose data is shorter than width x height x 4 is refused before any GL call', async () => {
+  const { context, calls } = callNameRecorder();
+  const image = { width: 4, height: 4, data: new Uint8Array(10) };
+  await assert.rejects(() => uploadTextureInSlices(context, {}, 0, image), /image\.data has 10 bytes, expected 64/);
+  assert.deepEqual(calls, []);
+});
+
+test('an upload with a zero width or height names the field and touches no GL state', async () => {
+  for (const [width, height, field] of [[0, 4, 'width'], [4, 0, 'height']]) {
+    const { context, calls } = callNameRecorder();
+    await assert.rejects(() => uploadTextureInSlices(context, {}, 0, { width, height, data: new Uint8Array(0) }), new RegExp(`image ${field} must be positive`));
+    assert.deepEqual(calls, []);
+  }
+});
