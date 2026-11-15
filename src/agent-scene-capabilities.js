@@ -307,8 +307,8 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   physics: Object.freeze({
     bodyTypes: Object.freeze(['dynamic', 'fixed', 'kinematic']),
     shapes: Object.freeze(['box', 'ball', 'capsule', 'convex', 'trimesh']),
-    jointTypes: Object.freeze(['spherical', 'revolute', 'prismatic', 'fixed']),
-    jointFields: 'type, bodyA, bodyB, anchorA, anchorB, axis, limits, name (what jointMotor events refer to), breakImpulse (fixed joints only)',
+    jointTypes: Object.freeze(['spherical', 'revolute', 'prismatic', 'fixed', 'spring']),
+    jointFields: 'type, bodyA, bodyB, anchorA, anchorB, axis, limits, name (what jointMotor events refer to), contactsEnabled, motor {mode position|velocity, target, stiffness (position only), damping, maxForce}, breakImpulse (fixed only), restLength and stiffness and damping (spring only)',
     sensors: true, collisionLayers: 16,
     breakableJoints: 'fixed joint breakImpulse (N s): breaks when a body takes a contact impulse (force x 1/60 s) over it in one step; scene_inspect lists jointBreaks. scene_apply fracture-node { node, cells 2-64, strength N s, seed 1, impact [x,y,z] in geometry space, impactRadius, density 1, friction }: replaces a convex root node by cells nodes NAME-frag-i (fragment geometries) with convex bodies and one breakable fixed joint NAME-glue-a-b per neighbour pair; send it after the set-physics that holds the floor, ball and duration (set-physics replaces the section). docs/physics.md.',
     ragdoll: 'physics.ragdoll {armature}: limp capsule per bone; needs a floor',

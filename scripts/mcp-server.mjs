@@ -510,6 +510,11 @@ const geometry = z.discriminatedUnion('type', [
 ]);
 // No description: this field repeats in every motion track schema. A wrong name fails with every valid form, and docs/agent-motion.md lists them.
 const easingField = z.string().max(80).optional();
+// Fields every motion track takes; the backend (src/animation-modifiers.js) checks the extrapolation rule and each modifier.
+const trackEffectFields = {
+  extrapolation: z.enum(['constant', 'linear']).optional().describe('Past the first and last keyframe: constant holds, linear continues the end slope (not for rotation). scene_capabilities motionModifiers.'),
+  modifiers: z.array(z.record(z.string(), z.unknown())).max(8).optional().describe('Up to 8 [{type: cycles|stepped|noise|generator|limits|envelope, ...}]; scene_capabilities motionModifiers.'),
+};
 function motionTrack(kind, property, value, tangent) {
   return z.strictObject({
     kind: z.literal(kind),
@@ -521,6 +526,7 @@ function motionTrack(kind, property, value, tangent) {
       inTangent: tangent.optional(), outTangent: tangent.optional(),
       easing: easingField,
     })).min(1).max(64),
+    ...trackEffectFields,
   });
 }
 // Lights, sun, sky and effects share one track shape: the backend names the valid light IDs and properties of each kind when one is wrong.
@@ -530,6 +536,7 @@ const lookTrack = z.strictObject({
   property: z.string().max(24),
   interpolation: z.enum(['LINEAR', 'STEP', 'SMOOTH']).optional(),
   keyframes: z.array(z.strictObject({ time: z.number().min(0).max(30), value: z.union([finite, vector3]), easing: easingField })).min(1).max(64),
+  ...trackEffectFields,
 });
 const ikKeyframes = (value, description) => z.strictObject({
   interpolation: z.enum(['LINEAR', 'STEP', 'SMOOTH']).optional(),
@@ -608,8 +615,9 @@ const motionTrackFields = ['kind', 'id', 'property', 'interpolation', 'keyframes
 function motionTrackUnionMessage(issue) {
   const track = issue.input;
   if (!track || typeof track !== 'object' || Array.isArray(track)) return 'A motion track is an object {kind, id, property, keyframes: [{time, value}]}.';
-  const unknownField = Object.keys(track).find(field => !motionTrackFields.includes(field));
-  if (unknownField !== undefined) return `Unknown or unsupported motion track field: ${unknownField}. Allowed fields: ${motionTrackFields.join(', ')}.`;
+  const allowedFields = track.kind === 'camera' ? motionTrackFields.filter(field => field !== 'id') : motionTrackFields;
+  const unknownField = Object.keys(track).find(field => !allowedFields.includes(field));
+  if (unknownField !== undefined) return `Unknown or unsupported motion track field: ${unknownField}. Allowed fields: ${allowedFields.join(', ')}.`;
   const kindList = motionTrackKinds.join(', ');
   if (track.kind === undefined) return `A motion track needs kind (${kindList}), id, property and keyframes.`;
   if (!motionTrackKinds.includes(track.kind)) return `Unknown motion track kind: ${JSON.stringify(track.kind)}. Kinds: ${kindList}.`;
@@ -657,7 +665,7 @@ const physicsBody = z.strictObject({
   float: z.record(z.string(), z.unknown()).optional().describe('Floats on physics.ocean (dynamic bodies only): drag 2 and angularDrag 2 (1/s, 0-100) damp the body while it is under water; points is 1-16 [x,y,z] in body space (default a 2 x 2 grid at mid height). Each point pushes up by waterDensity x gravity x (volume / points) x its submerged fraction, so density 500 settles at half depth; spread points over a hull so it rolls upright. Needs a volume: not trimesh. boat: {thrust 4 and rudder 1 (m/s2 at the stern), keelDrag 4, forward "-z", stern [x,y,z], controls up to 256 {time, throttle, rudder} keyframes (-1..1), wake {width 1.2, strength 1, height 0.06, lifetime 5} (needs an oceanTime track on the sea)} makes it a steerable boat.'),
 });
 const physicsJoint = z.strictObject({
-  type: z.enum(['spherical', 'revolute', 'prismatic', 'fixed']),
+  type: z.enum(['spherical', 'revolute', 'prismatic', 'fixed', 'spring']),
   bodyA: identifier,
   bodyB: identifier,
   anchorA: vector3.optional(),
@@ -666,8 +674,19 @@ const physicsJoint = z.strictObject({
   limits: z.tuple([finite, finite]).optional().describe('Radians for revolute, metres for prismatic.'),
   name: identifier.optional().describe('Joint name that physics.events jointMotor events refer to; fracture-node writes glue-a-b.'),
   breakImpulse: positive.optional().describe('Fixed joints only: contact impulse in N s that breaks the joint in one step.'),
+  contactsEnabled: z.boolean().optional().describe('Whether the two bodies still collide with each other.'),
+  motor: z.strictObject({
+    mode: z.enum(['position', 'velocity']),
+    target: bounded(-1e4, 1e4),
+    stiffness: bounded(1e-6, 1e6).optional().describe('Position motors only.'),
+    damping: bounded(0, 1e6).optional(),
+    maxForce: bounded(1e-6, 1e8).optional(),
+  }).nullable().optional().describe('Drives the joint toward a target angle or speed.'),
+  restLength: bounded(0, 1e6).optional().describe('Spring joints only.'),
+  stiffness: bounded(1e-6, 1e6).optional().describe('Spring joints only; required there.'),
+  damping: bounded(0, 1e6).optional().describe('Spring joints only.'),
 });
-const physics = z.strictObject({
+const physics =z.strictObject({
   duration: z.number().min(0.1).max(10),
   gravity: vector3.optional().describe('Defaults to [0, -9.81, 0].'),
   bodies: z.array(physicsBody).min(1).max(64),

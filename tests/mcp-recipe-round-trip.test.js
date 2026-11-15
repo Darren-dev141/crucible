@@ -195,3 +195,100 @@ test('scene_create names the valid kinds and properties for a motion track with 
     assert.match(wrongProperty.text, /Unknown node track property: "bogus"\. node properties: translation, rotation, scale\./);
   });
 });
+
+const MODIFIER_EXAMPLES = [
+  { type: 'cycles', before: 'mirror', after: 'offset', beforeCount: 2, afterCount: 3 },
+  { type: 'stepped', step: 0.2, offset: 0.05 },
+  { type: 'noise', scale: 0.5, strength: 0.3, phase: 0.1, seed: 7 },
+  { type: 'generator', coefficients: [0, 1, 0.5], additive: true },
+  { type: 'limits', min: -5, max: 5 },
+  { type: 'envelope', points: [{ time: 0, min: -1, max: 1 }, { time: 1, min: -2, max: 2 }], referenceMin: -1, referenceMax: 1 },
+];
+
+function everyMotionFieldRecipe() {
+  const keyframes = (first, second) => [{ time: 0, value: first }, { time: 1, value: second }];
+  return oneBoxRecipe({
+    nodes: [
+      { id: 'a', geometry: 'cube', material: 'red' },
+      { id: 'b', geometry: 'cube', material: 'red', translation: [3, 0, 0] },
+    ],
+    motion: {
+      duration: 2,
+      tracks: [
+        { kind: 'node', id: 'a', property: 'translation', interpolation: 'LINEAR', extrapolation: 'linear', modifiers: MODIFIER_EXAMPLES.slice(1, 3), keyframes: keyframes([0, 0, 0], [1, 0, 0]) },
+        { kind: 'node', id: 'a', property: 'scale', keyframes: keyframes([1, 1, 1], [2, 2, 2]), modifiers: [MODIFIER_EXAMPLES[0]] },
+        { kind: 'node', id: 'b', property: 'translation', modifiers: [MODIFIER_EXAMPLES[3], MODIFIER_EXAMPLES[4], MODIFIER_EXAMPLES[5]], keyframes: keyframes([3, 0, 0], [3, 1, 0]) },
+        { kind: 'material', id: 'red', property: 'roughness', extrapolation: 'linear', keyframes: keyframes(0.2, 0.6) },
+        { kind: 'camera', property: 'eye', extrapolation: 'linear', keyframes: keyframes([0, 1, 6], [0, 1, 5]) },
+      ],
+    },
+  });
+}
+
+function everyJointFieldRecipe() {
+  const bodyNode = (id, x) => ({ id, geometry: 'cube', material: 'red', translation: [x, 1, 0] });
+  const motor = { mode: 'position', target: 0.5, stiffness: 50, damping: 2, maxForce: 500 };
+  return oneBoxRecipe({
+    nodes: [
+      { id: 'floor', geometry: 'cube', material: 'red', scale: [20, 0.2, 20], translation: [0, -0.1, 0] },
+      bodyNode('p', 0), bodyNode('q', 1.5), bodyNode('r', 3), bodyNode('s', 4.5), bodyNode('t', 6), bodyNode('u', 7.5),
+    ],
+    physics: {
+      duration: 1,
+      bodies: [
+        { node: 'floor', type: 'fixed' },
+        ...['p', 'q', 'r', 's', 't', 'u'].map(node => ({ node, type: 'dynamic' })),
+      ],
+      joints: [
+        { name: 'hinge', type: 'revolute', bodyA: 'p', bodyB: 'q', anchorA: [0.75, 0, 0], anchorB: [-0.75, 0, 0], axis: [0, 0, 1], limits: [-1, 1], motor, contactsEnabled: true },
+        { name: 'slide', type: 'prismatic', bodyA: 'q', bodyB: 'r', axis: [1, 0, 0], limits: [0, 2], motor: { mode: 'velocity', target: 1, damping: 5, maxForce: 100 }, contactsEnabled: false },
+        { name: 'glue', type: 'fixed', bodyA: 'r', bodyB: 's', breakImpulse: 25 },
+        { name: 'ball', type: 'spherical', bodyA: 's', bodyB: 't', contactsEnabled: true },
+        { name: 'band', type: 'spring', bodyA: 't', bodyB: 'u', restLength: 1.2, stiffness: 30, damping: 1.5, contactsEnabled: false },
+      ],
+    },
+  });
+}
+
+for (const [label, buildRecipe, section] of [
+  ['motion track', everyMotionFieldRecipe, 'motion'],
+  ['physics joint', everyJointFieldRecipe, 'physics'],
+]) {
+  test(`every ${label} field the backend supports survives export, scene_create and export again`, async () => {
+    await withRoundTripClient(async client => {
+      await assertAccepted(client, buildRecipe());
+      const firstExport = await exportedRecipe(client);
+      assert.ok(firstExport[section], `${section} is exported`);
+      await assertAccepted(client, firstExport);
+      assert.deepEqual(await exportedRecipe(client), firstExport);
+    });
+  });
+}
+
+test('the exported motion and joint recipes keep each field that was authored', async () => {
+  await withRoundTripClient(async client => {
+    await assertAccepted(client, everyMotionFieldRecipe());
+    const tracks = (await exportedRecipe(client)).motion.tracks;
+    assert.ok(tracks.some(track => track.extrapolation === 'linear'));
+    const modifierTypes = new Set(tracks.flatMap(track => (track.modifiers ?? []).map(modifier => modifier.type)));
+    assert.deepEqual([...modifierTypes].sort(), MODIFIER_EXAMPLES.map(modifier => modifier.type).sort());
+    await assertAccepted(client, everyJointFieldRecipe());
+    const joints = (await exportedRecipe(client)).physics.joints;
+    for (const field of ['name', 'motor', 'contactsEnabled', 'breakImpulse', 'restLength', 'stiffness', 'damping']) {
+      assert.ok(joints.some(joint => joint[field] !== undefined), `joint field ${field} is exported`);
+    }
+  });
+});
+
+test('more than 8 modifiers and a spring joint without stiffness are refused', async () => {
+  await withRoundTripClient(async client => {
+    const tooMany = everyMotionFieldRecipe();
+    tooMany.motion.tracks[0].modifiers = Array.from({ length: 9 }, () => MODIFIER_EXAMPLES[1]);
+    assert.equal((await call(client, 'scene_create', { recipe: tooMany })).isError, true);
+    const noStiffness = everyJointFieldRecipe();
+    delete noStiffness.physics.joints[4].stiffness;
+    const refusedSpring = await call(client, 'scene_create', { recipe: noStiffness });
+    assert.equal(refusedSpring.isError, true);
+    assert.match(refusedSpring.text, /stiffness/);
+  });
+});
