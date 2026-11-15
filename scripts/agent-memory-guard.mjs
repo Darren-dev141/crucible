@@ -20,8 +20,11 @@ export async function sampleBrowserHeap(session, limitBytes = BROWSER_HEAP_LIMIT
 
 // The native path tracer and the OIDN denoiser run inside the Node process, so a native job holds memory the JS limit never
 // meant to cover: the traced scene tables (fixed) and the denoiser's buffers, frame planes and temporal history (per pixel).
-// These are estimates, not measurements: the Linux end-to-end run in #1186 is still to be measured and the numbers adjusted.
-export const NATIVE_FIXED_ALLOWANCE_BYTES = 256 * 1024 ** 2;
+// Sized from native + OIDN video jobs of the demo room (#1186, RTX 3060, Windows): peak RSS 1224 MiB at 960 x 540, 1360 MiB at
+// 1280 x 720 and 2149 MiB at 1920 x 1080. Taking the 960 x 540 to 1280 x 720 slope back to no pixels leaves a fixed part of
+// about 540 MiB above the 512 MiB base; with 25 percent on top the fixed allowance is 640 MiB. Linux could not be measured on a
+// GPU: CI's software Vulkan adapter loses the device on the first native dispatch, so jobs there fall back to the cpu tracer.
+export const NATIVE_FIXED_ALLOWANCE_BYTES = 640 * 1024 ** 2;
 export const NATIVE_BYTES_PER_PIXEL = 1024;
 export const NATIVE_ALLOWANCE_CAP_BYTES = 2048 * 1024 ** 2;
 
