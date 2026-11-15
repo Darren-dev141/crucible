@@ -637,6 +637,7 @@ function frame(deltaSeconds) {
 - `setExtraMass(index, kilograms)` hangs mass on a particle on top of `cloth.particleMass` (density times area, shared evenly). A heavy particle moves less when the constraints pull, so the sheet sags around it.
 - Tearing: `tearStretch` (a stretch constraint breaks when its length passes this multiple of its rest length) and `tearForce` (it breaks when it carries more than this many newtons) are options; both default to never. The bend constraint across a broken edge breaks with it. `cloth.broken` lists them in order as `{ constraint, first, second, kind }`, where `first` and `second` are particle indices and `kind` is `'stretch'` or `'bend'`; `breakConstraint(edge)` tears one by hand. A broken constraint never heals, and the triangles are not removed: hide a triangle whose edge is in the list to show the tear.
 - A particle index is a welded particle (`weldVertices` maps mesh vertices to them), as in `bakeCloth`.
+- `step(deltaSeconds)` takes 0 to 1 second; 0 changes nothing, and a negative, NaN or longer step throws a `RangeError`. `bakeCloth` needs a whole `frameCount` of at least 1 and `framesPerSecond` of at least 1.
 
 ## Deforming a drawn part in place
 
