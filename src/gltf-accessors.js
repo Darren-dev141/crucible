@@ -94,6 +94,14 @@ async function copyElementsInSlices(source, offset, stride, count, elementBytes,
   return packed;
 }
 
+/** Sparse substitution needs a whole-number count of 1 up to the accessor count, and an indices and a values block. */
+function checkSparseShape(accessor) {
+  const { count, indices, values } = accessor.sparse;
+  if (!Number.isInteger(count) || count < 1 || count > accessor.count || !indices || !values) {
+    throw new Error(`Invalid glTF sparse: it needs indices, values and a whole count from 1 to ${accessor.count}.`);
+  }
+}
+
 /**
  * Reads accessors as tightly packed typed arrays, with sparse substitution and meshopt buffer views.
  * `bufferBytes(index)` returns the bytes of a glTF buffer. `meshoptDecoder` replaces the built-in decoder of compressed views.
@@ -162,6 +170,7 @@ export function createAccessorReader(document, bufferBytes, meshoptDecoder) {
   }
 
   function applySparse(accessor, array, itemSize) {
+    checkSparseShape(accessor);
     const { count, indices, values } = accessor.sparse;
     const IndexType = SPARSE_INDEX_COMPONENT_TYPES.includes(indices.componentType) ? COMPONENT_TYPES[indices.componentType] : null;
     if (!IndexType) throw new Error(`Unsupported sparse index component type ${indices.componentType}. Fix: use 5121, 5123 or 5125 (unsigned byte, short or int).`);
