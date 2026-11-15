@@ -476,6 +476,8 @@ function runEdit(current, edit, index, { resolveCutter, limits }) {
     }
     result.edges = outcome.bevelEdges;
     result.width = outcome.width;
+    result.profile = outcome.profile;
+    if (outcome.profileClamped) result.profileClamped = true;
     if (outcome.clamped) result.clamped = true;
     result.tags = tagSummary(outcome.mesh, edit.name);
     return { mesh: outcome.mesh, result };

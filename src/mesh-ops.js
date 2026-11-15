@@ -322,7 +322,7 @@ export function insetIndividual(edit, mask, options) {
 const subtractPoints = (first, second) => [first[0] - second[0], first[1] - second[1], first[2] - second[2]];
 
 // The inner faces must keep at least this share of their area, or the inset has reached the limit of the region.
-const INSET_MINIMUM_AREA_RATIO = 1e-3;
+const INSET_MINIMUM_AREA_RATIO = 1e-5;
 
 // Bisect for the largest thickness below `failing` whose inner faces survive, to 3 significant digits and just inside.
 function largestInsetThickness(capsSurvive, failing) {
@@ -385,9 +385,11 @@ function insetFaces(edit, faces, { thickness, depth = 0 }) {
   const capsSurvive = amount => {
     placeDuplicates(amount);
     // Past the limit a rim face turns its back to the region (the corners crossed over each other) or a cap shrinks to nothing.
-    const rimsFaceOutward = sideFaces.every(face => {
+    // Each rim face is compared with the selected face it borders, so a region that wraps around a solid still passes.
+    const rimsFaceOutward = sideFaces.every((face, index) => {
       const rim = faceNormalVector(edit, face);
-      return rim[0] * normal[0] + rim[1] * normal[1] + rim[2] * normal[2] > 0;
+      const bordering = boundary[index].normal;
+      return rim[0] * bordering[0] + rim[1] * bordering[1] + rim[2] * bordering[2] > 0;
     });
     // The inner copy of every boundary edge must keep its direction; a reversed one means opposite corners crossed.
     const edgesKeepDirection = boundary.every(edge => {
@@ -407,6 +409,9 @@ function insetFaces(edit, faces, { thickness, depth = 0 }) {
   let usedThickness = thickness;
   if (!capsSurvive(thickness)) {
     usedThickness = largestInsetThickness(capsSurvive, thickness);
+    if (!(usedThickness > 0)) {
+      throw new Error(`inset thickness ${thickness} is past the limit of these faces and no smaller thickness keeps them intact; select larger faces or pass a thickness well below the face size.`);
+    }
     placeDuplicates(usedThickness);
   }
   if (depth !== 0) moveVertices(edit, faceVertexSet(edit, capFaces), normal.map(value => value * depth));

@@ -211,7 +211,7 @@ test('inset_region clamps a thickness past the face limit and reports what it us
   for (const thickness of [0.5, 5]) {
     const result = inset(thickness);
     assert.equal(result.results[0].clamped, true, `thickness ${thickness}`);
-    assert.equal(result.results[0].thickness, 0.484);
+    assert.equal(result.results[0].thickness, 0.498);
     assert.equal(lintMesh(result.mesh).ok, true);
     assert.deepEqual(problemKinds(result.mesh), []);
     const { normals } = faceNormals(result.mesh);
@@ -233,4 +233,69 @@ test('lintMesh flags faces folded back onto their neighbour (#1269)', () => {
   assert.ok(folded, 'expected folded-face');
   assert.equal(folded.severity, 'warning');
   assert.deepEqual(problemKinds(cube()), []);
+});
+
+test('lintMesh flags the folded rim of an inset pushed past the centre of its face (#1269)', () => {
+  const outer = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+  const positions = [...outer, ...outer.map(([x, y]) => [x * -0.5, y * -0.5])].flatMap(([x, y]) => [x, y, 0]);
+  const rimTriangles = outer.flatMap((_, corner) => {
+    const next = (corner + 1) % 4;
+    return [corner, next, next + 4, corner, next + 4, corner + 4];
+  });
+  const geometry = { positions: new Float32Array(positions), indices: new Uint32Array([...rimTriangles, 4, 5, 6, 4, 6, 7]) };
+  const mesh = meshFromGeometry(geometry, { quads: false, tags: 'none' });
+  const kinds = lintMesh(mesh, { geometry: true }).problems.map(problem => problem.kind);
+  assert.ok(kinds.includes('folded-face'), JSON.stringify(kinds));
+});
+
+test('inset_region keeps the requested thickness on regions that wrap around a solid (#1269)', () => {
+  const regions = [
+    ['cube side ring', cube(), { tag: 'side' }],
+    ['cube all but the bottom', cube(), { not: { tag: 'bottom' } }],
+    ['cylinder side', meshFromGeometry(cylinder(16, 0)), { tag: 'side' }],
+  ];
+  for (const [label, mesh, select] of regions) {
+    for (const thickness of [0.05, 0.1]) {
+      const result = applyMeshEdits(mesh, [{ op: 'inset_region', select, thickness, name: 'ring' }]);
+      assert.equal(result.results[0].thickness, thickness, `${label} ${thickness}`);
+      assert.equal(result.results[0].clamped, undefined, `${label} ${thickness}`);
+      assert.deepEqual(problemKinds(result.mesh), [], `${label} ${thickness}`);
+    }
+  }
+});
+
+test('inset_region throws when no thickness keeps the faces intact (#1269)', () => {
+  const sliver = meshFromGeometry({
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 2, 0, 0, 3, 0, 0, 4, 0, 0]),
+    indices: new Uint32Array([0, 1, 2, 0, 2, 3, 4, 5, 6]),
+  }, { quads: false, tags: 'none' });
+  assert.throws(() => applyMeshEdits(sliver, [{ op: 'inset_region', select: { all: true }, thickness: 0.5 }]), /thickness/);
+});
+
+test('inset_individual clamps each face and reports the thickness used (#1269)', () => {
+  const result = applyMeshEdits(cube(), [{ op: 'inset_individual', select: { tag: 'top' }, thickness: 5, name: 'ring' }]);
+  assert.equal(result.results[0].clamped, true);
+  assert.ok(result.results[0].thickness > 0 && result.results[0].thickness < 0.5);
+  assert.deepEqual(problemKinds(result.mesh), []);
+});
+
+test('bevel and profile limits are reported through applyMeshEdits (#1269)', () => {
+  const [capped] = bevelAllEdges({ profile: 1, segments: 3 }).results;
+  assert.equal(capped.profile, 0.99);
+  assert.equal(capped.profileClamped, true);
+  const [fine] = bevelAllEdges({ profile: 0.9, segments: 3 }).results;
+  assert.equal(fine.profile, 0.9);
+  assert.equal(fine.profileClamped, undefined);
+});
+
+test('the capped profile is clean under default lint up to the highest segment count (#1269)', () => {
+  for (const segments of [8, 16]) {
+    for (const width of [0.001, 0.1, 0.49]) {
+      const { mesh } = bevelAllEdges({ profile: 1, segments, width });
+      assert.deepEqual(problemKinds(mesh), [], `segments ${segments} width ${width}`);
+    }
+    // Geometry lint is stricter: the near-square ring at many segments packs faces into slivers it may flag as warnings, never errors.
+    const lint = lintMesh(bevelAllEdges({ profile: 1, segments }).mesh, { geometry: true });
+    assert.deepEqual(lint.problems.filter(problem => problem.severity === 'error'), []);
+  }
 });
