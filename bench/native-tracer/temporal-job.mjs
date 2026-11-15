@@ -1,5 +1,7 @@
 // Measures frame-to-frame flicker of a native path traced video with and without the temporal blend (issue 1120).
-//   node bench/native-tracer/temporal-job.mjs <output directory> [--browser <chrome path>] [--runtime-backend gpu|cpu] [--samples 32] [--width 960] [--height 540] [--ffmpeg ffmpeg] [--reuse plain,reference]
+//   node bench/native-tracer/temporal-job.mjs <output directory> [--scene room|leaves] [--browser <chrome path>] [--runtime-backend gpu|cpu] [--samples 32] [--width 960] [--height 540] [--ffmpeg ffmpeg] [--reuse plain,reference]
+// `--scene leaves` (#1214) hangs 28 thin leaves 0.6 to 1.5 m in front of an f/1.2 camera that drifts sideways past them while the room behind stays in
+// focus: a blurred edge pixel mixes the leaf and the room, the case the history test of the blend has to keep.
 // `--reuse` scores the named videos from the output directory instead of rendering them again.
 // The scene is the demo room lit only by the area light in its window and the sky through the open front, with the particle
 // systems and every track but the camera removed, so the session reuses the scene and only the camera moves. The camera drifts
@@ -29,6 +31,7 @@ const samples = Number(flag('--samples', 32));
 const browserPath = flag('--browser', '');
 const runtimeBackend = flag('--runtime-backend', 'gpu');
 const ffmpegPath = flag('--ffmpeg', 'ffmpeg');
+const sceneName = flag('--scene', 'room');
 const reusedNames = flag('--reuse', '').split(',').filter(Boolean);
 const FPS = 24;
 const FLY_SECONDS = 2;
@@ -46,6 +49,50 @@ function cameraTrack(property, flyStart, flyEnd, afterCut) {
     { time: TOTAL_SECONDS, value: afterCut },
   ];
   return { kind: 'camera', property, interpolation: 'LINEAR', keyframes };
+}
+
+function seededUnit(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = Math.imul(state ^ (state >>> 15), state | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function quaternionFromEuler(yaw, pitch, roll) {
+  const [halfYaw, halfPitch, halfRoll] = [yaw / 2, pitch / 2, roll / 2];
+  const [cy, sy, cp, sp, cr, sr] = [Math.cos(halfYaw), Math.sin(halfYaw), Math.cos(halfPitch), Math.sin(halfPitch), Math.cos(halfRoll), Math.sin(halfRoll)];
+  return [sr * cp * cy - cr * sp * sy, cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy, cr * cp * cy + sr * sp * sy];
+}
+
+const LEAF_COUNT = 28;
+
+function hangingLeaves() {
+  const random = seededUnit(14);
+  const nodes = [];
+  for (let index = 0; index < LEAF_COUNT; index++) {
+    nodes.push({
+      id: `leaf-${index}`, geometry: 'sharp-box', material: 'leaf',
+      translation: [0.7 + random() * 1.6, 1.5 + random() * 1.3, 5.5 + random() * 0.9],
+      rotation: quaternionFromEuler(random() * Math.PI, (random() - 0.5) * 1.2, (random() - 0.5) * 1.2),
+      scale: [0.28 + random() * 0.14, 0.01, 0.14 + random() * 0.08],
+    });
+  }
+  return nodes;
+}
+
+function leavesRoom(recipe) {
+  const room = windowLitRoom(recipe);
+  const tracks = room.motion.tracks.map(track => (track.property === 'eye' ? cameraTrack('eye', [1.0, 2.1, 7], [1.5, 2.1, 7], [3.9, 0.6, 2.8]) : track));
+  return {
+    ...room,
+    materials: [...room.materials, { id: 'leaf', color: [0.16, 0.42, 0.08], roughness: 0.7 }],
+    nodes: [...room.nodes, ...hangingLeaves()],
+    camera: { ...room.camera, fStop: 1.2 },
+    motion: { ...room.motion, tracks },
+  };
 }
 
 function windowLitRoom(recipe) {
@@ -153,7 +200,8 @@ async function writeStill(videoPath, frame, name) {
 }
 
 await mkdir(outputDirectory, { recursive: true });
-const recipe = windowLitRoom(JSON.parse(await readFile('tests/fixtures/demo-room.recipe.json', 'utf8')));
+const baseRecipe = JSON.parse(await readFile('tests/fixtures/demo-room.recipe.json', 'utf8'));
+const recipe = sceneName === 'leaves' ? leavesRoom(baseRecipe) : windowLitRoom(baseRecipe);
 const report = { width, height, samples, fps: FPS, flyFrames: FLY_FRAMES, frames: FPS * TOTAL_SECONDS, scoreLimit: SCORE_LIMIT };
 let failed = false;
 const variants = [
