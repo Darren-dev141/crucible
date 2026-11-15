@@ -23,6 +23,7 @@ import { startUpdateCheck, updateNoticeText, describeUpdateCheck } from '../src/
 import { installVolumeGridFiles } from '../src/mcp-volume-grids.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from '../src/light-limits.js';
 import { currentFormatName, warnLegacyOnce } from '../src/legacy-names.js';
+import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
 
 function acceptLegacyFormat(value) {
   const current = currentFormatName(value);
@@ -1018,8 +1019,8 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
   for (let index = 0; index < argumentsValue.length; index += 2) {
     const name = argumentsValue[index];
     const value = argumentsValue[index + 1];
-    if (!['--backend', '--browser', '--memory', '--assets', '--packs', '--jobs', '--ffmpeg', '--audio', '--branches', '--relations', '--findings', '--addons', '--allow-addon'].includes(name) || value === undefined) {
-      throw new Error(`Use --addons <absolute folder with node_modules> with one --allow-addon <package name> for each allowed addon (repeatable, chosen only here), --backend cpu|gpu, --browser <local executable path>, --memory <32..${MAXIMUM_MEMORY_MIB} MiB>, --assets <absolute GLB directory>, --packs <absolute folder of data-only packs>, --jobs <absolute private output directory>, --ffmpeg <absolute executable>, --audio <absolute folder of .wav, .mp3, .ogg or .flac files for video jobs>, --branches on|off, --relations on|off and --findings on|off (all default on; off hides the findings in scene_look for benchmark controls).`);
+    if (!MCP_OPTION_NAMES.includes(name) || value === undefined) {
+      throw new Error(`Use ${mcpOptionSummary()}. Run crucible-mcp --help for the same list.`);
     }
     if (name === '--allow-addon') allowedAddonNames.push(value);
     else options[name.slice(2)] = name === '--memory' ? Number(value) : value;
