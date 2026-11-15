@@ -32,7 +32,7 @@ SCRIPT_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 REPOSITORY_ROOT = os.path.abspath(os.path.join(SCRIPT_DIRECTORY, "..", ".."))
 # The scene reading (camera, lights, world description, meshes) is shared with the Blender render add-on.
 sys.path.insert(0, os.path.join(REPOSITORY_ROOT, "packages", "blender-addon"))
-from cook_blender.scene_export import add_light_entry, build_camera_entries, column_major_yup_matrix, describe_world, encode_array, geometry_key, mesh_to_arrays  # noqa: E402
+from cook_blender.scene_export import add_light_entry, build_camera_entries, column_major_yup_matrix, describe_world, encode_array, geometry_key, light_node_tree_summary, mesh_to_arrays  # noqa: E402
 HDR_RADIANCE_LIMIT = 60000.0
 HDR_WIDTH = 2048
 HDR_HEIGHT = 1024
@@ -524,7 +524,7 @@ def describe_lights_and_film(scene):
             "color": list(light_data.color), "radius": getattr(light_data, "shadow_soft_size", None), "hideRender": light_object.hide_render,
             "shape": getattr(light_data, "shape", None), "size": getattr(light_data, "size", None), "sizeY": getattr(light_data, "size_y", None),
             "scale": list(light_object.matrix_world.to_scale()), "library": light_data.library.filepath if light_data.library else None,
-            "useShadow": getattr(light_data, "use_shadow", None), "normalize": getattr(light_data, "normalize", None),
+            "nodeTree": light_node_tree_summary(light_data), "useShadow": getattr(light_data, "use_shadow", None), "normalize": getattr(light_data, "normalize", None),
             "cyclesSettings": {name: getattr(light_data.cycles, name, None) for name in ("is_portal", "max_bounces", "cast_shadow")} if hasattr(light_data, "cycles") else None,
         })
     world = scene.world

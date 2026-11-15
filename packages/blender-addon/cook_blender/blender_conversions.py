@@ -151,8 +151,8 @@ def write_radiance_hdr(path, linear_rgb_top_first):
         handle.write(rgbe_bytes(linear_rgb_top_first))
 
 
-def light_feature_notes(light_name, light_type, use_temperature, use_shadow, diffuse_factor, specular_factor, uses_nodes):
-    """What a light carries that Cook does not read, one sentence each."""
+def light_feature_notes(light_name, light_type, use_temperature, use_shadow, diffuse_factor, specular_factor):
+    """What a light carries that Cook does not read, one sentence each. Node trees are handled by `resolve_light_nodes`."""
     notes = []
     if use_temperature:
         notes.append(f"light {light_name} uses a blackbody temperature; Cook uses its plain colour")
@@ -160,9 +160,106 @@ def light_feature_notes(light_name, light_type, use_temperature, use_shadow, dif
         notes.append(f"light {light_name} has shadows off; Cook casts them")
     if abs(diffuse_factor - 1.0) > 1e-6 or abs(specular_factor - 1.0) > 1e-6:
         notes.append(f"light {light_name} has a diffuse or specular factor other than 1; Cook ignores the factors")
-    if uses_nodes:
-        notes.append(f"light {light_name} has a node tree; Cook ignores it")
     return notes
+
+
+# Blackbody colour. Blender's Blackbody node integrates Planck's law against the CIE 1931 colour matching functions and
+# converts to linear Rec.709, scaled so 6500 K is white. Blender's own table is not available here, so the matching
+# functions use the multi-lobe Gaussian fit of Wyman, Sloan and Shirley, "Simple Analytic Approximations to the CIE XYZ
+# Color Matching Functions", JCGT 2(2), 2013, and the white scaling is done per channel at 6500 K. This is an
+# approximation of Blender's table, not a copy of it.
+BLACKBODY_WHITE_KELVIN = 6500.0
+BLACKBODY_RANGE_KELVIN = (800.0, 12000.0)
+XYZ_TO_LINEAR_REC709 = (
+    (3.2404542, -1.5371385, -0.4985314),
+    (-0.9692660, 1.8760108, 0.0415560),
+    (0.0556434, -0.2040259, 1.0572252),
+)
+PLANCK_SECOND_RADIATION_CONSTANT = 1.4387769e-2
+NEUTRAL_COLOUR_FACTOR = (1.0, 1.0, 1.0)
+
+
+def _gaussian_lobe(wavelength, centre, left_width, right_width):
+    width = left_width if wavelength < centre else right_width
+    return math.exp(-0.5 * ((wavelength - centre) * width) ** 2)
+
+
+def _cie_xyz_matching(wavelength):
+    x_bar = (
+        1.056 * _gaussian_lobe(wavelength, 599.8, 0.0264, 0.0323)
+        + 0.362 * _gaussian_lobe(wavelength, 442.0, 0.0624, 0.0374)
+        - 0.065 * _gaussian_lobe(wavelength, 501.1, 0.0490, 0.0382)
+    )
+    y_bar = 0.821 * _gaussian_lobe(wavelength, 568.8, 0.0213, 0.0247) + 0.286 * _gaussian_lobe(wavelength, 530.9, 0.0613, 0.0322)
+    z_bar = 1.217 * _gaussian_lobe(wavelength, 437.0, 0.0845, 0.0278) + 0.681 * _gaussian_lobe(wavelength, 459.0, 0.0385, 0.0725)
+    return x_bar, y_bar, z_bar
+
+
+def _unscaled_blackbody_rgb(kelvin):
+    xyz = [0.0, 0.0, 0.0]
+    for wavelength in range(360, 831, 5):
+        metres = wavelength * 1e-9
+        radiance = metres ** -5 / math.expm1(PLANCK_SECOND_RADIATION_CONSTANT / (metres * kelvin))
+        for axis, weight in enumerate(_cie_xyz_matching(float(wavelength))):
+            xyz[axis] += radiance * weight
+    return [sum(row[axis] * xyz[axis] for axis in range(3)) for row in XYZ_TO_LINEAR_REC709]
+
+
+def blackbody_linear_rgb(kelvin):
+    """Linear Rec.709 colour of a blackbody at `kelvin`: white at 6500 K, negative channels clamped to 0, brightest channel 1."""
+    low, high = BLACKBODY_RANGE_KELVIN
+    if not low <= kelvin <= high:
+        raise ValueError(f"blackbody temperature {kelvin} K is outside {low:.0f} to {high:.0f} K; pass a temperature in that range")
+    white = _unscaled_blackbody_rgb(BLACKBODY_WHITE_KELVIN)
+    balanced = [max(channel / white_channel, 0.0) for channel, white_channel in zip(_unscaled_blackbody_rgb(kelvin), white)]
+    return [channel / max(balanced) for channel in balanced]
+
+
+def resolve_light_nodes(light_name, node_tree):
+    """Reads the Emission node of a light's node tree.
+
+    `node_tree` is None for a light without nodes, else plain data: {"output_from": node id or None, "nodes": {id: {"type":
+    "EMISSION", "inputs": {name: {"value": number or list, "linked_from": node id or None}}}}}. Returns (strength,
+    colour_factor, notes): multiply the light's energy by `strength` and its colour by `colour_factor`. Anything that is not
+    a constant Emission strength, a constant colour or a Blackbody with a constant temperature goes into `notes` as "not
+    reproduced" and leaves the plain value in place."""
+    if node_tree is None:
+        return 1.0, list(NEUTRAL_COLOUR_FACTOR), []
+    nodes = node_tree["nodes"]
+    emission = nodes.get(node_tree.get("output_from"))
+    if emission is None or emission["type"] != "EMISSION":
+        found = "nothing" if emission is None else emission["type"]
+        note = f"light {light_name} has a node tree whose output is {found}, not an Emission node; not reproduced, Cook uses the plain energy and colour"
+        return 1.0, list(NEUTRAL_COLOUR_FACTOR), [note]
+    notes = []
+    strength = 1.0
+    strength_input = emission["inputs"].get("Strength")
+    if strength_input is not None:
+        if strength_input.get("linked_from") is not None:
+            source = nodes.get(strength_input["linked_from"], {}).get("type", "unknown")
+            notes.append(f"light {light_name} strength comes from a {source} node; not reproduced, Cook uses the plain energy")
+        else:
+            strength = float(strength_input["value"])
+    colour_factor = list(NEUTRAL_COLOUR_FACTOR)
+    colour_input = emission["inputs"].get("Color")
+    if colour_input is not None:
+        colour_factor, colour_note = _emission_colour_factor(light_name, nodes, colour_input)
+        if colour_note:
+            notes.append(colour_note)
+    return strength, colour_factor, notes
+
+
+def _emission_colour_factor(light_name, nodes, colour_input):
+    source_id = colour_input.get("linked_from")
+    if source_id is None:
+        return [float(channel) for channel in colour_input["value"][:3]], None
+    source = nodes.get(source_id, {"type": "unknown", "inputs": {}})
+    if source["type"] == "BLACKBODY":
+        temperature = source["inputs"].get("Temperature", {})
+        if temperature.get("linked_from") is None:
+            return blackbody_linear_rgb(float(temperature["value"])), None
+    note = f"light {light_name} colour comes from a {source['type']} node that is not a Blackbody with a constant temperature; not reproduced, Cook uses the plain colour"
+    return list(NEUTRAL_COLOUR_FACTOR), note
 
 
 def blender_environment_to_cook_rows(linear_rgb_bottom_first):

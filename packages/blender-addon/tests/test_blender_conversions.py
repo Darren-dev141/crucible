@@ -115,13 +115,79 @@ class ColorSpaceTests(unittest.TestCase):
 
 class LightNoteTests(unittest.TestCase):
     def test_plain_light_has_no_notes(self):
-        self.assertEqual(conversions.light_feature_notes("Lamp", "POINT", False, True, 1.0, 1.0, False), [])
+        self.assertEqual(conversions.light_feature_notes("Lamp", "POINT", False, True, 1.0, 1.0), [])
 
     def test_each_unread_feature_is_named(self):
-        notes = conversions.light_feature_notes("Lamp", "POINT", True, False, 0.5, 1.0, True)
-        self.assertEqual(len(notes), 4)
+        notes = conversions.light_feature_notes("Lamp", "POINT", True, False, 0.5, 1.0)
+        self.assertEqual(len(notes), 3)
         self.assertTrue(any("blackbody" in note for note in notes))
         self.assertTrue(any("shadows off" in note for note in notes))
+
+
+def emission_tree(strength_input, colour_input, extra_nodes=None):
+    nodes = {"Emission": {"type": "EMISSION", "inputs": {"Strength": strength_input, "Color": colour_input}}}
+    nodes.update(extra_nodes or {})
+    return {"output_from": "Emission", "nodes": nodes}
+
+
+class LightNodeTests(unittest.TestCase):
+    def test_light_without_nodes_is_unchanged(self):
+        strength, colour_factor, notes = conversions.resolve_light_nodes("Lamp", None)
+        self.assertEqual((strength, colour_factor, notes), (1.0, [1.0, 1.0, 1.0], []))
+
+    def test_constant_strength_and_blackbody_colour_are_read(self):
+        # Blender's Classroom sun: energy 1, Emission strength 15, colour from Blackbody 5800 K.
+        tree = emission_tree(
+            {"value": 15.0, "linked_from": None},
+            {"value": [1.0, 1.0, 1.0, 1.0], "linked_from": "Blackbody"},
+            {"Blackbody": {"type": "BLACKBODY", "inputs": {"Temperature": {"value": 5800.0, "linked_from": None}}}},
+        )
+        strength, colour_factor, notes = conversions.resolve_light_nodes("Sun", tree)
+        self.assertEqual(strength, 15.0)
+        self.assertEqual(notes, [])
+        self.assertEqual(colour_factor[0], 1.0)
+        self.assertLess(colour_factor[2], colour_factor[1])
+        self.assertLess(colour_factor[1], colour_factor[0])
+
+    def test_blackbody_is_white_at_6500_and_blue_when_hot(self):
+        white = conversions.blackbody_linear_rgb(6500.0)
+        for channel in white:
+            self.assertAlmostEqual(channel, 1.0, places=6)
+        hot = conversions.blackbody_linear_rgb(10000.0)
+        self.assertGreater(hot[2], hot[0])
+        with self.assertRaisesRegex(ValueError, "800 to 12000"):
+            conversions.blackbody_linear_rgb(100.0)
+
+    def test_constant_colour_is_multiplied_in(self):
+        tree = emission_tree({"value": 2.0, "linked_from": None}, {"value": [0.5, 0.25, 1.0, 1.0], "linked_from": None})
+        strength, colour_factor, notes = conversions.resolve_light_nodes("Lamp", tree)
+        self.assertEqual((strength, colour_factor, notes), (2.0, [0.5, 0.25, 1.0], []))
+
+    def test_linked_strength_is_reported_and_left_at_plain_energy(self):
+        tree = emission_tree(
+            {"value": 1.0, "linked_from": "Light Falloff"},
+            {"value": [1.0, 1.0, 1.0, 1.0], "linked_from": None},
+            {"Light Falloff": {"type": "LIGHT_FALLOFF", "inputs": {}}},
+        )
+        strength, _, notes = conversions.resolve_light_nodes("blackBoard_light", tree)
+        self.assertEqual(strength, 1.0)
+        self.assertEqual(len(notes), 1)
+        self.assertIn("blackBoard_light", notes[0])
+        self.assertIn("LIGHT_FALLOFF", notes[0])
+        self.assertIn("not reproduced", notes[0])
+
+    def test_unsupported_colour_node_and_non_emission_output_are_reported(self):
+        tree = emission_tree(
+            {"value": 3.0, "linked_from": None},
+            {"value": [1.0, 1.0, 1.0, 1.0], "linked_from": "Ramp"},
+            {"Ramp": {"type": "VALTORGB", "inputs": {}}},
+        )
+        strength, colour_factor, notes = conversions.resolve_light_nodes("Lamp", tree)
+        self.assertEqual((strength, colour_factor), (3.0, [1.0, 1.0, 1.0]))
+        self.assertIn("not reproduced", notes[0])
+        mixed = {"output_from": "Mix", "nodes": {"Mix": {"type": "MIX_SHADER", "inputs": {}}}}
+        _, _, mixed_notes = conversions.resolve_light_nodes("Lamp", mixed)
+        self.assertIn("MIX_SHADER", mixed_notes[0])
 
 
 class DepthTests(unittest.TestCase):

@@ -100,19 +100,50 @@ def build_camera_entries(scene, width, height, report, camera_object=None, honor
 
 # ---- Lights ----
 
-def light_color_with_exposure(light_data):
+def socket_summary(socket):
+    """One input socket as plain data for `conversions.resolve_light_nodes`."""
+    linked_from = socket.links[0].from_node.name if socket.is_linked else None
+    value = getattr(socket, "default_value", None)
+    if hasattr(value, "__len__"):
+        value = [float(channel) for channel in value]
+    return {"value": value, "linked_from": linked_from}
+
+
+def light_node_tree_summary(light_data):
+    """The node tree of a light as plain data, or None when the light does not use nodes."""
+    node_tree = getattr(light_data, "node_tree", None)
+    if not getattr(light_data, "use_nodes", False) or node_tree is None:
+        return None
+    output = next((node for node in node_tree.nodes if node.type == "OUTPUT_LIGHT" and node.is_active_output), None)
+    surface = output.inputs["Surface"] if output is not None else None
+    output_from = surface.links[0].from_node.name if surface is not None and surface.is_linked else None
+    nodes = {
+        node.name: {"type": node.type, "inputs": {socket.name: socket_summary(socket) for socket in node.inputs}}
+        for node in node_tree.nodes
+    }
+    return {"output_from": output_from, "nodes": nodes}
+
+
+def light_color_with_exposure(light_data, report_notes=None):
+    """Colour and energy of a light as Cook reads them, with an Emission node's strength and colour folded in."""
     exposure_scale = 2.0 ** getattr(light_data, "exposure", 0.0)
-    return [float(channel) for channel in light_data.color], light_data.energy * exposure_scale
+    strength, colour_factor, node_notes = conversions.resolve_light_nodes(light_data.name, light_node_tree_summary(light_data))
+    if report_notes is not None:
+        for note in node_notes:
+            if note not in report_notes:
+                report_notes.append(note)
+    color = [float(channel) * factor for channel, factor in zip(light_data.color, colour_factor)]
+    return color, light_data.energy * strength * exposure_scale
 
 
 def add_light_entry(environment, light_object, light_matrix, report):
     light_data = light_object.data
-    color, energy = light_color_with_exposure(light_data)
+    color, energy = light_color_with_exposure(light_data, report["notes"])
     if energy <= 0.0:
         return
     for note in conversions.light_feature_notes(
         light_object.name, light_data.type, getattr(light_data, "use_temperature", False), getattr(light_data, "use_shadow", True),
-        getattr(light_data, "diffuse_factor", 1.0), getattr(light_data, "specular_factor", 1.0), bool(getattr(light_data, "node_tree", None)),
+        getattr(light_data, "diffuse_factor", 1.0), getattr(light_data, "specular_factor", 1.0),
     ):
         if note not in report["notes"]:
             report["notes"].append(note)
