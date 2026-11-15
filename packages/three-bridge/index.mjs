@@ -345,6 +345,22 @@ function requireNamespace(THREE) {
   }
 }
 
+// three.js draws a short attribute or an index past the last vertex as garbage without an error, so refuse them here.
+function checkAttributeCounts(geometry, label) {
+  const vertexCount = geometry.positions.length / 3;
+  for (const [field, itemSize] of [['normals', 3], ['uvs', 2], ['colors', 3]]) {
+    const values = geometry[field];
+    if (values && values.length !== vertexCount * itemSize) {
+      throw new ThreeBridgeError(`${label} has ${values.length} values in geometry.${field}, but ${vertexCount} vertices need ${vertexCount * itemSize}. Pass one entry per vertex or leave ${field} out.`);
+    }
+  }
+  for (const index of geometry.indices) {
+    if (!Number.isInteger(index) || index < 0 || index >= vertexCount) {
+      throw new ThreeBridgeError(`${label} has geometry.indices entry ${index}, but the vertices are numbered 0 to ${vertexCount - 1}. Fix the index.`);
+    }
+  }
+}
+
 function checkPart(part, index, limits) {
   const label = `parts[${index}]${part?.name ? ` "${part.name}"` : ''}`;
   const geometry = part?.geometry;
@@ -357,6 +373,7 @@ function checkPart(part, index, limits) {
   if (!geometry.indices || geometry.indices.length === 0 || geometry.indices.length % 3 !== 0) {
     throw new ThreeBridgeError(`${label} needs geometry.indices holding whole triangles (a Uint32Array).`);
   }
+  checkAttributeCounts(geometry, label);
   if (part.matrix?.length !== 16 || Array.from(part.matrix).some(value => !Number.isFinite(value))) {
     throw new ThreeBridgeError(`${label} needs a matrix of 16 finite numbers (column-major).`);
   }
