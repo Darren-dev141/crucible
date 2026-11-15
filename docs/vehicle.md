@@ -190,6 +190,40 @@ Sampling is a pure function of time, so `scene_review`, renders and seeks in any
 `wheels`, `rejectedNames`, `wheelbase`, `trackWidth`, `duration` and `length` describe the rig; `lights`, `speed` and `direction` are read at the current motion time.
 Check `wheels` and `rejectedNames` before trusting `'auto'` on an unfamiliar model.
 
+## Crash damage
+
+A hit is an impulse in N s. For a car stopped by a fixed wall it is `mass * speed`: `crashImpulse({ mass, speed, restitution })`. These helpers come from `crucible/addons/vehicle` and are pure functions, so the same crash gives the same bytes.
+
+```js
+import { driveAlongPath, findDriveImpact, dentGeometry, detachedPartIds } from 'crucible/addons/vehicle';
+
+const drive = driveAlongPath(rig, [[0, 0, 0], [0, 0, 25]], { speed: 12 });
+const hit = findDriveImpact(drive, { point: [0, 0, 20], normal: [0, 0, -1] }, { mass: 1400, frontOffset: 1.7 });
+// { time, speed, impulse, point, direction } or null when the car never reaches the wall
+
+const frontPanel = dentGeometry(panelGeometry, {
+  stiffness: 40000, maxDepth: 0.4, radius: 0.5,
+  impacts: [{ point: panelPointOfHit, direction: hit.direction, impulse: hit.impulse }],
+});
+const loose = detachedPartIds([{ id: 'front-bumper', threshold: 9000 }, { id: 'mirror', threshold: 20000 }], hit.impulse);
+```
+
+- `findDriveImpact` samples the drive every 1/60 s and returns the first moment the nose (`frontOffset` metres ahead of `pose.position`) reaches the plane `{ point, normal }`, `normal` pointing toward the car. `point` is in the drive's space; move it into the part's space before you dent.
+- `dentGeometry(geometry, { impacts, stiffness, maxDepth, radius })` returns a copy of a render geometry (`positions`, `normals`, `indices`) with the surface pushed in. A vertex within `radius` moves along the hit `direction` by `min(maxDepth, impulse / stiffness)` times a smooth falloff. The 4096 nearest vertices move at most, per hit (up to 8 hits), and no vertex ends up more than `maxDepth` (up to 2 m) from where it was. Defaults: `stiffness` 2000 N s per metre, `maxDepth` 0.25 m, `radius` 0.4 m. Give a stiffer part a larger `stiffness`.
+- `detachedPartIds(parts, impulse)` lists the loose parts (`[{ id, threshold }]`, at most 32) that the hit tears off: the impulse reaches their threshold. Lower thresholds come off first.
+
+In a recipe, a `dented` geometry does the same for a node (details in `scene_capabilities`, topic `vehicleDamage`):
+
+```json
+{ "id": "hood-dented", "type": "dented", "source": "hood", "stiffness": 40000, "maxDepth": 0.3, "radius": 0.5,
+  "impacts": [{ "point": [0, 0.1, 1.2], "direction": [0, 0, -1], "impulse": 9000 }] }
+```
+
+The source can be any geometry except a fragment or another dent. The vertex count stays the same.
+A part that comes off in a physics crash is a body joined to the car body by a `fixed` joint with `breakImpulse` ([breakable joints](physics.md#fracture-and-breakable-glue)); it breaks when a body takes a contact impulse over that number in one 1/60 s step.
+
+Not covered yet: hinged doors, hood and trunk that pop open, swapping broken glass for shards, and dents driven by the live vehicle controller. A drive is kinematic, so `findDriveImpact` only reports the moment of the hit; the car does not stop or bounce.
+
 ## Limits
 
 - Kinematic only: no collisions, tire slip or jumps. Heading follows the path tangent (plus a half turn while reversing).

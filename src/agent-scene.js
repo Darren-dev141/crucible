@@ -519,6 +519,7 @@ const GEOMETRY_FIELDS = {
   mesh: ['base', 'edits', 'stack', 'smoothAngle', 'shapeKeys'],
   terrain: ['size', 'resolution', 'seed', 'amplitude', 'holes'],
   fragment: ['source', 'seed', 'cells', 'index', 'impact', 'impactRadius'],
+  dented: ['source', 'impacts', 'stiffness', 'maxDepth', 'radius'],
 };
 
 // A line is a two-point curve; both ends must be finite and apart.
@@ -549,7 +550,7 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
     return input.length;
   }
   for (const field of GEOMETRY_FIELDS[value.type]) {
-    if (value[field] !== undefined && !['profile', 'contour', 'holes', 'path', 'closed', 'base', 'edits', 'stack', 'shapeKeys', 'points', 'taper', 'text', 'font', 'align', 'from', 'to', 'shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'root', 'source', 'impact'].includes(field)) {
+    if (value[field] !== undefined && !['profile', 'contour', 'holes', 'path', 'closed', 'base', 'edits', 'stack', 'shapeKeys', 'points', 'taper', 'text', 'font', 'align', 'from', 'to', 'shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'root', 'source', 'impact', 'impacts'].includes(field)) {
       finite(value[field], field);
     }
   }
@@ -621,6 +622,8 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
     }
     case 'fragment':
       return fragmentEstimate(value, scope);
+    case 'dented':
+      return agentSceneModule('vehicleDamage').dentedVertexEstimate(value, scope.definitions, source => geometryEstimate(source, { definitions: scope.definitions, chain: [] }));
     case 'mesh': {
       const base = value.base;
       if (!base || typeof base !== 'object' || Array.isArray(base) || base.type === 'mesh' || Object.hasOwn(base, 'id')) {
@@ -743,6 +746,10 @@ function geometrySignature(definition, definitions) {
     geometryEstimate(definition, { definitions, chain: [] });
     return `${JSON.stringify(definition)}|source|${geometrySignature(definitions.get(definition.source), definitions)}`;
   }
+  if (definition.type === 'dented') {
+    geometryEstimate(definition, { definitions, chain: [] });
+    return `${JSON.stringify(definition)}|source|${geometrySignature(definitions.get(definition.source), definitions)}`;
+  }
   const dependencies = definition.type === 'mesh' ? checkedCutterDependencies(definition, definitions) : '';
   return dependencies ? `${JSON.stringify(definition)}|cutters|${dependencies}` : JSON.stringify(definition);
 }
@@ -801,6 +808,11 @@ function generateGeometry(value, maxVertices, scope) {
       const source = scope.definitions.get(value.source);
       return agentSceneModule('fracture').fragmentGeometry(value, geometrySignature(source, scope.definitions),
         () => generateGeometry(source, maxVertices, { definitions: scope.definitions, chain: [] }));
+    }
+    case 'dented': {
+      if (!scope) throw invalidField('type', 'dented', 'a geometry inside a recipe, where its source geometry is found by ID');
+      const { source, id, type, ...dent } = value;
+      return agentSceneModule('vehicleDamage').dentGeometry(generateGeometry(scope.definitions.get(source), maxVertices, { definitions: scope.definitions, chain: [] }), dent);
     }
     case 'mesh': {
       const cutterScope = meshCutterScope(value, scope);
