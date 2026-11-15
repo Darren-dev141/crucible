@@ -132,6 +132,37 @@ test('invalid geometry and peak staging budgets reject before allocation and pre
   assert.equal(state.uploads.length, allocations);
 });
 
+test('replaceParts and resize carry the runtime memory ceiling into the budget error (#1313)', () => {
+  const state = allocationRenderer();
+  const renderer = state.renderer;
+  const first = part('first', box());
+  renderer.replaceParts([first]);
+  renderer.memoryBudgetMiB = 16;
+  renderer.maximumMemoryBudgetMiB = 384;
+  renderer.geometryBytes = 600 * 1024 ** 2;
+  const mentionsCeiling = error => {
+    assert.match(error.message, /more than the 384 MiB largest budget this runtime accepts/);
+    assert.doesNotMatch(error.message, /pass \{ memoryBudgetMiB/);
+    return true;
+  };
+  assert.throws(() => renderer.replaceParts([first, part('new', sphere(24, 16))]), mentionsCeiling);
+
+  renderer.context.isContextLost = () => false;
+  renderer.context.MAX_RENDERBUFFER_SIZE = 8192;
+  renderer.context.MAX_TEXTURE_SIZE = 8192;
+  renderer.canvas = { clientWidth: 1920, clientHeight: 1080, width: 64, height: 64 };
+  renderer.pixelRatio = 1;
+  renderer.multisampleSamples = 4;
+  renderer.hdr = true;
+  renderer.depth = true;
+  renderer.benchmark = false;
+  renderer.geometryBytes = 600 * 1024 ** 2;
+  renderer.memoryBudgetMiB = 64;
+  assert.throws(() => renderer.resize(), mentionsCeiling);
+  renderer.maximumMemoryBudgetMiB = undefined;
+  assert.throws(() => renderer.resize(), /Fix: pass \{ memoryBudgetMiB: \d+ \}/);
+});
+
 test('driver errors and throwing uploads clean staged resources without retiring the working renderer', () => {
   const state = allocationRenderer();
   const first = part('first', box());

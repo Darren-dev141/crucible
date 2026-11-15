@@ -689,7 +689,7 @@ function allFinite(values) {
 }
 
 export class CrucibleRenderer {
-  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, hdr = false, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', deferProgramLink = false, deferEnvironmentPrefilter = false, background = null } = {}) {
+  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, hdr = false, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB } = {}) {
     this.background = background ? resolveBackground(background) : null;
     this.canvas = canvas;
     this.sceneParts = parts;
@@ -841,7 +841,8 @@ export class CrucibleRenderer {
       if (geometry.colors && geometry.colors.length !== geometry.positions.length) throw new Error('Geometry colors must contain RGB for every vertex.');
     }
     const expectedGeometryBytes = groups.reduce((total, group) => total + geometryBufferBytes(group[0].geometry) + group.length * INSTANCE_STRIDE * 4, 0);
-    this.memoryBudgetMiB = planRenderSize({ width: Math.max(1, canvas.clientWidth), height: Math.max(1, canvas.clientHeight), pixelRatio, samples: this.samples, memoryBudgetMiB, geometryBytes: expectedGeometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !benchmark, depth: this.depth, maximumSize: textureLimit }).memoryBudgetMiB;
+    this.memoryBudgetMiB = planRenderSize({ width: Math.max(1, canvas.clientWidth), height: Math.max(1, canvas.clientHeight), pixelRatio, samples: this.samples, memoryBudgetMiB, geometryBytes: expectedGeometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !benchmark, depth: this.depth, maximumSize: textureLimit, maximumMemoryBudgetMiB }).memoryBudgetMiB;
+    this.maximumMemoryBudgetMiB = maximumMemoryBudgetMiB;
     this.view = mat4.create();
     this.projection = mat4.create();
     this.viewProjection = mat4.create();
@@ -1424,7 +1425,7 @@ export class CrucibleRenderer {
     const frameBytes = estimateFrameBytes(this.canvas.width, this.canvas.height, this.samples, 2048, { hdr: this.hdr, bloom: !this.benchmark, depth: this.depth });
     const peakBytes = frameBytes + this.textureBytes + this.geometryBytes + newGeometryBytes + newInstanceBytes;
     if (peakBytes > this.memoryBudgetMiB * 1024 * 1024) {
-      throw memoryBudgetError(this.geometryBytes + newGeometryBytes + newInstanceBytes, this.textureBytes, frameBytes, this.memoryBudgetMiB);
+      throw memoryBudgetError(this.geometryBytes + newGeometryBytes + newInstanceBytes, this.textureBytes, frameBytes, this.memoryBudgetMiB, { maximumMemoryBudgetMiB: this.maximumMemoryBudgetMiB });
     }
     const previousLocations = this.partLocations;
     const previousBuffers = [...this.buffers];
@@ -1919,7 +1920,7 @@ export class CrucibleRenderer {
   resize() {
     // A lost context answers every parameter query with null, so there is no size limit to plan against. This class has no restore path: the caller disposes the renderer and builds a new one when the context comes back.
     if (this.context.isContextLost()) return;
-    const plan = planRenderSize({ width: Math.max(1, this.canvas.clientWidth), height: Math.max(1, this.canvas.clientHeight), pixelRatio: this.pixelRatio, samples: this.samples, memoryBudgetMiB: this.memoryBudgetMiB, geometryBytes: this.geometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !this.benchmark, depth: this.depth, maximumSize: Math.min(this.context.getParameter(this.context.MAX_RENDERBUFFER_SIZE), this.context.getParameter(this.context.MAX_TEXTURE_SIZE)) });
+    const plan = planRenderSize({ width: Math.max(1, this.canvas.clientWidth), height: Math.max(1, this.canvas.clientHeight), pixelRatio: this.pixelRatio, samples: this.samples, memoryBudgetMiB: this.memoryBudgetMiB, geometryBytes: this.geometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !this.benchmark, depth: this.depth, maximumSize: Math.min(this.context.getParameter(this.context.MAX_RENDERBUFFER_SIZE), this.context.getParameter(this.context.MAX_TEXTURE_SIZE)), maximumMemoryBudgetMiB: this.maximumMemoryBudgetMiB });
     const { width, height } = plan;
     this.memoryPlan = plan;
     if (this.canvas.width !== width || this.canvas.height !== height) {

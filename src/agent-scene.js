@@ -826,13 +826,15 @@ function validateGraph(graph, localBounds) {
     }
     if (node.geometry) {
       const bounds = localBounds.get(node.geometry);
+      const matrix = node.worldMatrix;
       for (let corner = 0; corner < 8; corner++) {
-        const point = [0, 1, 2].map(axis => corner & (1 << axis) ? bounds.max[axis] : bounds.min[axis]);
+        const pointX = corner & 1 ? bounds.max[0] : bounds.min[0];
+        const pointY = corner & 2 ? bounds.max[1] : bounds.min[1];
+        const pointZ = corner & 4 ? bounds.max[2] : bounds.min[2];
         for (let axis = 0; axis < 3; axis++) {
-          const matrix = node.worldMatrix;
           // Bound every multiplication and possible addition order, before cancellation.
-          const absoluteSum = Math.abs(matrix[axis] * point[0]) + Math.abs(matrix[4 + axis] * point[1]) +
-            Math.abs(matrix[8 + axis] * point[2]) + Math.abs(matrix[12 + axis]);
+          const absoluteSum = Math.abs(matrix[axis] * pointX) + Math.abs(matrix[4 + axis] * pointY) +
+            Math.abs(matrix[8 + axis] * pointZ) + Math.abs(matrix[12 + axis]);
           if (!Number.isFinite(Math.fround(absoluteSum))) {
             throw new RangeError(`Node ${node.name} world geometry bounds exceed Float32 range.`);
           }
@@ -1377,12 +1379,43 @@ function publishPose(stagedState, pose) {
 }
 
 // The recipe an agent wrote: without the geometries, materials and part nodes that placed assets generate.
+// The recipe without the nodes, geometries and materials a placed asset generates. Arrays are new, entries are shared.
+function recipeWithoutAssetOutput(recipe) {
+  return {
+    ...recipe,
+    nodes: recipe.nodes.filter(node => !node.assetPart),
+    geometries: recipe.geometries.filter(geometry => geometry.type !== 'asset'),
+    materials: recipe.materials.filter(material => !material.assetSource),
+  };
+}
+
 function authoredRecipe(recipe) {
-  const authored = structuredClone(recipe);
-  authored.nodes = authored.nodes.filter(node => !node.assetPart);
-  authored.geometries = authored.geometries.filter(geometry => geometry.type !== 'asset');
-  authored.materials = authored.materials.filter(material => !material.assetSource);
-  return authored;
+  return structuredClone(recipeWithoutAssetOutput(recipe));
+}
+
+// Node keys whose values the recipe normalizer may rebuild or rewrite in place, so a shared node could not be read-only.
+const NODE_KEYS_NEEDING_OWN_COPY = ['assetPart', 'asset', 'vegetation', 'relations', 'skin', 'instances', 'armature'];
+
+/**
+ * A copy of the staged recipe for a batch of plain field edits that clones only what the batch can change: the touched
+ * nodes, the materials and the small sections. Untouched nodes and the geometries stay shared with the staged recipe, which
+ * is read-only once committed and which the normalizer only reads from. Returns null when the recipe holds anything
+ * the normalizer could rewrite in place (placed assets, armatures, relations, instances), so the caller clones it all.
+ */
+function fieldEditCandidate(recipe, operations) {
+  const sharesSafely = !Object.hasOwn(recipe, 'armatures') &&
+    recipe.geometries.every(geometry => geometry.type !== 'asset') &&
+    recipe.materials.every(material => !material.assetSource) &&
+    recipe.nodes.every(node => NODE_KEYS_NEEDING_OWN_COPY.every(key => node[key] === undefined));
+  if (!sharesSafely) return null;
+  const touchedNodes = new Set(operations.filter(operation => operation.type === 'set-node').map(operation => operation.id));
+  const candidate = {};
+  for (const [key, value] of Object.entries(recipe)) {
+    if (key === 'geometries') candidate[key] = [...value];
+    else if (key === 'nodes') candidate[key] = value.map(node => (touchedNodes.has(node.id) ? structuredClone(node) : node));
+    else candidate[key] = structuredClone(value);
+  }
+  return candidate;
 }
 
 // The mesh geometry an edit names; `remedy` tells what to do when it is another type.
@@ -1455,7 +1488,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
 
   function snapshotState() {
     return {
-      recipe: authoredRecipe(state.recipe),
+      // The staged recipe is read-only once committed and a restore copies the snapshot's recipe, so the snapshot shares it.
+      recipe: recipeWithoutAssetOutput(state.recipe),
       geometryRecords: new Map(state.geometryRecords),
       materialHandles: new Map(state.materialHandles),
       restParts: state.restParts,
@@ -1545,7 +1579,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       placeholders.set(plan.definition.id, geometry);
       placeholderBounds.set(geometry, plan.existing?.bounds ?? { min: [0, 0, 0], max: [0, 0, 0] });
     }
-    compile(recipe, placeholders, placeholderBounds, limits);
+    // With every geometry resident and no relations to solve, the compile below sees the same inputs and checks the same things.
+    const compiledBelow = plans.every(plan => plan.existing) && !recipe.nodes.some(node => node.relations?.length);
+    if (!compiledBelow) compile(recipe, placeholders, placeholderBounds, limits);
 
     const geometryRecords = new Map();
     for (const plan of plans) {
@@ -1984,7 +2020,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         throw invalidField('operations', Array.isArray(inputOperations) ? `${inputOperations.length} operations` : inputOperations, `a list of 1 to ${limits.maxOperations} operations, such as [{ "type": "set-camera", "fov": 50 }]`);
       }
       const operations = copiedJson(inputOperations, limits.maxRecipeBytes);
-      const candidate = authoredRecipe(state.recipe);
+      const onlyFieldEdits = operations.every(operation => FIELD_EDIT_OPERATIONS.has(operation.type));
+      const candidate = (onlyFieldEdits && fieldEditCandidate(state.recipe, operations)) || authoredRecipe(state.recipe);
       const removedNodes = new Set();
       const removedMaterials = new Set();
       for (const operation of operations) {
@@ -2127,7 +2164,6 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         }
       }
       // Plain field edits put only values the operation copy already checked into the candidate, so the recipe is not copied and checked a second time.
-      const onlyFieldEdits = operations.every(operation => FIELD_EDIT_OPERATIONS.has(operation.type));
       return commit(stage(candidate, null, removedNodes, removedMaterials, onlyFieldEdits), true);
     },
     inspect(options = {}) {

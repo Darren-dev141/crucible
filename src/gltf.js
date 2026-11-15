@@ -4,6 +4,7 @@ import { GLTF_LAYER_EXTENSIONS, layerTextureReferences, materialLayersFromGltf }
 import { attributeFloatsInSlices } from './gltf-accessors.js';
 import { createSlicer, forEachChunk } from './cooperative.js';
 import { describeCompressedImage } from './compressed-texture.js';
+import { readImageDimensions } from './image-header.js';
 export { ktx2WorkerConfigFor } from './compressed-texture.js';
 import { decodeGltf, isLinePrimitive, overLimit, textureSourceIndex, throwOverruns, unusablePrimitives } from './gltf-decode.js';
 import { readPunctualLights } from './gltf-lights.js';
@@ -617,60 +618,11 @@ function dataUriBytes(uri) {
   return Uint8Array.from(binary, character => character.charCodeAt(0));
 }
 
-const RIFF_TAG = 0x52494646;
-const WEBP_TAG = 0x57454250;
-
-/** Read the size from a WebP header: the extended (VP8X), lossy (VP8) or lossless (VP8L) layout. */
-function webpImageSize(bytes, header) {
-  if (bytes.length < 30 || header.getUint32(0) !== RIFF_TAG || header.getUint32(8) !== WEBP_TAG) return null;
-  const chunk = String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]);
-  if (chunk === 'VP8X') {
-    const width = 1 + (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16));
-    const height = 1 + (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16));
-    return { width, height };
-  }
-  if (chunk === 'VP8 ' && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
-    return { width: header.getUint16(26, true) & 0x3fff, height: header.getUint16(28, true) & 0x3fff };
-  }
-  if (chunk === 'VP8L' && bytes[20] === 0x2f) {
-    const bits = header.getUint32(21, true);
-    return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
-  }
-  return null;
-}
-
 function validateImage(bytes, imageIndex, limits, ktx2Weight, overruns) {
   const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let width;
-  let height;
+  let { width, height } = readImageDimensions(bytes) ?? {};
   let scalable = true;
   let weight = 1;
-  if (bytes.length >= 24 && header.getUint32(0) === 0x89504e47 && header.getUint32(4) === 0x0d0a1a0a && header.getUint32(12) === 0x49484452) {
-    width = header.getUint32(16);
-    height = header.getUint32(20);
-  } else if (bytes.length >= 4 && header.getUint16(0) === 0xffd8) {
-    let offset = 2;
-    while (offset + 4 <= bytes.length) {
-      if (bytes[offset++] !== 0xff) break;
-      while (bytes[offset] === 0xff) offset++;
-      const marker = bytes[offset++];
-      if (marker === 0xd9 || marker === 0xda) break;
-      if (offset + 2 > bytes.length) break;
-      const length = header.getUint16(offset);
-      if (length < 2 || offset + length > bytes.length) break;
-      if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker) && length >= 7) {
-        height = header.getUint16(offset + 3);
-        width = header.getUint16(offset + 5);
-        break;
-      }
-      offset += length;
-    }
-  }
-  if (!width) {
-    const webpSize = webpImageSize(bytes, header);
-    width = webpSize?.width;
-    height = webpSize?.height;
-  }
   const ktx2Identifier = [0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a];
   if (!width && bytes.length >= 28 && ktx2Identifier.every((value, index) => bytes[index] === value)) {
     width = header.getUint32(20, true);
