@@ -24,9 +24,10 @@ test('field div and mod give 0 when the result would overflow, not Infinity or N
 
 test('filletCurve refuses arc segment counts that give NaN points or an unbounded build', () => {
   const corners = [[0, 0, 0], [1, 0, 0], [1, 1, 0]];
-  for (const arcSegments of [0, -1, 1.5, NaN, 1e9]) {
+  for (const arcSegments of [0, -1, 1.5, NaN, 65, 1e9]) {
     assert.throws(() => filletCurve(corners, 0.2, arcSegments), /arcSegments/, `arcSegments ${arcSegments}`);
   }
+  assert.ok(filletCurve(corners, 0.2, 64).flat().every(Number.isFinite), 'a large-radius fillet may use 64 pieces');
   const rounded = filletCurve(corners, 0.2, 4);
   assert.ok(rounded.flat().every(Number.isFinite));
 });
