@@ -43,8 +43,13 @@ export function floatToHalf(value) {
   if (exponent >= 31) return sign | 0x7c00;
   if (exponent <= 0) {
     if (exponent < -10) return sign;
-    const shifted = (fraction | 0x800000) >> (1 - exponent);
-    return sign | ((shifted + 0xfff + ((shifted >> 13) & 1)) >> 13);
+    // Round after the whole shift: the bits shifted out decide ties, so a value just above a midpoint rounds up.
+    const shift = 14 - exponent;
+    const mantissa = fraction | 0x800000;
+    const kept = mantissa >> shift;
+    const remainder = mantissa - (kept << shift);
+    const halfway = 1 << (shift - 1);
+    return sign | (kept + (remainder > halfway || (remainder === halfway && kept & 1) ? 1 : 0));
   }
   const rounded = (fraction + 0xfff + ((fraction >> 13) & 1)) >> 13;
   return sign + (exponent << 10) + rounded;
