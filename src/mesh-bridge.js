@@ -102,19 +102,24 @@ function turnAngle(mesh, previous, vertex, next) {
   return Math.acos(Math.max(-1, Math.min(1, cosine)));
 }
 
-/** The split of a loop of even length into sides a, b, a, b that puts the four corners on its sharpest turns. */
+/**
+ * The split of a loop of even length into sides a, b, a, b that puts the four corners on its sharpest turns. Splits whose
+ * grid would pass MAX_GRID_VERTICES are not tried, so a loop too long for any split fails instead of running for minutes.
+ */
 function chooseCorners(mesh, vertices) {
   const count = vertices.length;
+  const turns = vertices.map((vertex, index) => turnAngle(mesh, vertices[(index + count - 1) % count], vertex, vertices[(index + 1) % count]));
   let best = null;
   for (let a = 1; a < count / 2; a++) {
     const b = count / 2 - a;
+    if ((a + 1) * (b + 1) > MAX_GRID_VERTICES) continue;
     for (let start = 0; start < count; start++) {
-      const corners = [0, a, a + b, 2 * a + b].map(offset => (start + offset) % count);
-      const score = corners.reduce((sum, corner) => sum + turnAngle(mesh, vertices[(corner + count - 1) % count], vertices[corner], vertices[(corner + 1) % count]), 0)
+      const score = turns[start] + turns[(start + a) % count] + turns[(start + a + b) % count] + turns[(start + 2 * a + b) % count]
         - Math.abs(a - b) * 1e-6;
       if (!best || score > best.score + 1e-9) best = { score, a, b, start };
     }
   }
+  if (!best) throw new RangeError(`A loop of ${count} edges would pass ${MAX_GRID_VERTICES} grid vertices. Use fill_holes.`);
   return best;
 }
 
@@ -167,7 +172,7 @@ export function gridFill(mesh, edgeMask, { name = 'grid' } = {}) {
     const count = loop.vertices.length;
     if (!loop.closed) throw new RangeError('A selected boundary chain is open; grid_fill needs closed loops.');
     if (count < 4 || count % 2 !== 0) throw new RangeError(`A loop has ${count} edges; grid_fill needs an even number, at least 4. Subdivide one edge or use fill_holes.`);
-    polygons.push(...gridPolygons(mesh, loop, name, extraPositions));
+    for (const polygon of gridPolygons(mesh, loop, name, extraPositions)) polygons.push(polygon);
   }
   return { mesh: buildPolygonMesh(mesh, polygons, extraPositions), loops: loops.length };
 }
