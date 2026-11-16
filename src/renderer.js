@@ -2299,10 +2299,7 @@ export class CrucibleRenderer {
     if (localVolumes && this.localVolumeBuffers.noiseOctaves) steps.push(NOISE_OCTAVES_STEP);
     if (fogSky) steps.push('sky');
     if (frame.volumeExplosion) steps.push('explosion');
-    if (frame.linearOutput) {
-      requireFeatureCode('linearOutput').validate(this, frame);
-      steps.push('linearOutput');
-    }
+    if (frame.linearOutput) steps.push(requireFeatureCode('linearOutput').step(this, frame));
     const gradesColor = effects.saturation !== 1 || effects.contrast !== 1 || effects.temperature !== 0;
     const finishes = gradesColor || (frame.monochrome ?? 0) !== 0 || Boolean(frame.cinematic) || effects.vignette !== 0 || effects.grain !== 0;
     if (finishes) steps.push('finish');
