@@ -161,6 +161,10 @@ A seek to any frame gives the same pixels: a job samples each frame from its tim
 
 ## Output options: transparent, 16-bit PNG, EXR, region and 60 fps
 
+### A transparent frame sequence {since 0.21.0}
+
+A `stills` job with `stillCount: N` (2 to 300) writes N numbered PNGs, `frame-0.png` to `frame-<N-1>.png`, instead of 8 spread over `duration`. Frame i samples the motion clock at `i / fps` seconds from `motion.start` (or the timeline start), the same instants a video of that `fps` would show. `duration` is then `(stillCount - 1) / fps` and is left out. With `transparent: true` each frame is an RGBA PNG, so the sequence composites over other footage. A longer clip is rendered in parts: submit the next job with `motion.start` advanced by `stillCount / fps`. The combined output stays under 128 MiB per job, and a job over it fails with that limit. A square frame fits up to 1440x1440 for stills and video and 2880x2880 for an image job (`scene_capabilities` jobs: `maximumSquareSequenceSide`, `maximumSquareSide`).
+
 Four optional settings, each off by default. A job without them writes the same bytes as before.
 
 | Setting | Meaning |
@@ -252,7 +256,7 @@ await jobs.close();
 | `release(jobId)` | Promise of release confirmation for a settled terminal job |
 | `close()` | Promise that aborts work, waits for settlement, and releases store ownership |
 
-`settings.frameCount` contains 1 for images, 8 for stills, or `ceil(duration * fps)` for video.
+`settings.frameCount` contains 1 for images, 8 for stills (or `settings.stillCount`, see below), or `ceil(duration * fps)` for video.
 The defaults are 24 fps and one second.
 Images sample `animation.start` without requiring the default duration to fit the clip.
 Stills and videos require the entire requested animation range to fit the selected clip.
@@ -267,7 +271,7 @@ Runner metrics must contain finite JSON within 64 KiB.
 | Kind | Required output names | MIME type |
 | --- | --- | --- |
 | `image` | `render.png.partial` | `image/png` |
-| `stills` | `frame-0.png.partial` through `frame-7.png.partial` | `image/png` |
+| `stills` | `frame-0.png.partial` through `frame-7.png.partial` (through `frame-<stillCount - 1>` with `settings.stillCount`) | `image/png` |
 | `video` | `render.mp4.partial` | `video/mp4` |
 
 The runner returns every required artifact with its temporary filename, final filename, and MIME type.
@@ -342,7 +346,7 @@ A job that traces on the native path tracer holds more in the Node process, beca
 | Video frame rate | 1 to 60 fps |
 | Duration | 0.1 to 60 seconds |
 | Maximum video frames | 900 |
-| Still frames | 8 |
+| Still frames | 8, or 2 to 300 with `settings.stillCount` |
 | Job elapsed deadline | 60 seconds plus 2 seconds per frame, multiplied for frames larger than 1024x576 (360 frames at 1024x576 get 13 minutes), never more than 30 minutes; it counts render time only and starts once the job has its turn and the scene page is handed over |
 | Job queue wait | Five minutes behind other calls and the page handoff, counted apart from the elapsed deadline; the failure says "queue wait deadline" |
 | Video encoder drain and finalization | 30 seconds each |
