@@ -229,8 +229,9 @@ The 3D texture on the GPU is RGBA16F, 8 bytes per voxel whatever the channels: 1
 
 `src/gas-sim.js` bakes an explosion from a real grid simulation instead of a noise shape, into the grid files above: no dependency, plain JS, the same options and seed give the same bytes. It is the solver of Stam's "Stable Fluids" (semi-Lagrangian advection, pressure projection), with the smoke buoyancy and vorticity confinement of Fedkiw, Stam and Jensen, MacCormack advection with its limiter (Selle et al.), and a fuel that burns where it is hot into flame, heat and smoke.
 
+It is not a package export or an MCP tool yet, so it runs from a checkout of the repository, where `src/gas-sim.js` exports `bakeGasSimToGrids` and `GAS_SIM_TEMPERATURE_UNIT`:
+
 ```js
-import { bakeGasSimToGrids, GAS_SIM_TEMPERATURE_UNIT } from './src/gas-sim.js'; // not a package export or an MCP tool yet
 const frames = bakeGasSimToGrids({ resolution: 64, frames: 72, fps: 24, seed: 3 }, 'blast');
 // { shape: 'grid', frames, fps: 24, center: [0, 4, 0], size: [8, 8, 8], temperatureScale: GAS_SIM_TEMPERATURE_UNIT, blackbodyIntensity: 0.3 }
 ```
