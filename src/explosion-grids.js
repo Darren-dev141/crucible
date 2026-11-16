@@ -25,8 +25,8 @@ const BAKE_SECONDS_LIMIT = 90;
 const NAME_PATTERN = /^explosion-(dry|oily)-(\d{1,10})(-velocity)?_(\d{4})\.67vg$/;
 // Oily fuel burns sootier: more smoke at the core and more smoke from every burned unit of fuel.
 const FUEL_OPTIONS = Object.freeze({
-  dry: Object.freeze({}),
-  oily: Object.freeze({ burstSmoke: 1.6, smokeYield: 1.1 }),
+  dry: Object.freeze({ turbulence: 1, vorticity: 40 }),
+  oily: Object.freeze({ burstSmoke: 1.6, smokeYield: 1.1, turbulence: 1, vorticity: 40 }),
 });
 
 const bakes = new Map();
