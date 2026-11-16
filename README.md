@@ -1,17 +1,37 @@
 <p align="center">
+  <a href="https://crucible.codepawl.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://crucible.codepawl.com/brand/crucible-lockup-dark.png">
+      <img alt="Crucible" src="https://crucible.codepawl.com/brand/crucible-lockup.png" width="360">
+    </picture>
+  </a>
+</p>
+
+<h3 align="center">The 3D engine your AI agent drives</h3>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@codepawlhq/crucible"><img alt="npm version" src="https://img.shields.io/npm/v/@codepawlhq/crucible?style=flat-square&label=npm&color=4f4e5a&labelColor=2a282d"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4f4e5a?style=flat-square&labelColor=2a282d"></a>
+  <img alt="Node.js 20.19 or later" src="https://img.shields.io/badge/node-%E2%89%A520.19-4f4e5a?style=flat-square&labelColor=2a282d">
+  <img alt="MCP server for agents" src="https://img.shields.io/badge/agents-MCP%20server-4f4e5a?style=flat-square&labelColor=2a282d">
+</p>
+
+<p align="center">
+  <a href="https://crucible.codepawl.com">Website</a> ·
+  <a href="https://crucible.codepawl.com/docs.html">Docs</a> ·
+  <a href="https://crucible.codepawl.com/showcase.html">Showcase</a> ·
+  <a href="https://crucible.codepawl.com/llms.txt">Guide for agents</a> ·
+  <a href="https://github.com/codepawl/crucible/blob/main/CHANGELOG.md">Changelog</a> ·
+  <a href="https://github.com/codepawl/crucible/discussions">Discussions</a>
+</p>
+
+<p align="center">
   <a href="https://crucible.codepawl.com"><img src="https://crucible.codepawl.com/previews/hero-classroom.webp" alt="A sunlit classroom with wooden desks and chairs, a chalkboard and tall windows with blinds, path traced by Crucible" width="100%"></a>
   <br>
   <sub>Classroom by Christophe Seux, CC0, from the Blender demo files, path traced in Crucible with Cook</sub>
 </p>
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/@codepawlhq/crucible"><img alt="npm version" src="https://img.shields.io/npm/v/@codepawlhq/crucible?style=flat-square&label=npm&color=7CC765&labelColor=0A1D1A"></a>
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-E9F5F0?style=flat-square&labelColor=0A1D1A"></a>
-  <img alt="Node.js 20.19 or later" src="https://img.shields.io/badge/node-%E2%89%A520.19-4DB6FF?style=flat-square&labelColor=0A1D1A">
-  <img alt="MCP server for agents" src="https://img.shields.io/badge/agents-MCP%20server-F7C948?style=flat-square&labelColor=0A1D1A">
-</p>
-
-Crucible is a 3D engine for JavaScript that an AI agent drives through an MCP server. It makes 3D easy to understand and easy to do.
+Crucible is a 3D engine for JavaScript with an MCP server for AI agents. It makes 3D easy to understand and easy to do.
 
 > **67js → Crucible.** 67js is the old name. The `@codepawlhq/67js` package is deprecated: install `@codepawlhq/crucible` instead. Old 67js.codepawl.com links redirect here.
 
@@ -243,7 +263,7 @@ Questions, ideas and what you made go in [Discussions](https://github.com/codepa
 Crucible is free and MIT licensed. [Sponsors](https://github.com/sponsors/codepawl) pay for GPU time, test hardware and the hours that go into it.
 Company sponsors get their logo here from $100 a month.
 
-[![Sponsor CodePawl](https://img.shields.io/badge/Sponsor-CodePawl-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/codepawl)
+[![Sponsor CodePawl](https://img.shields.io/badge/Sponsor-CodePawl-4f4e5a?style=for-the-badge&logo=githubsponsors&logoColor=white&labelColor=2a282d)](https://github.com/sponsors/codepawl)
 
 ## Credits
 
@@ -252,8 +272,28 @@ Company sponsors get their logo here from $100 a month.
 - The textures and the HDRI on the site are CC0 scans from [Poly Haven](https://polyhaven.com) and [ambientCG](https://ambientcg.com). See [the texture credits](https://github.com/codepawl/crucible/blob/main/public/textures/CREDITS.md).
 - The Bistro renders use [Amazon Lumberyard Bistro](https://developer.nvidia.com/orca/amazon-lumberyard-bistro) (CC BY 4.0, from the NVIDIA ORCA library) under a CC0 [Poly Haven](https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky) sky.
 - The showcase models and their sources are listed in each world's `scene.json` under `public/showcase/`.
-- The banner wordmark uses [Sora](https://fonts.google.com/specimen/Sora) (SIL Open Font License).
+- The Crucible and CodePawl wordmarks use [Plus Jakarta Sans](https://fonts.google.com/specimen/Plus+Jakarta+Sans) (SIL Open Font License).
 
 ## License
 
 [MIT](LICENSE) © CodePawl
+
+<br>
+
+<p align="center">
+  <a href="https://codepawl.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/codepawl/crucible/main/public/brand/codepawl-lockup-dark.png">
+      <img alt="CodePawl" src="https://raw.githubusercontent.com/codepawl/crucible/main/public/brand/codepawl-lockup.png" width="180">
+    </picture>
+  </a>
+  <br>
+  <sub>Crucible is made by CodePawl, an independent 3D studio in Vietnam.</sub>
+  <br>
+  <sub>
+    <a href="https://x.com/codepawl">X</a> ·
+    <a href="https://github.com/codepawl">GitHub</a> ·
+    <a href="https://www.youtube.com/@codepawlhq">YouTube</a> ·
+    <a href="https://www.threads.com/@codepawl">Threads</a>
+  </sub>
+</p>
