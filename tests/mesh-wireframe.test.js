@@ -30,7 +30,7 @@ test('a clean cube is twelve regular polygon edges with no fault', () => {
 
 test('triangulation diagonals of planar quads are not drawn, whether the cube is quads or triangle pairs', () => {
   const triangles = [];
-  for (const [a, b, c, d] of CUBE_FACES) triangles.push(a, b, c, a, c, d);
+  for (const [firstCorner, secondCorner, thirdCorner, fourthCorner] of CUBE_FACES) triangles.push(firstCorner, secondCorner, thirdCorner, firstCorner, thirdCorner, fourthCorner);
   const positions = new Float32Array(CUBE_POSITIONS);
   const geometry = { positions, normals: new Float32Array(positions.length), indices: new Uint32Array(triangles) };
   const wireframe = meshWireframe(meshFromGeometry(geometry));

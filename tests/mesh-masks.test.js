@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { box } from '../src/geometry.js';
 import { meshFromGeometry, applyMeshEdits } from '../src/mesh.js';
-import { vertexGroupWeights } from '../src/mesh-data.js';
-import { checkOcclusionWork } from '../src/mesh-masks.js';
+import { createMeshData, vertexGroupWeights } from '../src/mesh-data.js';
+import { checkOcclusionWork, measureVertexMask } from '../src/mesh-masks.js';
 
 // A box cut into squares, so a vertex lies on a face, on an edge or at a corner.
 function cutBox(cuts = 3) {
@@ -177,4 +177,24 @@ test('stratified occlusion rays give the same bytes on every run, in whole share
   }
   assert.ok(topCount > 0);
   assert.equal(topWeights, 0, 'the open top is not occluded');
+});
+
+test('occlusion skips zero-area faces instead of failing the whole measure', () => {
+  const mesh = createMeshData({
+    positions: Float32Array.of(0, 0, 0, 1, 0, 0, 2, 0, 0, 0, 1, 0),
+    faceOffsets: Uint32Array.of(0, 3, 6),
+    cornerVertices: Uint32Array.of(0, 1, 2, 0, 2, 3),
+  });
+  const weights = measureVertexMask(mesh, 'occlusion', { rays: 4 }, new Uint8Array(4).fill(1));
+  assert.equal(weights.length, 4);
+  assert.ok(weights.every(weight => weight >= 0 && weight <= 1));
+});
+
+test('occlusion of a mesh with only zero-area faces is zero everywhere', () => {
+  const mesh = createMeshData({
+    positions: Float32Array.of(0, 0, 0, 1, 0, 0, 2, 0, 0),
+    faceOffsets: Uint32Array.of(0, 3),
+    cornerVertices: Uint32Array.of(0, 1, 2),
+  });
+  assert.deepEqual(Array.from(measureVertexMask(mesh, 'occlusion', { rays: 4 }, new Uint8Array(3).fill(1))), [0, 0, 0]);
 });

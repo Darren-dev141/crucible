@@ -127,9 +127,9 @@ function particleAreas(positions, triangles, particleCount) {
 function triangleNormal(positions, first, second, third, normal) {
   const a = first * 3;
   const b = second * 3;
-  const c = third * 3;
+  const thirdVertexOffset = third * 3;
   const edgeOne = [positions[b] - positions[a], positions[b + 1] - positions[a + 1], positions[b + 2] - positions[a + 2]];
-  const edgeTwo = [positions[c] - positions[a], positions[c + 1] - positions[a + 1], positions[c + 2] - positions[a + 2]];
+  const edgeTwo = [positions[thirdVertexOffset] - positions[a], positions[thirdVertexOffset + 1] - positions[a + 1], positions[thirdVertexOffset + 2] - positions[a + 2]];
   const x = edgeOne[1] * edgeTwo[2] - edgeOne[2] * edgeTwo[1];
   const y = edgeOne[2] * edgeTwo[0] - edgeOne[0] * edgeTwo[2];
   const z = edgeOne[0] * edgeTwo[1] - edgeOne[1] * edgeTwo[0];
@@ -450,6 +450,16 @@ function checkStiffnessWeights(weights, particleCount) {
   return weights;
 }
 
+// The longest step the solver accepts. A step is split into 4 substeps, so a longer one is a frame the cloth cannot follow.
+const MAX_STEP_SECONDS = 1;
+
+function checkTimeStep(deltaSeconds) {
+  if (!(deltaSeconds >= 0 && deltaSeconds <= MAX_STEP_SECONDS)) {
+    throw new RangeError(`Cloth step needs deltaSeconds from 0 to 1, such as 1 / 60; found ${deltaSeconds}.`);
+  }
+  return deltaSeconds;
+}
+
 function checkUnit(value, field, maximum) {
   if (!Number.isFinite(value) || value < 0 || value > maximum) {
     throw new RangeError(`Cloth ${field} must be a number from 0 to ${maximum}; found ${value}.`);
@@ -620,6 +630,8 @@ export function createCloth(positions, triangles, options = {}) {
   let anchorsReleased = false;
 
   function step(deltaSeconds, frame = {}) {
+    // Zero time changes nothing; going on would divide the travel of each substep by zero.
+    if (checkTimeStep(deltaSeconds) === 0) return;
     const wind = frame.wind ?? options.wind ?? [0, 0, 0];
     const hasWind = wind.some(component => component !== 0);
     const stepColliders = frame.colliders ?? colliders;
@@ -776,6 +788,12 @@ export function createCloth(positions, triangles, options = {}) {
 export function bakeCloth(positions, triangles, options) {
   const cloth = createCloth(positions, triangles, options);
   const framesPerSecond = options.framesPerSecond ?? 60;
+  if (!(framesPerSecond >= 1 && framesPerSecond <= Infinity)) {
+    throw new RangeError(`Cloth framesPerSecond must be at least 1, such as 60; found ${framesPerSecond}.`);
+  }
+  if (!Number.isInteger(options.frameCount) || options.frameCount < 1) {
+    throw new RangeError(`Cloth frameCount must be a whole number from 1; found ${options.frameCount}.`);
+  }
   const frames = new Float32Array(options.frameCount * positions.length);
   frames.set(Float32Array.from(positions), 0);
   for (let frame = 1; frame < options.frameCount; frame++) {
@@ -787,6 +805,7 @@ export function bakeCloth(positions, triangles, options) {
 
 /** Write the particle positions at `time` into `target`, a linear blend of the two nearest recorded frames. */
 export function sampleClothFrames(recording, time, target) {
+  if (Number.isNaN(time)) throw new RangeError('Cloth sample time must be seconds; found NaN.');
   const stride = recording.particleCount * 3;
   const position = Math.min(Math.max(time * recording.framesPerSecond, 0), recording.frameCount - 1);
   const lower = Math.floor(position);

@@ -213,6 +213,10 @@ function main() {
     }
   }
   const files = mergeLcov(texts);
+  if (files.size === 0) {
+    console.error(`The ${paths.length} lcov file(s) hold no source files, so there is nothing to measure and every figure would read 100%. A test run that crashed leaves an empty file like this: rerun it and pass the lcov it writes.`);
+    process.exit(1);
+  }
   if (mergedOut) writeFileSync(mergedOut, toLcov(files));
   const { totals, percentages } = totalsOf(files);
   const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));

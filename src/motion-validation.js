@@ -31,7 +31,7 @@ export function bounded(value, minimum, maximum, label) {
 export function denseArray(value, maximum, label) {
   if (!Array.isArray(value) || value.length > maximum || Object.keys(value).length !== value.length ||
       Reflect.ownKeys(value).length !== value.length + 1 || Object.keys(value).some((key, index) => key !== String(index))) {
-    throw new TypeError(`${label} must be a bounded dense array.`);
+    throw Object.assign(new TypeError(`${label} must be a bounded dense array.`), { fieldPath: label });
   }
   for (let index = 0; index < value.length; index++) {
     if (!Object.hasOwn(Object.getOwnPropertyDescriptor(value, index), 'value')) {

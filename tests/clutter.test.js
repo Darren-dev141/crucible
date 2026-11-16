@@ -90,3 +90,10 @@ test('every preset builds, and bad options fail with clear errors', () => {
   assert.throws(() => createClutter({ ...near, leafColors: [] }), /leafColors/);
   assert.throws(() => createClutter({ ...near, mask: 1 }), /mask/);
 });
+
+test('a seed that is not a finite number is refused instead of scattering one fixed layout', () => {
+  for (const seed of [Number.NaN, Infinity, '3', null]) {
+    assert.throws(() => createClutter({ ...near, seed }), /Clutter seed must be a finite number such as 1/, String(seed));
+  }
+  assert.doesNotThrow(() => createClutter({ ...near, seed: 0 }));
+});

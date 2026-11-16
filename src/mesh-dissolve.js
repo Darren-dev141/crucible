@@ -32,7 +32,7 @@ export function fillHoles(mesh, { sides = Infinity, name = 'fill' } = {}) {
   if (filled === 0) {
     throw new RangeError(skipped === 0
       ? 'The mesh has no open boundary to fill.'
-      : `No boundary loop could be filled: ${skipped} skipped because they are open chains or have more than ${sides} sides.`);
+      : `No boundary loop could be filled: ${skipped} skipped because they are open chains${Number.isFinite(sides) ? ` or have more than ${sides} sides` : ''}.`);
   }
   return { mesh: buildPolygonMesh(mesh, polygons), filled, skipped };
 }

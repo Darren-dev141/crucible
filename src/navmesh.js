@@ -44,6 +44,18 @@ function geometryBounds(positions) {
   return { minimumX, minimumZ, maximumX, maximumZ };
 }
 
+function assertUsableGeometry(positions, indices, bounds) {
+  if (![bounds.minimumX, bounds.maximumX, bounds.minimumZ, bounds.maximumZ].every(Number.isFinite)) {
+    throw new RangeError('navmesh positions must be finite.');
+  }
+  const vertexCount = Math.floor(positions.length / 3);
+  for (let offset = 0; offset < indices.length; offset++) {
+    if (!(indices[offset] >= 0 && indices[offset] < vertexCount)) {
+      throw new RangeError(`navmesh index ${offset} is ${indices[offset]}; use 0 to ${vertexCount - 1}.`);
+    }
+  }
+}
+
 // Binary heap ordered by cost, then by cell index, so equal costs always leave in the same order.
 function createOpenSet() {
   const costs = [];
@@ -111,6 +123,7 @@ export function createNavmesh({ positions, indices, agentRadius, maxSlopeDegrees
   }
 
   const bounds = geometryBounds(positions);
+  assertUsableGeometry(positions, indices, bounds);
   const columns = Math.max(1, Math.ceil((bounds.maximumX - bounds.minimumX) / size));
   const rows = Math.max(1, Math.ceil((bounds.maximumZ - bounds.minimumZ) / size));
   if (columns * rows > cellBudget) {
@@ -338,24 +351,24 @@ function rasterizeTopSurface(positions, indices, bounds, size, columns, rows, he
   for (let offset = 0; offset < indices.length; offset += 3) {
     const a = indices[offset] * 3;
     const b = indices[offset + 1] * 3;
-    const c = indices[offset + 2] * 3;
+    const thirdVertexOffset = indices[offset + 2] * 3;
     const ax = positions[a];
     const az = positions[a + 2];
-    const determinant = (positions[b + 2] - positions[c + 2]) * (ax - positions[c]) + (positions[c] - positions[b]) * (az - positions[c + 2]);
+    const determinant = (positions[b + 2] - positions[thirdVertexOffset + 2]) * (ax - positions[thirdVertexOffset]) + (positions[thirdVertexOffset] - positions[b]) * (az - positions[thirdVertexOffset + 2]);
     if (Math.abs(determinant) < 1e-12) continue;
-    const minimumColumn = Math.max(0, Math.floor((Math.min(ax, positions[b], positions[c]) - bounds.minimumX) / size - 0.5));
-    const maximumColumn = Math.min(columns - 1, Math.ceil((Math.max(ax, positions[b], positions[c]) - bounds.minimumX) / size));
-    const minimumRow = Math.max(0, Math.floor((Math.min(az, positions[b + 2], positions[c + 2]) - bounds.minimumZ) / size - 0.5));
-    const maximumRow = Math.min(rows - 1, Math.ceil((Math.max(az, positions[b + 2], positions[c + 2]) - bounds.minimumZ) / size));
+    const minimumColumn = Math.max(0, Math.floor((Math.min(ax, positions[b], positions[thirdVertexOffset]) - bounds.minimumX) / size - 0.5));
+    const maximumColumn = Math.min(columns - 1, Math.ceil((Math.max(ax, positions[b], positions[thirdVertexOffset]) - bounds.minimumX) / size));
+    const minimumRow = Math.max(0, Math.floor((Math.min(az, positions[b + 2], positions[thirdVertexOffset + 2]) - bounds.minimumZ) / size - 0.5));
+    const maximumRow = Math.min(rows - 1, Math.ceil((Math.max(az, positions[b + 2], positions[thirdVertexOffset + 2]) - bounds.minimumZ) / size));
     for (let row = minimumRow; row <= maximumRow; row++) {
       for (let column = minimumColumn; column <= maximumColumn; column++) {
         const x = bounds.minimumX + (column + 0.5) * size;
         const z = bounds.minimumZ + (row + 0.5) * size;
-        const weightA = ((positions[b + 2] - positions[c + 2]) * (x - positions[c]) + (positions[c] - positions[b]) * (z - positions[c + 2])) / determinant;
-        const weightB = ((positions[c + 2] - az) * (x - positions[c]) + (ax - positions[c]) * (z - positions[c + 2])) / determinant;
+        const weightA = ((positions[b + 2] - positions[thirdVertexOffset + 2]) * (x - positions[thirdVertexOffset]) + (positions[thirdVertexOffset] - positions[b]) * (z - positions[thirdVertexOffset + 2])) / determinant;
+        const weightB = ((positions[thirdVertexOffset + 2] - az) * (x - positions[thirdVertexOffset]) + (ax - positions[thirdVertexOffset]) * (z - positions[thirdVertexOffset + 2])) / determinant;
         const weightC = 1 - weightA - weightB;
         if (weightA < -EDGE_TOLERANCE || weightB < -EDGE_TOLERANCE || weightC < -EDGE_TOLERANCE) continue;
-        const height = weightA * positions[a + 1] + weightB * positions[b + 1] + weightC * positions[c + 1];
+        const height = weightA * positions[a + 1] + weightB * positions[b + 1] + weightC * positions[thirdVertexOffset + 1];
         const cell = row * columns + column;
         if (height > heights[cell]) heights[cell] = height;
       }
@@ -366,6 +379,9 @@ function rasterizeTopSurface(positions, indices, bounds, size, columns, rows, he
 function blockFootprint(obstacle, bounds, size, columns, rows, blocked) {
   const minimum = pointXZ(obstacle?.min, 'obstacle min');
   const maximum = pointXZ(obstacle?.max, 'obstacle max');
+  if (minimum[0] > maximum[0] || minimum[1] > maximum[1]) {
+    throw new RangeError('navmesh obstacle min must not exceed max; swap them.');
+  }
   const firstColumn = Math.max(0, Math.floor((minimum[0] - bounds.minimumX) / size));
   const lastColumn = Math.min(columns - 1, Math.floor((maximum[0] - bounds.minimumX) / size));
   const firstRow = Math.max(0, Math.floor((minimum[1] - bounds.minimumZ) / size));

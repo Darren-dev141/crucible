@@ -117,9 +117,9 @@ export function normalSpread(vertices, indices) {
   for (let corner = 0; corner < indices.length; corner += 3) {
     const a = indices[corner] * 3;
     const b = indices[corner + 1] * 3;
-    const c = indices[corner + 2] * 3;
+    const thirdVertexOffset = indices[corner + 2] * 3;
     const edgeOne = [vertices[b] - vertices[a], vertices[b + 1] - vertices[a + 1], vertices[b + 2] - vertices[a + 2]];
-    const edgeTwo = [vertices[c] - vertices[a], vertices[c + 1] - vertices[a + 1], vertices[c + 2] - vertices[a + 2]];
+    const edgeTwo = [vertices[thirdVertexOffset] - vertices[a], vertices[thirdVertexOffset + 1] - vertices[a + 1], vertices[thirdVertexOffset + 2] - vertices[a + 2]];
     let normalX = edgeOne[1] * edgeTwo[2] - edgeOne[2] * edgeTwo[1];
     let normalY = edgeOne[2] * edgeTwo[0] - edgeOne[0] * edgeTwo[2];
     let normalZ = edgeOne[0] * edgeTwo[1] - edgeOne[1] * edgeTwo[0];

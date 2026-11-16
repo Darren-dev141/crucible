@@ -77,7 +77,7 @@ async function exportTablesInPage({ width, height, bounces, seed, instancing, ca
   const { manifest, tables } = splitExportForChunks(packed);
   window.__nativeExportTables = tables;
   const exported = manifest;
-  return { ...exported, ignored: describeIgnoredFeatures(parts, environment, 'cpu', { kernelMaterials: exported.wholeMaterials }), partCount: parts.length, hiddenCount: hidden.size, listedParts };
+  return { ...exported, ignored: describeIgnoredFeatures(parts, environment, 'cpu', { kernelMaterials: exported.wholeMaterials, clipStart: tracerCamera.clipStart }), partCount: parts.length, hiddenCount: hidden.size, listedParts };
 }
 
 async function loadOidnIfAvailable() {

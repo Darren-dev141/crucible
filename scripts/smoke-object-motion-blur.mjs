@@ -44,7 +44,7 @@ async function runJob(sessionId, settings, expectedRevision) {
   const submitted = (await call('scene_render_submit', { sessionId, expectedRevision, settings })).structuredContent;
   const record = await finished(submitted.jobId);
   assert.equal(record.state, 'completed', record.reason);
-  const result = (await call('scene_render_result', { jobId: submitted.jobId })).structuredContent;
+  const result = (await call('scene_render_result', { jobId: submitted.jobId, response_format: 'detailed' })).structuredContent;
   const files = new Map();
   for (const artifact of result.artifacts) {
     const bytes = await readFile(artifact.path);

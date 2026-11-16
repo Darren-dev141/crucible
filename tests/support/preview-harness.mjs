@@ -5,7 +5,7 @@ import { createAgentScene, applyCameraFields, needsMeshBooleans, loadMeshBoolean
 import { normalizeBlend } from '../../src/mesh-blend.js';
 import { applyProjection } from '../../src/camera.js';
 import { effectsWithFStop } from '../../src/camera-effects.js';
-import { resolveAgentShadow, agentEnvironmentMap } from '../../src/agent-look.js';
+import { fitAgentShadow, resolveAgentShadow, agentEnvironmentMap } from '../../src/agent-look.js';
 import { agentSceneModule, agentSceneModuleLoaded } from '../../src/agent-scene-modules.js';
 import { createAgentAssetScene } from '../../src/agent-asset.js';
 import { parseGltf } from '../../src/gltf.js';
@@ -89,7 +89,7 @@ export function previewHarness({ createImageBitmap = async () => { throw new Err
     setManifoldModuleLoader: () => {},
     needsPhysics, loadPhysicsEngine, physicsEngineLoaded, setPhysicsModuleLoader: () => {},
     describeMarks, validateMarks, sceneQueryFor, summarizeWalkMap, walkOptionsFor, createQueryOnlyCache, parseGltf, hasPatternTextures, rasterOptionsFor, Uint8Array, atob, sessionProblem, SCENE_STORE_LIMITS, AGENT_SCENE_DEFAULT_LIMITS, MAXIMUM_MEMORY_MIB, imageLimitProblem, TEXTURE_SEQUENCE_LIMITS, Blob, createImageBitmap, describeApplication, framingProblems, placementProblems, textureProblems, exposureProblems, lumaShares, assetCopyKey, recipeAssetNeeds, agentAssetDecodeOptions, withCatalogLimitAdvice,
-    applyProjection, applyCameraFields, mat4, resolveAgentShadow, agentEnvironmentMap, BRANCH_LIMITS,
+    applyProjection, applyCameraFields, mat4, fitAgentShadow, resolveAgentShadow, agentEnvironmentMap, BRANCH_LIMITS,
     // Line art needs a real renderer with render passes, so the fault-injected one gets a no-op install.
     agentSceneModule: name => (name === 'lineArt' ? { installLineArt: renderer => renderer } : name === 'userPass' ? { ...agentSceneModule(name), installUserPasses: renderer => renderer } : agentSceneModule(name)), agentSceneModuleLoaded, createBranchStore, printableLabel,
     CrucibleRenderer: FaultInjectedRenderer, skyOpenness: () => 1, fogSkyVisibility: () => null,

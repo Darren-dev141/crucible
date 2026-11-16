@@ -62,6 +62,8 @@ const skinSpec = z.strictObject({
 const relationList = z.array(z.record(z.string(), z.unknown())).max(8).describe('Relations against other mesh nodes; fields in scene_capabilities relations. [] removes them.').meta({ id: 'Relations' });
 const placedAsset = z.record(z.string(), z.unknown()).describe('Catalog GLB placed at this group node: {id,materials,clip,drive}; see scene_capabilities placedAssets.').meta({ id: 'PlacedAsset' });
 const placedVegetation = z.record(z.string(), z.unknown()).describe('Trees at this group node: {species} for one, or {mix, scatter:{ground,...}} over a terrain node; see scene_capabilities vegetation.').meta({ id: 'PlacedVegetation' });
+// Left open here and checked by the scene (normalizeRayVisibility), whose errors say what to pass; the shape is in scene_capabilities renderFlags.
+const rayVisibility = z.unknown();
 const nodeFields = {
   relations: relationList.optional(),
   asset: placedAsset.optional(),
@@ -75,6 +77,7 @@ const nodeFields = {
   holdout: z.boolean().optional(),
   shadowCatcher: z.boolean().optional(),
   shadowOnly: z.boolean().optional(),
+  rayVisibility: rayVisibility.optional(),
   blend: z.strictObject({ radius: z.number().min(0.005).max(2) }).optional().describe('Soft seam into another mesh, radius in m; docs/mesh-blend.md.'),
   label: z.string().max(256).optional().describe('Human-readable label. Identity remains the node ID.'),
   parent: identifier.nullable().optional().describe('Parent node ID, or null for a root. Local transforms stay unchanged.'),
@@ -292,7 +295,7 @@ const environment = z.strictObject({
   skyTop: color.optional(),
   skyBottom: color.optional(),
   fogColor: color.optional(),
-  fogDensity: bounded(0, 10).optional(),
+  fogDensity: bounded(0, 10).nullable().optional().describe('Null (what scene_export_recipe writes) leaves the fog density to the setup.'),
   volumeFog: volumeFog.optional().describe('Light-shaft fog; needs HDR.'),
   localVolumes: z.array(z.record(z.string(), z.unknown())).max(8).optional().describe('Up to 8 absorbing and emitting volumes; fields in scene_capabilities localVolumes.'),
   liquid: liquidOptics.optional().describe('Optics for materials tagged liquid or foam.'),
@@ -328,6 +331,8 @@ const effects = z.strictObject({
   depthOfField: z.strictObject({ blur: unit.optional(), focusDistance: bounded(0.01, 100000).optional() }).optional().describe('Lens blur: blur 0 to 1, focusDistance metres.'),
   motionBlur: z.strictObject({ shutter: bounded(0, 0.5).optional(), objects: bounded(0, 1).optional() }).optional().describe('Motion smear, shutter in seconds. objects 0 to 1 also smears each moving part along its own motion (off at 0).'),
   colorBalance: looseField,
+  flash: looseField,
+  distortion: looseField,
   glare: looseField,
   lensDistortion: looseField,
   stylize: looseField,
@@ -505,10 +510,16 @@ const geometry = z.discriminatedUnion('type', [
   z.strictObject({ id: identifier, type: z.literal('circle'), segments, innerRadius: finite.optional() }).describe('Unit disc facing +Z; innerRadius makes a ring.'),
   z.strictObject({ id: identifier, type: z.literal('line'), from: vector3, to: vector3, radius: finite.optional(), radialSegments: detail(3, 128) }),
   z.strictObject({ id: identifier, type: z.literal('fragment'), source: identifier, index: z.number().int().min(0).max(63), cells: z.number().int().min(2).max(64), seed: detail(0, 4294967295), impact: vector3.optional(), impactRadius: positive.optional() }).describe('Piece of a fractured geometry; made by fracture-node.'),
-  z.strictObject({ id: identifier, type: z.literal('mesh'), base: z.discriminatedUnion('type', primitiveGeometries(false)).describe('Starting shape, converted to welded quads with axis face tags.'), edits: recipeMeshEdits.optional().describe('Replayable edit log, applied in order. Each item has the shape of one mesh_edit edit; read that tool for every op and field.'), stack: recipeMeshStack.optional().describe('Non-destructive modifier stack evaluated after the edits. Each item has the shape of one mesh_stack node; read that tool for the ops.'), smoothAngle: bounded(0, 180).optional().describe('Edges bending more than this many degrees render hard. Defaults to 30.'), shapeKeys: recipeMeshEdits.optional().describe('Named morph targets, at most 16: { name, offsets | edits, value }. See scene_capabilities meshShapeKeys.') }),
+  z.strictObject({ id: identifier, type: z.literal('dented'), source: identifier, impacts: z.array(z.strictObject({ point: vector3, direction: vector3, impulse: z.number().min(0).max(1e9) })).min(1).max(8), stiffness: z.number().min(1e-6).max(1e9).optional(), maxDepth: z.number().min(1e-6).max(2).optional(), radius: z.number().min(1e-6).max(100).optional() }).describe('Source pushed in at hits; see scene_capabilities vehicleDamage.'),
+  z.strictObject({ id: identifier, type: z.literal('mesh'), base: z.discriminatedUnion('type', [...primitiveGeometries(false), z.strictObject({ type: z.enum(['grid', 'plane']), segments: detail(1, 64) })]).describe('Starting shape, converted to welded quads with axis face tags.'), edits: recipeMeshEdits.optional().describe('Replayable edit log, applied in order. Each item has the shape of one mesh_edit edit; read that tool for every op and field.'), stack: recipeMeshStack.optional().describe('Non-destructive modifier stack evaluated after the edits. Each item has the shape of one mesh_stack node; read that tool for the ops.'), smoothAngle: bounded(0, 180).optional().describe('Edges bending more than this many degrees render hard. Defaults to 30.'), shapeKeys: recipeMeshEdits.optional().describe('Named morph targets, at most 16: { name, offsets | edits, value }. See scene_capabilities meshShapeKeys.') }),
 ]);
 // No description: this field repeats in every motion track schema. A wrong name fails with every valid form, and docs/agent-motion.md lists them.
 const easingField = z.string().max(80).optional();
+// Fields every motion track takes; the backend (src/animation-modifiers.js) checks the extrapolation rule and each modifier.
+const trackEffectFields = {
+  extrapolation: z.enum(['constant', 'linear']).optional().describe('Past the first and last keyframe: constant holds, linear continues the end slope (not for rotation). scene_capabilities motionModifiers.'),
+  modifiers: z.array(z.record(z.string(), z.unknown())).max(8).optional().describe('Up to 8 [{type: cycles|stepped|noise|generator|limits|envelope, ...}]; scene_capabilities motionModifiers.'),
+};
 function motionTrack(kind, property, value, tangent) {
   return z.strictObject({
     kind: z.literal(kind),
@@ -520,6 +531,7 @@ function motionTrack(kind, property, value, tangent) {
       inTangent: tangent.optional(), outTangent: tangent.optional(),
       easing: easingField,
     })).min(1).max(64),
+    ...trackEffectFields,
   });
 }
 // Lights, sun, sky and effects share one track shape: the backend names the valid light IDs and properties of each kind when one is wrong.
@@ -529,6 +541,7 @@ const lookTrack = z.strictObject({
   property: z.string().max(24),
   interpolation: z.enum(['LINEAR', 'STEP', 'SMOOTH']).optional(),
   keyframes: z.array(z.strictObject({ time: z.number().min(0).max(30), value: z.union([finite, vector3]), easing: easingField })).min(1).max(64),
+  ...trackEffectFields,
 });
 const ikKeyframes = (value, description) => z.strictObject({
   interpolation: z.enum(['LINEAR', 'STEP', 'SMOOTH']).optional(),
@@ -594,6 +607,29 @@ const ikSolver = z.discriminatedUnion('type', [
     weight: ikWeight,
   }).describe('Point a node, such as a head, lamp or camera, at a target.'),
 ]);
+// Properties of the tracks the schema accepts; light, sun, environment and effects take any property name here and the backend checks it.
+const motionTrackProperties = {
+  node: ['translation', 'rotation', 'scale'],
+  material: ['color', 'emissiveColor', 'emission', 'metallic', 'roughness'],
+  camera: ['eye', 'target', 'fov', 'roll'],
+  geometry: ['oceanTime'],
+};
+const motionTrackKinds = [...Object.keys(motionTrackProperties), 'light', 'sun', 'environment', 'effects'];
+const motionTrackFields = ['kind', 'id', 'property', 'interpolation', 'keyframes', 'extrapolation', 'modifiers'];
+// A union reports only "Invalid input"; name the field and the allowed ones the way set-motion does.
+function motionTrackUnionMessage(issue) {
+  const track = issue.input;
+  if (!track || typeof track !== 'object' || Array.isArray(track)) return 'A motion track is an object {kind, id, property, keyframes: [{time, value}]}.';
+  const allowedFields = track.kind === 'camera' ? motionTrackFields.filter(field => field !== 'id') : motionTrackFields;
+  const unknownField = Object.keys(track).find(field => !allowedFields.includes(field));
+  if (unknownField !== undefined) return `Unknown or unsupported motion track field: ${unknownField}. Allowed fields: ${allowedFields.join(', ')}.`;
+  const kindList = motionTrackKinds.join(', ');
+  if (track.kind === undefined) return `A motion track needs kind (${kindList}), id, property and keyframes.`;
+  if (!motionTrackKinds.includes(track.kind)) return `Unknown motion track kind: ${JSON.stringify(track.kind)}. Kinds: ${kindList}.`;
+  const properties = motionTrackProperties[track.kind];
+  if (properties && !properties.includes(track.property)) return `Unknown ${track.kind} track property: ${JSON.stringify(track.property)}. ${track.kind} properties: ${properties.join(', ')}.`;
+  return undefined;
+}
 const motion = z.strictObject({
   duration: z.number().min(0.1).max(30),
   ik: z.array(ikSolver).max(16).optional().describe('Inverse kinematics run after the tracks and any selected clip, in order, on recipes and imported assets. IDs are recipe node IDs or an asset\'s node-N IDs; find them with scene_inspect kind hierarchy. scene_inspect reports motionIk: whether each solver reaches its target across the clip.'),
@@ -616,7 +652,7 @@ const motion = z.strictObject({
     motionTrack('camera', 'roll', finite, finite),
     motionTrack('geometry', 'oceanTime', finite.min(-1e6).max(1e6), finite),
     lookTrack,
-  ])).max(128),
+  ], { error: motionTrackUnionMessage })).max(128),
 }).describe('One absolute-time procedural clip. Local node transforms propagate through parents. Cubic tangents are derivatives per second. Backend checks references, duplicate tracks, 2048 total keys and every sampled pose.');
 const physicsBody = z.strictObject({
   node: identifier.describe('Root node with a geometry; the collider is fitted to it and the body drives its pose.'),
@@ -634,19 +670,35 @@ const physicsBody = z.strictObject({
   float: z.record(z.string(), z.unknown()).optional().describe('Floats on physics.ocean (dynamic bodies only): drag 2 and angularDrag 2 (1/s, 0-100) damp the body while it is under water; points is 1-16 [x,y,z] in body space (default a 2 x 2 grid at mid height). Each point pushes up by waterDensity x gravity x (volume / points) x its submerged fraction, so density 500 settles at half depth; spread points over a hull so it rolls upright. Needs a volume: not trimesh. boat: {thrust 4 and rudder 1 (m/s2 at the stern), keelDrag 4, forward "-z", stern [x,y,z], controls up to 256 {time, throttle, rudder} keyframes (-1..1), wake {width 1.2, strength 1, height 0.06, lifetime 5} (needs an oceanTime track on the sea)} makes it a steerable boat.'),
 });
 const physicsJoint = z.strictObject({
-  type: z.enum(['spherical', 'revolute', 'prismatic', 'fixed']),
+  type: z.enum(['spherical', 'revolute', 'prismatic', 'fixed', 'spring']),
   bodyA: identifier,
   bodyB: identifier,
   anchorA: vector3.optional(),
   anchorB: vector3.optional(),
   axis: vector3.optional().describe('Unit vector for revolute and prismatic joints.'),
   limits: z.tuple([finite, finite]).optional().describe('Radians for revolute, metres for prismatic.'),
+  name: identifier.optional().describe('Joint name that physics.events jointMotor events refer to; fracture-node writes glue-a-b.'),
+  breakImpulse: positive.optional().describe('Fixed joints only: contact impulse in N s that breaks the joint in one step.'),
+  contactsEnabled: z.boolean().optional().describe('Whether the two bodies still collide with each other.'),
+  motor: z.strictObject({
+    mode: z.enum(['position', 'velocity']),
+    target: bounded(-1e4, 1e4),
+    stiffness: bounded(1e-6, 1e6).optional().describe('Position motors only.'),
+    damping: bounded(0, 1e6).optional(),
+    maxForce: bounded(1e-6, 1e8).optional(),
+  }).nullable().optional().describe('Drives the joint toward a target angle or speed.'),
+  restLength: bounded(0, 1e6).optional().describe('Spring joints only.'),
+  stiffness: bounded(1e-6, 1e6).optional().describe('Spring joints only; required there.'),
+  damping: bounded(0, 1e6).optional().describe('Spring joints only.'),
 });
-const physics = z.strictObject({
+const physics =z.strictObject({
   duration: z.number().min(0.1).max(10),
   gravity: vector3.optional().describe('Defaults to [0, -9.81, 0].'),
   bodies: z.array(physicsBody).min(1).max(64),
   joints: z.array(physicsJoint).max(64).optional().describe('Joint bodies are the node IDs of physics bodies.'),
+  events: z.array(z.record(z.string(), z.unknown())).max(128).optional().describe('Scheduled impulse, kinematicPose and jointMotor events by time or tick; docs/physics.md.'),
+  fields: z.array(z.record(z.string(), z.unknown())).max(8).optional().describe('Force fields: wind, turbulence, vortex, drag, magnet.'),
+  ragdoll: z.record(z.string(), z.unknown()).optional().describe('{ armature, density, friction, restitution, layer }: one body per bone of a recipe armature.'),
   ocean: z.record(z.string(), z.unknown()).optional().describe('Sea for floating bodies: geometry is a mesh geometry whose stack has an ocean node (axis y) whose waves they ride; level is the world height of the calm sea (leave it out to follow the drawn sea; a different value adds a warning to the scene_inspect physics report); waterDensity 1000 kg/m3. The sea clock at physics time 0 is the ocean node time, so drive an oceanTime track at 1 s per s to keep the drawn sea in step.'),
 }).describe('Rigid bodies recorded offline with Rapier (optional peer) at 60 fps and seeked by motionTime. scene_inspect reports contacts and resting state. A node cannot have a body and a motion translation or rotation track.');
 const looseRecord = z.record(z.string(), z.unknown()).meta({ id: 'LooseRecord' });
@@ -809,7 +861,7 @@ const renderSettings = z.strictObject({
   animation: z.strictObject({ clip: z.number().int().min(0), start: z.number().min(0).max(3600).optional() }).optional(),
   motion: z.strictObject({ start: z.number().min(0).max(3600).optional() }).optional(),
   rendererTime: z.strictObject({ start: z.number().min(0).max(3600).optional(), rate: z.number().min(-16).max(16).optional() }).optional(),
-  renderer: z.looseObject({ type: z.literal('pathTracer'), backend: z.enum(['cpu', 'gpu', 'native']).optional() }).meta({ description: 'Path tracer. Also samples, bounces, denoise, seed, maxSeconds, noiseThreshold: scene_capabilities pathTracer.' }).pipe(z.strictObject({ type: z.literal('pathTracer'), backend: z.enum(['cpu', 'gpu', 'native']).optional(), samples: z.number().optional(), bounces: z.number().optional(), denoise: z.union([z.boolean(), z.enum(['wavelet', 'oidn', 'none'])]).optional(), seed: z.number().optional(), maxSeconds: z.number().optional(), noiseThreshold: z.number().optional() })).optional(),
+  renderer: z.looseObject({ type: z.literal('pathTracer'), backend: z.enum(['cpu', 'gpu', 'native']).optional() }).meta({ description: 'Path tracer. Also samples, bounces, denoise, seed, maxSeconds, noiseThreshold: scene_capabilities topic jobs, key pathTracer.' }).pipe(z.strictObject({ type: z.literal('pathTracer'), backend: z.enum(['cpu', 'gpu', 'native']).optional(), samples: z.number().optional(), bounces: z.number().optional(), denoise: z.union([z.boolean(), z.enum(['wavelet', 'oidn', 'none'])]).optional(), seed: z.number().optional(), maxSeconds: z.number().optional(), noiseThreshold: z.number().optional() })).optional(),
   quality: z.enum(['draft', 'realtime', 'realtime-high', 'final']).optional().describe('What the render is for; picks the renderer. Not with renderer or budget. scene_capabilities jobs.'),
   budget: z.strictObject({ secondsPerFrame: z.number().optional(), framesPerSecond: z.number().optional(), memoryMiB: z.number().optional() }).optional().describe('Pick renderer, samples and size to fit; not with renderer. scene_capabilities jobs.'),
   timeline: z.strictObject({ start: z.number().min(0).max(60).optional() }).optional().describe('Play the recipe timeline from start (default 0); it owns the motion clock, so leave motion and animation out.'),
@@ -997,7 +1049,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     return { content: [{ type: 'image', data, mimeType }, { type: 'text', text: JSON.stringify(shown) }], structuredContent: shown };
   });
   register('scene_checkpoint', 'Save a private recipe snapshot. Up to 16 are kept per scene; past that the oldest is evicted.', z.strictObject(sessionFields), { ...edit, destructiveHint: false }, async argumentsValue => jsonResult(await runtime.checkpoint(argumentsValue)));
-  register('scene_restore', 'Restore a checkpoint atomically using the current revision. The checkpoint remains available and revision increments. With revision (last 4 kept), undo with no checkpoint. With branch, keep that branch (one revision) and drop all branches.', z.strictObject({ ...sessionFields, checkpointId: restoreCheckpointId, revision: z.number().int().min(0).optional(), ...restoreBranchField, expectedRevision }), edit, async argumentsValue => jsonResult(await runtime.restore(argumentsValue)));
+  register('scene_restore', 'Restore a checkpoint atomically using the current revision. The checkpoint remains available and revision increments. Pass exactly one of checkpointId, revision or branch. With revision (last 4 kept), undo with no checkpoint. With branch, keep that branch (one revision) and drop all branches.', z.strictObject({ ...sessionFields, checkpointId: restoreCheckpointId, revision: z.number().int().min(0).optional(), ...restoreBranchField, expectedRevision }), edit, async argumentsValue => jsonResult(await runtime.restore(argumentsValue)));
   register('scene_release_checkpoint', 'Release one checkpoint slot. Released or foreign checkpoints fail.', z.strictObject(checkpointFields), destroy, async argumentsValue => jsonResult(await runtime.releaseCheckpoint(argumentsValue)));
   register('scene_export_recipe', 'Read a detached canonical JSON recipe for reproduction.', z.strictObject(sessionFields), readOnly, async argumentsValue => jsonResult(await runtime.exportRecipe(argumentsValue)));
   register('scene_export_glb', 'Write the active scene as a GLB file in the configured jobs folder, under a server-chosen name (the result has the path, byte count and SHA-256). Needs --jobs. Exports the current pose with pattern and imported textures, skins, morph weights and IK as posed; motionTime seeks authored motion first. For an imported asset, clip adds that source clip (translation, rotation, scale and morph weight tracks) on the source skeleton, which needs no animation, node overrides or motion in the scene. At most eight files are kept, oldest removed first; the GLB is at most 32 MiB.', z.strictObject({ ...sessionFields, clip: z.number().int().min(0).max(255).optional().describe('Imported assets only: index of the source clip to write.'), motionTime: z.number().min(0).max(3600).optional().describe('Seek authored motion (and IK) to this time before exporting. Leaves the preview there, like scene_look.'), maxTextureSize: z.number().int().min(1).max(4096).optional().describe('Largest texture side in pixels. Defaults to 2048.') }), edit, async argumentsValue => jsonResult(await runtime.exportGlb(argumentsValue)));
@@ -1021,6 +1073,8 @@ export async function runCheckUpdateCli({ version = packageMetadata.version } = 
   console.log(await describeUpdateCheck({ currentVersion: version }));
 }
 
+export const ACCEPTED_CLI_OPTIONS = MCP_OPTION_NAMES;
+
 export async function runMcpCli({ argumentsValue = process.argv.slice(2),
   previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), version = packageMetadata.version } = {}) {
   const options = { backend: 'gpu', memory: 192 };
@@ -1040,15 +1094,21 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
   const addonSet = resolveAddons({ folder: options.addons, names: allowedAddonNames, version });
   for (const { name, reason } of addonSet.skipped) console.error(`Crucible addon ${name} skipped: ${reason}`);
   options.addons = addonSet;
+  for (const flag of ['branches', 'relations', 'findings']) {
+    if (options[flag] !== undefined && !['on', 'off'].includes(options[flag])) {
+      throw new Error(`--${flag} must be on or off, got "${options[flag]}".`);
+    }
+  }
   if (!['cpu', 'gpu'].includes(options.backend) || !Number.isInteger(options.memory) || options.memory < 32 || options.memory > MAXIMUM_MEMORY_MIB) {
     throw new Error(`Backend must be cpu or gpu, and memory must be an integer from 32 to ${MAXIMUM_MEMORY_MIB} MiB.`);
   }
   // Checked here, not in the runtime factory: the SDK calls the factory only when the first client connects.
   options.jobs = resolveJobRoot(options.jobs);
+  const { createAgentRuntime, validateLaunchPaths } = await import('./agent-runtime.mjs');
+  validateLaunchPaths(options);
   setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
   // Not awaited: the check fills in while the client connects and never delays or fails the start.
   const updateCheck = startUpdateCheck({ currentVersion: version });
-  const { createAgentRuntime } = await import('./agent-runtime.mjs');
   const handle = serveStdio(() => createAgentMcpServer(createAgentRuntime({ ...options, previewUrl }), { version, branches: options.branches !== 'off', relations: options.relations !== 'off', findings: options.findings !== 'off', updateAvailable: updateCheck.current }), {
     transport: new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 2 * 1024 * 1024 }),
     onerror: error => console.error(`Crucible MCP error: ${error.message}`),

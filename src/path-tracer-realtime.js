@@ -5,7 +5,7 @@ import { sceneUsesSubsurface } from './path-tracer-gpu-pack.js';
 import { createRadianceCache } from './path-tracer-radiance-cache.js';
 import { createTemporalDenoiser } from './path-tracer-temporal-denoise.js';
 import { createFloatTexture, createFramebuffer, FIRST_PASS_TEXTURE_UNIT } from './path-tracer-realtime-gl.js';
-import { cacheCellSizes, resolveRealtimeOptions, viewsMatch } from './path-tracer-realtime-options.js';
+import { cacheCellSizes, noteIgnoredClipStart, resolveRealtimeOptions, viewsMatch } from './path-tracer-realtime-options.js';
 
 // A real-time hybrid view of the GPU path tracer (issue #624): one path per pixel and frame at half the output size,
 // two bounces, ended by a spatial hash radiance cache, then a temporal denoiser that also upsamples to the output size.
@@ -97,10 +97,12 @@ export async function createRealtimeTracer(scene, rawOptions = {}) {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   };
 
+  const ignoredNotes = [];
   return {
     gpu,
     backend: 'gpu',
     fallbackReason,
+    ignored: ignoredNotes,
     canvas: gl.canvas,
     width: outputWidth,
     height: outputHeight,
@@ -123,6 +125,7 @@ export async function createRealtimeTracer(scene, rawOptions = {}) {
     frame(camera, { wait = false } = {}) {
       if (disposed) throw new Error('This real-time tracer was disposed.');
       const nextView = createCamera(camera, outputWidth, outputHeight);
+      noteIgnoredClipStart(ignoredNotes, nextView);
       previousView = view ?? nextView;
       if (!viewsMatch(view, nextView)) {
         gl.useProgram(program);

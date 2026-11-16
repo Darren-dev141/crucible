@@ -1,0 +1,1 @@
+- The showcase page shows three Cook path-traced stills with their credits (#1083)

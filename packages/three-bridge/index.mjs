@@ -260,6 +260,14 @@ function uniqueName(object, fallback, state) {
   return name;
 }
 
+// three.js draws only the matrices that exist; reading past instanceMatrix.array would give NaN matrices.
+function instanceCount(object, state) {
+  const available = Math.floor(object.instanceMatrix.array.length / 16);
+  if (object.count <= available) return object.count;
+  state.warnings.push(`${describe(object)}: count ${object.count} is above the ${available} matrices instanceMatrix holds, so ${available} instances are imported.`);
+  return available;
+}
+
 function importMesh(object, limits, state) {
   checkMesh(object, state);
   const materials = Array.isArray(object.material) ? object.material : [object.material];
@@ -267,7 +275,7 @@ function importMesh(object, limits, state) {
   if (!groups?.length) {
     throw new ThreeBridgeError(`${describe(object)} has a material array but geometry.groups is empty. Add groups with geometry.addGroup(start, count, materialIndex), or pass one material.`);
   }
-  const instances = object.isInstancedMesh ? object.count : 1;
+  const instances = object.isInstancedMesh ? instanceCount(object, state) : 1;
   if (state.parts.length + instances * groups.length > limits.maxParts) {
     throw new ThreeBridgeError(`${describe(object)} would take the tree past ${limits.maxParts} parts (${instances} instances x ${groups.length} materials). Raise maxParts (up to ${HARD_LIMITS.maxParts}) or import fewer instances.`);
   }
@@ -277,7 +285,7 @@ function importMesh(object, limits, state) {
   state.geometries.set(object.geometry, cached);
   const whole = cached.get(cacheKey);
   const matrices = object.isInstancedMesh
-    ? Array.from({ length: object.count }, (_, instance) => multiply(object.matrixWorld.elements, Array.from(object.instanceMatrix.array.subarray(instance * 16, instance * 16 + 16))))
+    ? Array.from({ length: instances }, (_, instance) => multiply(object.matrixWorld.elements, Array.from(object.instanceMatrix.array.subarray(instance * 16, instance * 16 + 16))))
     : [Array.from(object.matrixWorld.elements)];
   const found = [];
   for (const group of groups) {
@@ -345,6 +353,22 @@ function requireNamespace(THREE) {
   }
 }
 
+// three.js draws a short attribute or an index past the last vertex as garbage without an error, so refuse them here.
+function checkAttributeCounts(geometry, label) {
+  const vertexCount = geometry.positions.length / 3;
+  for (const [field, itemSize] of [['normals', 3], ['uvs', 2], ['colors', 3]]) {
+    const values = geometry[field];
+    if (values && values.length !== vertexCount * itemSize) {
+      throw new ThreeBridgeError(`${label} has ${values.length} values in geometry.${field}, but ${vertexCount} vertices need ${vertexCount * itemSize}. Pass one entry per vertex or leave ${field} out.`);
+    }
+  }
+  for (const index of geometry.indices) {
+    if (!Number.isInteger(index) || index < 0 || index >= vertexCount) {
+      throw new ThreeBridgeError(`${label} has geometry.indices entry ${index}, but the vertices are numbered 0 to ${vertexCount - 1}. Fix the index.`);
+    }
+  }
+}
+
 function checkPart(part, index, limits) {
   const label = `parts[${index}]${part?.name ? ` "${part.name}"` : ''}`;
   const geometry = part?.geometry;
@@ -357,6 +381,7 @@ function checkPart(part, index, limits) {
   if (!geometry.indices || geometry.indices.length === 0 || geometry.indices.length % 3 !== 0) {
     throw new ThreeBridgeError(`${label} needs geometry.indices holding whole triangles (a Uint32Array).`);
   }
+  checkAttributeCounts(geometry, label);
   if (part.matrix?.length !== 16 || Array.from(part.matrix).some(value => !Number.isFinite(value))) {
     throw new ThreeBridgeError(`${label} needs a matrix of 16 finite numbers (column-major).`);
   }

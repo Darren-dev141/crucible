@@ -46,6 +46,7 @@ function requireModule() {
   return manifoldModule;
 }
 
+const CUTTER_MARK = 'boolean-cutter-faces';
 export const BOOLEAN_OPERATIONS = Object.freeze(['union', 'difference', 'intersect']);
 
 function hasCornerUv(mesh) {
@@ -150,7 +151,7 @@ function polygonsFromTriangles(weldedTriangles, propertyTriangles, triangleFaceI
 /**
  * Boolean of two closed meshes. Faces from `mesh` keep their tags and other face attributes; faces from `cutter`
  * get the tag `cutTag` (when given). Corner UVs are interpolated where both inputs have them.
- * Returns { mesh, removedFaces, cutterFaces }.
+ * Returns { mesh, cutterFaces }, the faces that came from this cutter (0 without cutTag).
  */
 export function meshBoolean(mesh, cutter, operation, { cutTag } = {}) {
   if (!BOOLEAN_OPERATIONS.includes(operation)) throw new RangeError(`Boolean operation must be one of ${BOOLEAN_OPERATIONS.join(', ')}.`);
@@ -236,16 +237,18 @@ function rebuildOutput(mesh, output, propertyCount, cutTag) {
     }
     faceAttributes[name] = { data, size: attribute.size };
   }
-  let cutterFaces = 0;
   if (cutTag) {
     const data = faceAttributes[TAG_PREFIX + cutTag]?.data ?? new Uint8Array(polygons.length);
+    const cutterMark = new Uint8Array(polygons.length);
     for (let face = 0; face < polygons.length; face++) {
-      if (fromCutter(face)) {
-        data[face] = 1;
-        cutterFaces++;
-      }
+      if (!fromCutter(face)) continue;
+      data[face] = 1;
+      cutterMark[face] = 1;
     }
     faceAttributes[TAG_PREFIX + cutTag] = { data, size: 1 };
+    // The tag may already mark faces of an earlier boolean, so the cutter's own faces are counted through a mark that
+    // the join below keeps apart and that is dropped again afterwards.
+    faceAttributes[CUTTER_MARK] = { data: cutterMark, size: 1 };
   }
   const triangles = createMeshData({
     positions: Float32Array.from(positions),
@@ -260,13 +263,24 @@ function rebuildOutput(mesh, output, propertyCount, cutTag) {
   });
   // Faces with holes come back as triangle fans; join flat pairs that share every attribute back into quads.
   const joined = joinTriangles(triangles);
-  if (cutTag) cutterFaces = countTagged(joined, cutTag);
-  return { mesh: joined, cutterFaces };
+  if (!cutTag) return { mesh: joined, cutterFaces: 0 };
+  return { mesh: withoutFaceAttribute(joined, CUTTER_MARK), cutterFaces: countMarked(joined.attributes.face[CUTTER_MARK].data) };
 }
 
-function countTagged(mesh, tag) {
-  const data = mesh.attributes.face[TAG_PREFIX + tag].data;
+function countMarked(data) {
   let count = 0;
-  for (let face = 0; face < mesh.faceCount; face++) count += data[face] ? 1 : 0;
+  for (const value of data) count += value ? 1 : 0;
   return count;
+}
+
+function withoutFaceAttribute(mesh, name) {
+  const { [name]: dropped, ...faceAttributes } = mesh.attributes.face;
+  return createMeshData({
+    positions: mesh.positions,
+    faceOffsets: mesh.faceOffsets,
+    cornerVertices: mesh.cornerVertices,
+    edgeVertices: mesh.edgeVertices,
+    cornerEdges: mesh.cornerEdges,
+    attributes: { ...mesh.attributes, face: faceAttributes },
+  });
 }

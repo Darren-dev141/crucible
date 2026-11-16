@@ -2,6 +2,10 @@ import { editMesh } from './mesh-edit.js';
 import { faceNormals } from './mesh-normals.js';
 import { selectFaces } from './mesh-select.js';
 import { MeshBuilder } from './mesh-stack.js';
+import { requireFiniteInRange } from './modeling-limits.js';
+
+export const MAX_BEVEL_SEGMENTS = 16;
+export const MAX_BEVEL_WIDTH = 1e6;
 
 // Edge bevel on manifold meshes, a compact take on Blender's bmesh_bevel for the common cases agents need:
 // rounding the rim between two tagged regions, or every edge sharper than an angle.
@@ -164,7 +168,10 @@ function profileDepthReach(profile) {
  * Returns { mesh, width, clamped, bevelEdges, stripFaces, cornerFaces, filledCorners }. Strip faces get `<name>.strip`,
  * corner fills `<name>.corner`; the faces around keep their tags.
  */
-export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile: requestedProfile = 0.5, clampOverlap = true, name = 'bevel' }) {
+export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile: requestedProfile = 0.5, clampOverlap = true, name = 'bevel' } = {}) {
+  requireFiniteInRange('bevelEdges', 'width', width, 0, MAX_BEVEL_WIDTH);
+  requireFiniteInRange('bevelEdges', 'segments', segments, 1, MAX_BEVEL_SEGMENTS, true);
+  requireFiniteInRange('bevelEdges', 'profile', requestedProfile, 0, 1);
   const profile = Math.min(requestedProfile, MAXIMUM_PROFILE);
   const profileReach = profileDepthReach(profile);
   const table = edgeFaces(mesh);
@@ -338,17 +345,17 @@ export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile: reque
     const controlCA = curveControl(vertex, cornerC, cornerA);
     const grid = new Map();
     const pointAt = (a, b) => {
-      const c = segments - a - b;
+      const thirdSegments = segments - a - b;
       const key = `${a},${b}`;
       if (grid.has(key)) return grid.get(key);
       let point;
-      if (c === 0) point = first[b];
-      else if (a === 0) point = second[c];
+      if (thirdSegments === 0) point = first[b];
+      else if (a === 0) point = second[thirdSegments];
       else if (b === 0) point = third[a];
       else {
         const u = a / segments;
         const v = b / segments;
-        const w = c / segments;
+        const w = thirdSegments / segments;
         let position = scale(positionA, u * u);
         position = add(position, scale(positionB, v * v));
         position = add(position, scale(positionC, w * w));

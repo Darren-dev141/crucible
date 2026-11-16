@@ -9,6 +9,8 @@ import { lightShapeSupport } from './shader-registry.js';
 
 export const PROFILE_SAMPLE_COUNT = 16;
 const PROFILE_MAXIMUM_POINTS = 32;
+// A lamp whose axis value is below this share of its peak is normalized by the peak, so the samples stay finite.
+const MINIMUM_AXIS_SHARE = 1e-6;
 
 // Bundled profiles, made for Crucible as cosine powers (CC0): the exponent sets how tight the beam is.
 // 'batwing' peaks at 45 degrees off the axis, as a wall washer does.
@@ -70,7 +72,8 @@ export function profileSamples(value) {
   const cached = profileCache.get(key);
   if (cached) return cached;
   const profile = typeof value === 'string' ? bundledProfile(value) : value;
-  const onAxis = candelaAt(profile, 0) > 0 ? candelaAt(profile, 0) : Math.max(...profile.candela);
+  const peak = Math.max(...profile.candela);
+  const onAxis = candelaAt(profile, 0) >= peak * MINIMUM_AXIS_SHARE ? candelaAt(profile, 0) : peak;
   const samples = new Float32Array(PROFILE_SAMPLE_COUNT);
   for (let index = 0; index < PROFILE_SAMPLE_COUNT; index++) {
     samples[index] = candelaAt(profile, (index / (PROFILE_SAMPLE_COUNT - 1)) * 90) / onAxis;

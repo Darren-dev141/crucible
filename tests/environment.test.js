@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createEnvironmentMap, computeIrradianceCoefficients, evaluateIrradiance, estimateEnvironmentBytes, environmentSpecularLayout, ENVIRONMENT_BRDF_SIZE, environmentShadingGlsl } from '../src/environment.js';
+import { createEnvironmentMap, computeIrradianceCoefficients, evaluateIrradiance, estimateEnvironmentBytes, environmentSpecularLayout, ENVIRONMENT_BRDF_SIZE, ENVIRONMENT_IRRADIANCE_HEIGHT, environmentShadingGlsl } from '../src/environment.js';
 import { createFragmentShader } from '../src/shaders.js';
 import { parseRadianceHdr, loadHdri } from '../src/hdri.js';
 
@@ -106,13 +106,14 @@ test('environment map validation names the offending field', () => {
   assert.equal(createEnvironmentMap({ width: 8, height: 4, data: new Float32Array(8 * 4 * 4) }).channels, 4);
 });
 
-test('environment memory accounting counts the half-float chain and the BRDF lookup', () => {
+test('environment memory accounting counts the half-float chain and the lookup texture with its irradiance grid', () => {
   const map = { kind: 'environment-map', width: 2048, height: 1024, channels: 3, data: new Float32Array(2048 * 1024 * 3), intensity: 1, rotation: 0, showBackground: false, backgroundBlur: 0 };
   const layout = environmentSpecularLayout(map);
   assert.equal(layout.width, 1024);
   assert.equal(layout.height, 512);
   assert.equal(layout.levelCount, 7);
-  let expected = ENVIRONMENT_BRDF_SIZE * ENVIRONMENT_BRDF_SIZE * 4;
+  // The lookup texture is RGBA16F: the split-sum square with the irradiance grid rows beneath it.
+  let expected = ENVIRONMENT_BRDF_SIZE * (ENVIRONMENT_BRDF_SIZE + ENVIRONMENT_IRRADIANCE_HEIGHT) * 8;
   for (let level = 0; level < 7; level++) expected += (1024 >> level) * (512 >> level) * 8;
   assert.equal(estimateEnvironmentBytes(map, 4096), expected);
   assert.ok(expected < 8 * 1024 ** 2);
@@ -132,7 +133,9 @@ test('direct light specular takes the same multiple scatter gain once per fragme
   const source = createFragmentShader(['environmentMap']);
   assert.match(source, /specular \*= directSpecularGain;/);
   assert.equal(source.match(/directSpecularGain = multipleScatterGain/g).length, 1);
+  // Every read of the table goes through the clamped helper, so filtering never mixes it with the irradiance rows below.
   assert.equal(source.match(/texture\(environmentBrdf/g).length, 2);
+  assert.equal(source.match(/environmentBrdfLookup\(/g).length, 3);
 });
 
 test('sunFromEnvironmentMap finds a synthetic sun at a known direction with rotation applied', async () => {

@@ -331,7 +331,7 @@ An asset placement with a `crowd` field fills its group node with `count` (1 to 
 { "id": "people", "asset": { "id": "<catalog asset id>", "crowd": { "clip": 3, "count": 200, "seed": 7, "spacing": 2, "farDistance": 25, "farRate": 6 } } }
 ```
 
-- `clip` is a clip index, `layout` is `grid` or `scatter`, and the pose is a pure function of scene time, `seed` and the recipe camera, so a render at a time equals the frame reached by playing. People farther than `farDistance` from the recipe camera hold each pose for `1 / farRate` seconds.
+- `clip` is a clip index, `layout` is `grid` or `scatter`, and the pose is a pure function of scene time, `seed` and the recipe camera, so a render at a time equals the frame reached by playing. People farther than `farDistance` from the recipe camera hold each pose for `1 / farRate` seconds. The distance is measured from each person's world position at that time, so it follows a parent group that moves or has a motion track.
 - The crowd takes one decoded copy of the asset, the generated part nodes (count times materials) count against `maxNodes`, and `scene_inspect` lists it under `assets` with `kind: "crowd"`, `instances`, `batches`, `frames`, `paletteBytes` and `boundsRadius`.
 
 ### Seams between meshes
@@ -347,6 +347,8 @@ Five node fields change how a node renders; `add-node` and `set-node` take them,
 - `holdout: true` writes zero colour and zero alpha where the mesh covers, and still hides what is behind it and still casts its shadow. `shadowCatcher: true` draws only the shadow it receives, black with the shadow as premultiplied alpha, and casts none. Both are for compositing over footage and need a transparent canvas: `new CrucibleRenderer(canvas, parts, { transparent: true })`. A node is never both. The shadow catcher shows the sun shadow only.
 
 - `shadowOnly: true` (mesh nodes) keeps the node in the shadow passes and leaves it out of the picture, the same as Blender's Ray Visibility > Camera off. Use it for a gobo, such as a window frame outside the shot that throws bars of sun onto a wall. It is also left out of depth, object ID and wireframe passes. It defaults to false, so no scene changes. A node cannot set `shadowOnly` together with `castShadow: false`, `holdout` or `shadowCatcher`. Every backend honours it: the raster renderer, and Cook on the cpu, gpu (WebGL2), webgpu and native backends (both native kernels). Cook leaves the node out of camera rays (the first hit of each path) and keeps it for shadow and bounce rays, so a mirror or glass can still show it. No backend lists it as an ignored feature.
+
+- `rayVisibility` (mesh nodes, native path tracer only) hides a node from one ray kind: `'glass'` is the shorthand for `{ "shadow": false }`, so sun and sky are sampled through a window pane while it still shows and refracts; the object form takes booleans for `camera`, `diffuse`, `glossy`, `transmission`, `shadow` and `volumeScatter`. An emissive node cannot hide from diffuse, glossy or transmission rays, and `shadowOnly` needs shadow rays on. The raster renderer ignores it. See [path-tracer.md](https://github.com/codepawl/crucible/blob/main/docs/path-tracer.md).
 
 Parts with different `castShadow`, `receiveShadow`, `holdout`, `shadowCatcher` or `shadowOnly` values batch apart; `visible` never splits a batch. `receiveShadow`, `holdout`, `shadowCatcher` and `shadowOnly` changes need `replaceParts`, not `updateParts`.
 

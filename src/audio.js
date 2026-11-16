@@ -20,6 +20,8 @@ export const OCCLUDED_GAIN_LOSS = 0.7;
 const OCCLUDED_LOW_PASS_HERTZ = 400;
 const OPEN_LOW_PASS_HERTZ = 20000;
 const PARAMETER_SMOOTHING_SECONDS = 0.01;
+const MINIMUM_VOICE_PITCH = 0.1;
+const MAXIMUM_VOICE_PITCH = 16;
 const DISTANCE_MODELS = ['inverse', 'linear', 'exponential'];
 const GESTURE_EVENTS = ['pointerdown', 'keydown', 'touchend'];
 
@@ -39,6 +41,14 @@ function requireNumberInRange(value, label, minimum, maximum) {
     throw new RangeError(`${label} must be a number from ${minimum} to ${maximum}, got ${String(value)}.`);
   }
   return value;
+}
+
+// A count limit must be a whole number: 2.5 would silently allow a third voice.
+function requireWholeNumberInRange(value, label, minimum, maximum) {
+  if (!Number.isInteger(value)) {
+    throw new RangeError(`${label} must be a whole number from ${minimum} to ${maximum}, got ${String(value)}.`);
+  }
+  return requireNumberInRange(value, label, minimum, maximum);
 }
 
 function requireVector(value, label) {
@@ -138,6 +148,8 @@ export function markersCrossed(markers, fromTime, toTime, { loop = false, durati
   if (!Array.isArray(markers) || markers.length > AUDIO_LIMITS.maximumMarkers) {
     throw new RangeError(`markers must be an array of up to ${AUDIO_LIMITS.maximumMarkers} { time, name } entries.`);
   }
+  requireNumberInRange(fromTime, 'markers fromTime', -Number.MAX_VALUE, Number.MAX_VALUE);
+  requireNumberInRange(toTime, 'markers toTime', -Number.MAX_VALUE, Number.MAX_VALUE);
   const crossed = [];
   const wrapped = loop && toTime < fromTime;
   for (const marker of markers) {
@@ -356,7 +368,7 @@ function createSeededRandom(seed) {
 
 export function createAudio(options = {}) {
   const backend = options.backend ?? webAudioBackend(options.webAudio);
-  const maximumVoices = requireNumberInRange(options.maximumVoices ?? AUDIO_LIMITS.defaultVoices, 'createAudio maximumVoices', 1, AUDIO_LIMITS.maximumVoices);
+  const maximumVoices = requireWholeNumberInRange(options.maximumVoices ?? AUDIO_LIMITS.defaultVoices, 'createAudio maximumVoices', 1, AUDIO_LIMITS.maximumVoices);
   const occluder = options.occlusion ?? null;
   if (occluder !== null && typeof occluder !== 'function') {
     throw new TypeError('createAudio occlusion must be a function (from, to) => 0 to 1, or left out.');
@@ -426,7 +438,7 @@ export function createAudio(options = {}) {
       pitch: requireNumberInRange(definition.pitch ?? 1, `sound ${name} pitch`, 0.1, 4),
       pitchVariance: requireNumberInRange(definition.pitchVariance ?? 0, `sound ${name} pitchVariance`, 0, 1),
       loop: definition.loop === true,
-      maximumInstances: requireNumberInRange(definition.maximumInstances ?? AUDIO_LIMITS.defaultInstancesPerSound, `sound ${name} maximumInstances`, 1, AUDIO_LIMITS.maximumInstancesPerSound),
+      maximumInstances: requireWholeNumberInRange(definition.maximumInstances ?? AUDIO_LIMITS.defaultInstancesPerSound, `sound ${name} maximumInstances`, 1, AUDIO_LIMITS.maximumInstancesPerSound),
       spatial: normalizeSpatial(definition.spatial, `sound ${name}`),
     });
     sounds.set(name, sound);
@@ -495,14 +507,16 @@ export function createAudio(options = {}) {
     startBackend();
     const volume = sound.volume * requireNumberInRange(playOptions.volume ?? 1, `play ${soundName} volume`, 0, 4);
     const variance = sound.pitchVariance === 0 ? 0 : (random() * 2 - 1) * sound.pitchVariance;
-    const pitch = sound.pitch * requireNumberInRange(playOptions.pitch ?? 1, `play ${soundName} pitch`, 0.1, 4) * (1 + variance);
+    const basePitch = requireNumberInRange(sound.pitch * requireNumberInRange(playOptions.pitch ?? 1, `play ${soundName} pitch`, 0.1, 4), `play ${soundName} resulting pitch`, MINIMUM_VOICE_PITCH, MAXIMUM_VOICE_PITCH);
+    // Random variance is the sound's own setting, so it must never make a valid play throw; it stays inside the playable range.
+    const pitch = Math.min(Math.max(basePitch * (1 + variance), MINIMUM_VOICE_PITCH), MAXIMUM_VOICE_PITCH);
     const voice = {
       id: nextVoiceId,
       sound,
       node: playOptions.node ?? null,
       position: null,
       volume,
-      pitch: requireNumberInRange(pitch, `play ${soundName} resulting pitch`, 0.1, 16),
+      pitch,
       loop: playOptions.loop ?? sound.loop,
       occlusion: 0,
       level: 0,

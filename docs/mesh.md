@@ -370,7 +370,8 @@ From each selected edge the ring is walked across quads to the opposite edge, un
 not a quad. Every ring edge is split at the same fractions from the ring's low side (the end of the first seed edge
 with the lower coordinate along it), and every quad in the ring is split into bands tagged `<name>.band-0` (low side)
 to `<name>.band-<cuts>`; bands keep the quad's other tags. Faces beside an open ring get the new points on their
-shared edges, so no T-junctions appear. Corner UVs and colours are interpolated at the new points. Rings that cross
+shared edges, so no T-junctions appear. Corner UVs and colours are interpolated at the new points, and point attributes
+(vertex groups too) blend by the cut fraction, with integer values taken from the low end. Rings that cross
 each other in one edit are refused; cut them in separate edits. The result reports `rings`, `closedRings` and
 `splitEdges`.
 
@@ -394,7 +395,7 @@ boundary edges whose midpoint is in a box, which picks one hole among several.
 | `bisect_plane` | `point`, `normal`, `distance`, `clearInner`, `clearOuter`, `fill` | `inner`, `outer`, `cap` | Cuts at a plane. `clearInner` removes the side behind the normal, `clearOuter` the side in front. `fill` caps the cut; with both sides kept the halves separate into two closed shells. |
 | `bridge_edge_loops` | `edges`, `segments`, `twistOffset` | `bridge` | Joins exactly two boundary loops with the same edge count by a strip of quads, `segments` deep. |
 | `subdivide_edges` | `edges`, `cuts` | `split` | Splits each selected edge into `cuts` + 1 pieces. Quads with two opposite edges split become bands, with four split a grid, and any other face keeps one n-gon with the new points inserted. |
-| `grid_fill` | `edges` | `fill` | Fills each closed boundary loop of an even number of edges (4 or more) with a grid of quads. |
+| `grid_fill` | `edges` | `fill` | Fills each closed boundary loop of an even number of edges (4 or more) with a grid of quads, up to 65,536 grid vertices. |
 | `knife_project` | `path`, `direction` | `cut` | Cuts along a polyline of object-space points projected along `direction`, through front and back faces. |
 
 `dissolve_verts` rules: `{ "all": true }`, `{ "vertices": [indices] }`, `{ "valence": 2 }` (vertices with exactly that many
@@ -422,8 +423,8 @@ lower index, so the same input always gives the same bytes. Faces they keep carr
 | `symmetrize` | `axis` (default x), `keep` (`positive` or `negative`), `distance` | `mirrored` | Cuts faces that cross the plane through the origin, drops the other half and mirrors the kept half. Left and right (top and bottom, front and back) tags swap on the mirrored half. |
 | `scale_elements` | `select`, `scale` (above 0) | none | Scales each group of selected faces that share a vertex about the group's average vertex position. Unselected neighbours follow along shared vertices. |
 | `extrude_edges` | `edges`, `offset` | `side` | Copies the vertices of the selected edges, moves the copies by `offset` and joins each edge to its copy with a quad. Select a surface boundary with `{ "open": true }`. |
-| `split_edges` | `edges` | none | Opens the surface along the selected edges: the faces on each side stop sharing the edge's vertices, which are copied once per group of faces that still meet around them. Faces keep their tags and attributes; the result has boundary edges. |
-| `delete_loose` | none | none | Removes every vertex that no face uses (the lint problem `loose-vertex`). Fails when there is none. |
+| `split_edges` | `edges` | none | Opens the surface along the selected edges: the faces on each side stop sharing the edge's vertices, which are copied once per group of faces that still meet around them. Faces keep their tags and attributes, and a copied vertex keeps the point attributes (vertex groups too) of the vertex it was copied from; the result has boundary edges. |
+| `delete_loose` | none | none | Removes every vertex that no face uses (the lint problem `loose-vertex`). Point attributes of the kept vertices stay. Fails when there is none. |
 | `flatten` | `verts`, `normal`, `factor` (0 to 1, default 1) | none | Moves the selected vertices toward the plane through their average point. `normal` is the plane direction; without it the area-weighted normal of the faces whose vertices are all selected is used. |
 
 | `unsubdivide` | none | none | Reverses one Catmull-Clark level: the original vertices and the coarse faces they make (n-gons too) are kept, every face point and edge point is dropped. The survivors stay where they are, so the smoothing is not undone. Fails, naming the quad that breaks the pattern, when the mesh has a non-quad face or is not one level of subdivision. |
@@ -447,7 +448,8 @@ published and OpenSubdiv implements. Every n-gon becomes n quads, so faces multi
 
 Open boundary edges are always sharp, and a boundary vertex with a single face stays a corner (Blender's Keep Corners).
 Faces keep their tags, and corner attributes such as `uv` blend linearly. Edge attributes follow each half of a split
-edge; point attributes are not carried. The size is checked before anything is built, so `levels: 4` on a mesh that
+edge. Point attributes carry over: an edge point averages its two ends and a face point the face's corners, while integer
+and boolean values take the first source instead. The size is checked before anything is built, so `levels: 4` on a mesh that
 would pass the face limit fails with the counts instead of running. Put `subdivide` before `uv_unwrap`.
 
 Blender comparison (`tests/fixtures/blender`): vertex, edge and face counts, face sizes, area and every vertex match a
@@ -508,7 +510,7 @@ faces, so a tag confines them. Neither adds or removes faces, and the topology s
   is an error (`onMiss` "error") or stays put (`keep`). The queries use the BVH of `src/mesh-query.js`, at most 20
   million triangle tests per edit.
 
-A decal is a grid base shrunk onto a curved target and then solidified:
+A mesh base is a primitive or profile record, or a `grid` or `plane` sheet (`segments` 1 to 64). A decal is a grid base shrunk onto a curved target and then solidified:
 
 ```json
 { "id": "badge", "type": "mesh", "base": { "type": "grid", "segments": 16 }, "edits": [
