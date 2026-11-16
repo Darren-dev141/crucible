@@ -1,7 +1,8 @@
 import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { sampleBrowserHeap, exceedsMemoryGuard, memoryGuardMessage, createNativeMemoryAllowance } from './agent-memory-guard.mjs';
+import { totalmem } from 'node:os';
+import { sampleBrowserHeap, memoryGuardLimits, exceedsMemoryGuard, memoryGuardMessage, createNativeMemoryAllowance } from './agent-memory-guard.mjs';
 import { lstat, mkdir, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -14,7 +15,7 @@ import { USER_PASS_CAPABILITIES } from '../src/user-pass.js';
 import { GAME_CAPABILITIES } from '../src/game-setup-notes.js';
 import { MESH_BLEND_CAPABILITIES } from '../src/mesh-blend.js';
 import { MATERIAL_SNIPPET_CAPABILITIES } from '../src/material-snippet.js';
-import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, MAXIMUM_MEMORY_MIB, BAKE_WORKER_MAXIMUM_SECONDS } from '../src/agent-scene-capabilities.js';
+import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, maximumMemoryMiB, memoryRangeError, BAKE_WORKER_MAXIMUM_SECONDS } from '../src/agent-scene-capabilities.js';
 import { PATH_TRACER_CAPABILITIES } from '../src/path-tracer-capabilities.js';
 import { chooseDenoiser, finishWithOidn } from './agent-path-trace-denoise.mjs';
 import { createNativeSequence } from './agent-native-sequence.mjs';
@@ -28,6 +29,7 @@ import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMU
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
 import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
+import { namesCatalogFiles, resolveAssetPlacementNames } from '../src/agent-asset-names.js';
 import { sequenceFrameIds } from '../src/agent-texture-sequence.js';
 import { readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grids.js';
 import { catalogLookReferences, BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES } from '../src/look-catalog.js';
@@ -126,15 +128,16 @@ export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg',
 
 export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', browser: browserPath, memory = 192, assets: assetRoot, packs: packsRoot,
   jobs: jobRoot, ffmpeg = 'ffmpeg', audio: audioRoot, gpuQueue, openPage = openInDefaultBrowser, addons: addonSet = { addons: [], skipped: [] },
-  previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url) } = {}) {
+  previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), totalMemoryBytes = totalmem() } = {}) {
   if (!['gpu', 'cpu'].includes(backend)) {
     throw new RangeError('backend must be gpu or cpu.');
   }
   let nativeTracerLocator;
   // Raised by the first native frame and kept for the life of the process: the in-process OIDN device stays loaded.
   const nativeMemoryAllowance = createNativeMemoryAllowance();
-  if (!Number.isInteger(memory) || memory < 32 || memory > MAXIMUM_MEMORY_MIB) {
-    throw new RangeError(`memory must be an integer from 32 to ${MAXIMUM_MEMORY_MIB} MiB.`);
+  const maximumMemory = maximumMemoryMiB(totalMemoryBytes);
+  if (!Number.isInteger(memory) || memory < 32 || memory > maximumMemory) {
+    throw memoryRangeError(memory, maximumMemory);
   }
   validateLaunchPaths({ browser: browserPath, assets: assetRoot, packs: packsRoot, ffmpeg });
   jobRoot = resolveJobRoot(jobRoot);
@@ -268,6 +271,19 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (!packsRoot) return Promise.resolve(null);
     packsPromise ??= createPackRegistry(packsRoot, { packageVersion: packageMetadata.version });
     return packsPromise;
+  }
+
+  /** Replaces each `asset: { name }` placement of a recipe or edit list with its catalog id, so everything after this holds the pinned hash. */
+  async function pinNamedAssets(value) {
+    if (namesCatalogFiles(value)) resolveAssetPlacementNames(value, (await catalog()).resolveName);
+  }
+
+  /** The same for the asset recipe of scene_create_asset: `assetName` (a catalog file name) becomes `assetId`. */
+  async function pinNamedAssetRecipe(recipe) {
+    if (recipe?.assetName === undefined) return;
+    if (recipe.assetId !== undefined) throw new TypeError('Pass exactly one of recipe.assetId (the pinned SHA-256) or recipe.assetName (the catalog file name), not both.');
+    recipe.assetId = (await catalog()).resolveName(recipe.assetName);
+    delete recipe.assetName;
   }
 
   /** The catalog IDs a recipe or edit list loads: placed assets, map sequence frames and the HDRI and .cube files that are not shipped. */
@@ -681,14 +697,14 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     // One job runs at a time, so the estimate made at submission belongs to the job that starts next.
     const estimate = estimateForNextJob;
     estimateForNextJob = undefined;
-    const metrics = { backend, memoryBudgetMiB: memory, requestedWidth: settings.width, requestedHeight: settings.height,
+    const metrics = { backend, memoryBudgetMiB: memory, maximumMemoryMiB: maximumMemory, requestedWidth: settings.width, requestedHeight: settings.height,
       renderSeconds: 0, captureSeconds: 0, peakNodeBytes: 0, peakBrowserHeap: 0, maximumPendingFrames: 1 };
     async function recordPeakMemory() {
       metrics.peakNodeBytes = Math.max(metrics.peakNodeBytes, process.memoryUsage().rss);
-      metrics.peakBrowserHeap = Math.max(metrics.peakBrowserHeap, await sampleBrowserHeap(session));
-      const sample = { nodeBytes: metrics.peakNodeBytes, browserHeapBytes: metrics.peakBrowserHeap, nativeAllowanceBytes: nativeMemoryAllowance.bytes };
+      metrics.peakBrowserHeap = Math.max(metrics.peakBrowserHeap, await sampleBrowserHeap(session, memoryGuardLimits(memory).browserHeapBytes));
+      const sample = { nodeBytes: metrics.peakNodeBytes, browserHeapBytes: metrics.peakBrowserHeap, nativeAllowanceBytes: nativeMemoryAllowance.bytes, memoryMiB: memory };
       if (exceedsMemoryGuard(sample)) {
-        throw new Error(memoryGuardMessage({ subject: 'Render job', ...sample }));
+        throw new Error(memoryGuardMessage({ subject: 'Render job', ...sample, maximumMemoryMiB: maximumMemory }));
       }
     }
     const abort = () => { jobPage?.close().catch(() => {}); };
@@ -719,7 +735,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       const height = settings.kind === 'video' ? Math.floor(created.render.height / 2) * 2 : created.render.height;
       if (width < 64 || height < 64) throw new Error('Render budget reduced the job below its minimum output size.');
       const oversizeError = oversizeFrameBudgetError({ requested: { width: settings.width, height: settings.height }, rendered: { width, height },
-        plan: created.render, memoryMiB: memory, maximumMemoryMiB: MAXIMUM_MEMORY_MIB });
+        plan: created.render, memoryMiB: memory, maximumMemoryMiB: maximumMemory });
       if (oversizeError) throw oversizeError;
       await jobPage.setViewportSize({ width, height });
       session = await jobPage.context().newCDPSession(jobPage);
@@ -796,7 +812,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           let backendNote = trace.note;
           if (trace.backend === 'native') {
             let exportedScene = false;
-            nativeMemoryAllowance.grantForFrame({ width, height });
+            nativeMemoryAllowance.grantForFrame({ width, height, memoryMiB: memory });
             const usesSession = settings.frameCount > 1 && process.env.JS67_NATIVE_SESSIONS !== 'off';
             // Only a video blends over time: the stills of one job are separate pictures, and each must stand alone.
             const blendsOverTime = usesSession && settings.kind === 'video' && chooseNativeKernel() === 'cycles' && chooseNativeTemporal();
@@ -1070,9 +1086,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     create({ recipe }) {
       const createScene = () => enqueue(async () => {
         await requirePreviewRenderer();
+        await pinNamedAssets(recipe);
         await boot();
         const sessionId = randomUUID();
-        const createInput = { recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) };
+        const createInput ={ recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) };
         const result = await evaluate('create', createInput, page, recipe?.bake ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
         registerCreatedScene(sessionId, result, Boolean(recipe?.bake));
         return result;
@@ -1097,6 +1114,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     createAsset({ recipe }) {
       return enqueue(async () => {
         await requirePreviewRenderer();
+        await pinNamedAssetRecipe(recipe);
         const bytes = await (await catalog()).read(recipe.assetId);
         await boot();
         const sessionId = randomUUID();
@@ -1140,6 +1158,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     apply(input) {
       const applyOperations = () => enqueue(async () => {
         await requirePreviewRenderer();
+        await pinNamedAssets(input.operations);
         if (input.branch !== undefined) {
           const { branch, ...rest } = input;
           return invoke('branchApply', { ...rest, name: validateBranchName(branch) });
@@ -1331,10 +1350,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
                 width: settings.width, height: settings.height, columns: settings.columns, labels: settings.labels });
               if (backend === 'cpu' && !/swiftshader/i.test(rendered.graphics)) throw new Error('CPU review did not select SwiftShader.');
               peakNodeBytes = Math.max(peakNodeBytes, process.memoryUsage().rss);
-              peakBrowserHeap = Math.max(peakBrowserHeap, await sampleBrowserHeap(session));
-              const sample = { nodeBytes: peakNodeBytes, browserHeapBytes: peakBrowserHeap, nativeAllowanceBytes: nativeMemoryAllowance.bytes };
+              peakBrowserHeap = Math.max(peakBrowserHeap, await sampleBrowserHeap(session, memoryGuardLimits(memory).browserHeapBytes));
+              const sample = { nodeBytes: peakNodeBytes, browserHeapBytes: peakBrowserHeap, nativeAllowanceBytes: nativeMemoryAllowance.bytes, memoryMiB: memory };
               if (exceedsMemoryGuard(sample)) {
-                throw new Error(memoryGuardMessage({ subject: 'Review', ...sample }));
+                throw new Error(memoryGuardMessage({ subject: 'Review', ...sample, maximumMemoryMiB: maximumMemory }));
               }
               shots[index] = { ...rendered, ...(group.branch === undefined ? {} : { branch: group.branch, branchStale: branchRecipe.stale }) };
               completedShots += 1;
