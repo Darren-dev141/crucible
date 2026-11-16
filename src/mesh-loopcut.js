@@ -73,6 +73,7 @@ function edgeRings(edit, seeds, positionOf) {
  */
 export function loopCut(mesh, edgeRule, { cuts = 1, factor = 0.5, name = 'loop' } = {}) {
   requireFiniteInRange('loopCut', 'cuts', cuts, 1, MAX_LOOP_CUTS, true);
+  requireFiniteInRange('loopCut', 'factor', factor, 0, 1);
   const table = edgeFaces(mesh);
   const seeds = [];
   selectEdges(mesh, edgeRule, table).forEach((selected, edge) => {
