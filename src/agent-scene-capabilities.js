@@ -204,9 +204,9 @@ export const MESH_ATTRIBUTE_NOTES = Object.freeze({
 
 // UV projection and packing edits. Details stay here so the tool schemas stay small.
 export const MESH_UV_NOTES = Object.freeze({
-  choose: 'Box-like parts (crate, panel, frame, lid, slab): last edit {"op":"uv_project","mode":"cube"}, exact texel density, no seams, one call. Tubes: mode cylinder. Balls: mode sphere. Organic shapes: uv_unwrap (areaDistortion above 0.15 stretches).',
-  uv_project: 'axis x|y|z (y) for cylinder and sphere, from the bounds centre. pack true (default) packs into 0..1 with one scale for every island; false leaves uv in mesh units for a later uv_pack. margin 0-0.2 (0.01); rotate true lays tall islands on their side. Reports islands. Density: cube exact, cylinder within about 15 percent, sphere stretches toward the poles.',
-  uv_pack: 'repacks the islands already in uv into 0..1 with one scale. margin 0-0.2 (0.01), rotate true. Needs uv from uv_unwrap or uv_project. Reports islands.',
+  choose: 'Box-like parts (crate, panel, frame, lid, slab): last edit {"op":"uv_project","mode":"cube"}, exact density, no seams. Tubes: mode cylinder. Balls: mode sphere. Organic shapes: uv_unwrap (areaDistortion above 0.15 stretches).',
+  uv_project: 'axis x|y|z (y) for cylinder and sphere, from the bounds centre. pack true (default) packs into 0..1 with one scale for every island; false leaves uv in mesh units for a later uv_pack. margin 0-0.2 (0.01); rotate true lays tall islands on their side. Density: cube exact, cylinder within about 15 percent, sphere stretches toward the poles.',
+  uv_pack: 'repacks the islands already in uv into 0..1 with one scale. margin 0-0.2 (0.01), rotate true. Needs uv from uv_unwrap or uv_project.',
 });
 
 // Shape keys on a recipe mesh. Details stay here so the tool schemas stay small.
