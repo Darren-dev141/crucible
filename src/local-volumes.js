@@ -1,6 +1,8 @@
 import { MAX_LOCAL_VOLUMES, LOCAL_VOLUME_MAXIMUM_STEPS, ONE_GRID_VOLUME_MESSAGE, resolveLocalVolumesWith } from './local-volume-resolve.js';
 import { localVolumeNoise } from './local-volume-noise.js';
-import { sampleVolumeGrid, volumeGridFloats } from './volume-grid.js';
+import { sampleVolumeGrid, sampleVolumeGridVelocity, gridUnitVelocity, bakedGridEmission, volumeGridFloats } from './volume-grid.js';
+import { LOCAL_VOLUME_RAMP_STOPS, rampSourceCode, resolveEmissionRamp } from './local-volume-ramp.js';
+import { bakeEmissionRamp } from './local-volume-ramp-bake.js';
 import { resolveGridVolume, LOCAL_VOLUME_GRID_MAXIMUM_STEPS } from './local-volume-grid.js';
 
 export * from './local-volume-resolve.js';
@@ -11,13 +13,25 @@ export { LOCAL_VOLUME_GRID_MAXIMUM_STEPS };
  * The scene entry calls resolveLocalVolumesWith instead, so the grid resolver loads with the grid module and not with every scene.
  */
 export function resolveLocalVolumes(input, label = 'localVolumes') {
-  return resolveLocalVolumesWith(resolveGridVolume, input, label);
+  return resolveLocalVolumesWith(resolveGridVolume, input, label, resolveEmissionRamp);
 }
 
 /** The uniform arrays the post shader reads, one vec4 per volume. Pass resolved volumes. */
 export function createLocalVolumeBuffers() {
   const size = MAX_LOCAL_VOLUMES * 4;
-  return { count: 0, blurred: false, meshParts: [], grid: new Float32Array(size), gridVolume: null, centers: new Float32Array(size), extents: new Float32Array(size), absorption: new Float32Array(size), emission: new Float32Array(size), steps: new Float32Array(size), axes: new Float32Array(size * 3) };
+  return { count: 0, blurred: false, meshParts: [], grid: new Float32Array(size), gridVolume: null, gridShutter: 0, centers: new Float32Array(size), extents: new Float32Array(size), absorption: new Float32Array(size), emission: new Float32Array(size), steps: new Float32Array(size), axes: new Float32Array(size * 3), rampSetup: new Float32Array(size), rampColors: new Float32Array(size * LOCAL_VOLUME_RAMP_STOPS) };
+}
+
+// The emission ramp of volume `index` (#1046): rampSetup holds x the source code (0 none), y the stop count and z, w the source range; rampColors
+// holds the baked stops, one vec4 each, with the exposure and the emission strength already applied.
+function packEmissionRamp(volume, index, buffers) {
+  const { emissionRamp } = volume;
+  const baked = bakeEmissionRamp(emissionRamp);
+  buffers.rampSetup.set([rampSourceCode(emissionRamp.source), baked.count, ...emissionRamp.range], index * 4);
+  for (let stop = 0; stop < baked.count; stop++) {
+    const at = (index * LOCAL_VOLUME_RAMP_STOPS + stop) * 4;
+    for (let channel = 0; channel < 3; channel++) buffers.rampColors[at + channel] = baked.colors[stop * 3 + channel] * volume.emissionStrength;
+  }
 }
 
 const IDENTITY_AXES = Object.freeze([1, 0, 0, 0, 1, 0, 0, 0, 1]);
@@ -31,8 +45,12 @@ export function packLocalVolumes(volumes, buffers) {
   buffers.count = volumes.length;
   buffers.meshParts = [];
   buffers.gridVolume = null;
+  buffers.gridShutter = 0;
   buffers.grid.fill(0);
+  buffers.rampSetup.fill(0);
   buffers.blurred = volumes.some(volume => volume.blur > 0 && volume.density > 0);
+  // A volume that glows is composited before bloom extraction, so its glow blooms (#1046).
+  buffers.emissive = volumes.some(volume => volume.emissionStrength > 0 && (volume.shape === 'grid' || volume.emission.some(channel => channel > 0)));
   volumes.forEach((volume, index) => {
     const at = index * 4;
     const half = volume.shape === 'sphere' ? [volume.radius, volume.radius, volume.radius] : volume.size.map(extent => extent / 2);
@@ -42,14 +60,21 @@ export function packLocalVolumes(volumes, buffers) {
     buffers.absorption.set([...volume.absorption.map(channel => channel * volume.density), volume.noiseAmount], at);
     buffers.emission.set([...volume.emission.map(channel => channel * volume.emissionStrength), volume.noiseScale], at);
     buffers.steps.set([volume.steps, packedShape === PACKED_SHAPE_MESH ? buffers.meshParts.length : 0, volume.scatter ?? 0, volume.blur ?? 0], at);
+    if (volume.emissionRamp) packEmissionRamp(volume, index, buffers);
     if (packedShape === PACKED_SHAPE_MESH) buffers.meshParts.push({ part: volume.part, label: `environment.localVolumes[${index}]` });
+    if (volume.shape !== 'grid') {
+      buffers.grid[at + 1] = volume.shadowDetail ? 1 : 0;
+      buffers.grid[at + 2] = volume.castShadow === true ? 1 : 0;
+    }
     if (volume.shape === 'grid') {
       if (buffers.gridVolume) throw new RangeError(ONE_GRID_VOLUME_MESSAGE);
       buffers.gridVolume = volume;
-      buffers.grid.set([1, volume.temperatureScale, volume.blackbodyIntensity * volume.emissionStrength, volume.anisotropy], at);
+      buffers.gridShutter = volume.motionShutter ?? 0;
+      buffers.grid.set([volume.castShadow === true ? 2 : 1, volume.temperatureScale, volume.blackbodyIntensity * volume.emissionStrength, volume.anisotropy], at);
     }
     const axes = volume.axes ?? IDENTITY_AXES;
-    for (let axis = 0; axis < 3; axis++) buffers.axes.set([axes[axis * 3], axes[axis * 3 + 1], axes[axis * 3 + 2], 0], (index * 3 + axis) * 4);
+    // The free fourth component of the first axis row carries the number of scatter octaves.
+    for (let axis = 0; axis < 3; axis++) buffers.axes.set([axes[axis * 3], axes[axis * 3 + 1], axes[axis * 3 + 2], axis === 0 ? (volume.scatterOctaves ?? 1) - 1 : 0], (index * 3 + axis) * 4);
   });
   return buffers;
 }
@@ -74,6 +99,21 @@ export const LOCAL_VOLUME_LIGHT_DEPTH_SATURATION = 6;
  * side of the smoke clearly darker than the sunlit side, the way the many scatters of a real smoke take the light from its shade.
  */
 export const LOCAL_VOLUME_SHADOW_STRENGTH = 1.2;
+
+/**
+ * The octave sum that approximates multiple scattering in a volume with `scatterOctaves` above 1 (Wrenninge et al. 2015, "Oz: the great and volumetric"), the one `volumeFog` has:
+ * octave n scatters MULTI_SCATTER^n as much, sees MULTI_EXTINCTION^n of the light's optical depth and has MULTI_ANISOTROPY^n of the anisotropy.
+ */
+export const LOCAL_VOLUME_MULTI_SCATTER = 0.5;
+export const LOCAL_VOLUME_MULTI_EXTINCTION = 0.5;
+export const LOCAL_VOLUME_MULTI_ANISOTROPY = 0.5;
+
+/** How many taps along the key light measure the optical depth a volume puts between a surface and the sun (#1047). */
+export const LOCAL_VOLUME_SURFACE_SHADOW_TAPS = 8;
+
+
+/** The taps along the light of a volume with `shadowDetail` (the others take 3), so the shadow follows the noise and not only the smooth profile. The shader's loop is bounded by the same number. */
+export const LOCAL_VOLUME_DETAIL_SHADOW_TAPS = 8;
 
 /** The share of the mean sky radiance the sky term of a scattering volume keeps. The sky lights the whole volume evenly, so a high share flattens the form the sun gives it. */
 export const LOCAL_VOLUME_SKY_GAIN = 0.5;
@@ -128,17 +168,45 @@ export function warpedFadePosition(position, noiseAmount, noise) {
 }
 
 const gridScratch = new Float64Array(3);
+const velocityScratch = new Float64Array(3);
 
-/** Writes the density, temperature and flame of a grid volume at a world point into `out` (all 0 outside its box) and returns it. */
-export function localVolumeGridSample(volume, x, y, z, out) {
+/**
+ * Writes into `out` the point a motion-blurred grid volume reads instead of (x, y, z) (#1759). The frame's grid is the gas as the shutter opens, and the gas moves on by its
+ * velocity, so the point seen `timeFraction * motionShutter` seconds into the shutter reads the grid back along the velocity there: the sum over the shutter is a smear that
+ * leads the gas, which is what Cycles does with a velocity grid (measured on the #1735 blast, docs/volumetric.md). A volume with no `motionShutter`, and a point outside the
+ * box (no gas, no velocity), read where they are.
+ */
+export function localVolumeGridMotionPoint(volume, x, y, z, timeFraction, out) {
+  out[0] = x;
+  out[1] = y;
+  out[2] = z;
+  if (!(volume.motionShutter > 0)) return out;
+  const unitX = (x - volume.center[0]) / volume.size[0] + 0.5;
+  const unitY = (y - volume.center[1]) / volume.size[1] + 0.5;
+  const unitZ = (z - volume.center[2]) / volume.size[2] + 0.5;
+  if (unitX < 0 || unitX > 1 || unitY < 0 || unitY > 1 || unitZ < 0 || unitZ > 1) return out;
+  sampleVolumeGridVelocity(gridUnitVelocity(volume.gridData, volume.size), volume.gridData.resolution, unitX, unitY, unitZ, velocityScratch);
+  const seconds = volume.motionShutter * timeFraction;
+  out[0] -= velocityScratch[0] * volume.size[0] * seconds;
+  out[1] -= velocityScratch[1] * volume.size[1] * seconds;
+  out[2] -= velocityScratch[2] * volume.size[2] * seconds;
+  return out;
+}
+
+/**
+ * Writes the density, temperature and flame of a grid volume at a world point into `out` (all 0 outside its box) and returns it. With `withBlackbody`, `out` has
+ * six entries and out[3] to out[5] get the baked blackbody radiance there, before the blackbody intensity and emission strength (see sampleVolumeGrid).
+ */
+export function localVolumeGridSample(volume, x, y, z, out, withBlackbody = false) {
   const unitX = (x - volume.center[0]) / volume.size[0] + 0.5;
   const unitY = (y - volume.center[1]) / volume.size[1] + 0.5;
   const unitZ = (z - volume.center[2]) / volume.size[2] + 0.5;
   if (unitX < 0 || unitX > 1 || unitY < 0 || unitY > 1 || unitZ < 0 || unitZ > 1) {
-    out[0] = out[1] = out[2] = 0;
+    out.fill(0);
     return out;
   }
-  return sampleVolumeGrid(volumeGridFloats(volume.gridData), volume.gridData.resolution, unitX, unitY, unitZ, out);
+  const baked = withBlackbody ? bakedGridEmission(volume.gridData, volume.temperatureScale) : null;
+  return sampleVolumeGrid(volumeGridFloats(volume.gridData), volume.gridData.resolution, unitX, unitY, unitZ, out, baked);
 }
 
 /** The density factor of a volume at a point: 1 at the core, fading over the outer `falloff` share, times the noise factor (up to 2) when `noiseAmount` is above 0, as the post shader does. With noise the fade edge is also pushed in and out (LOCAL_VOLUME_EDGE_WARP). */
@@ -223,3 +291,6 @@ export function localVolumeInterval(volume, originX, originY, originZ, direction
   out[1] = exit;
   return true;
 }
+
+/** How many taps along the key light measure the optical depth a grid volume puts between a surface and the sun: more than a box takes, because a simulated density has structure along the ray that a smooth profile does not. */
+export const LOCAL_VOLUME_GRID_SHADOW_TAPS = 16;

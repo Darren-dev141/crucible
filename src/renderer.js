@@ -3,7 +3,7 @@ import { materialTags } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { BLEND_FACTORS } from './blend-output.js';
 import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
-import { postFragment, createPostFragment, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
+import { postFragment, createPostFragment, GRID_MOTION_STEP, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
 import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
 import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError } from './budget.js';
@@ -2018,6 +2018,7 @@ export class CrucibleRenderer {
     this.releaseOcclusionTarget();
     this.passSupport?.releaseTargets(context);
     for (const stage of this.postStages ?? []) stage.releaseTargets(context);
+    if (this.localVolumeComposite) requireFeatureCode('volumeFog').support.releaseLocalVolumeComposite(this, false);
     this.multisampleFramebuffer = null;
     this.resolveFramebuffer = null;
     this.multisampleColor = null;
@@ -2275,9 +2276,9 @@ export class CrucibleRenderer {
   }
 
   // True when the frame draws local volumes. An empty list costs nothing; anything else is checked here, before a program is bound.
-  prepareLocalVolumes(input, frame, volumeTime) {
+  prepareLocalVolumes(input, frame, volumeTime, volumeShutter = 0) {
     if (input === undefined || (Array.isArray(input) && input.length === 0)) return false;
-    return requireFeatureCode('volumeFog').support.prepareLocalVolumes(this, input, frame, volumeTime) > 0;
+    return requireFeatureCode('volumeFog').support.prepareLocalVolumes(this, input, frame, volumeTime, volumeShutter) > 0;
   }
 
   // The post steps this frame uses. A step that is off costs nothing in a program that has it compiled out.
@@ -2291,6 +2292,7 @@ export class CrucibleRenderer {
     if (volume.density > 0 && requireFeatureCode('volumeFog').support.usesDetail(volume)) steps.push('detail');
     if (volume.density > 0 && this.fogLightBuffers?.count > 0) steps.push('lights');
     if (localVolumes) steps.push('local');
+    if (localVolumes && this.localVolumeBuffers.gridShutter > 0) steps.push(GRID_MOTION_STEP);
     if (fogSky) steps.push('sky');
     if (frame.volumeExplosion) steps.push('explosion');
     const gradesColor = effects.saturation !== 1 || effects.contrast !== 1 || effects.temperature !== 0;
@@ -2338,6 +2340,11 @@ export class CrucibleRenderer {
     this.restoreSingleLevelFiltering();
     let sourceTexture = this.frameTexture;
     for (const stage of this.postStages) sourceTexture = stage.apply(this, frame, effects, sourceTexture) ?? sourceTexture;
+    // A grid with velocity blurs over the shutter of the scene's motion blur, or over environment.volumeShutter when the caller sets one (#1759).
+    const localVolumes = this.prepareLocalVolumes(environment.localVolumes, frame, environment.volumeTime ?? frame.time ?? 0, environment.volumeShutter ?? effects.motionBlur.shutter);
+    // A glowing volume is drawn before bloom extraction so it blooms; the final pass then skips its local step.
+    const compositedLocalVolumes = localVolumes && effects.bloom.strength > 0 && this.localVolumeBuffers.emissive;
+    if (compositedLocalVolumes) sourceTexture = requireFeatureCode('volumeFog').support.compositeLocalVolumes(this, frame, environment, sourceTexture);
     if (effects.bloom.strength > 0) this.drawBloom(effects.bloom, sourceTexture);
     const occluded = effects.ambientOcclusion > 0 && Boolean(this.depthTexture);
     if (occluded) this.drawAmbientOcclusion(frame, effects);
@@ -2349,16 +2356,15 @@ export class CrucibleRenderer {
     context.bindVertexArray(null);
     const fogSky = this.fogSkyVisibility?.(this.sceneParts, volume, context, environment);
     const fogSupport = volume.density > 0 ? requireFeatureCode('volumeFog').support : null;
-    const localVolumes = this.prepareLocalVolumes(environment.localVolumes, frame, environment.volumeTime ?? frame.time ?? 0);
     if (fogSupport) fogSupport.packLights(this);
     else if (this.fogLightBuffers) this.fogLightBuffers.count = 0;
-    const post = this.selectPostProgram(this.postStepsOf(frame, effects, volume, occluded, fogSky, localVolumes));
+    const post = this.selectPostProgram(this.postStepsOf(frame, effects, volume, occluded, fogSky, localVolumes && !compositedLocalVolumes));
     context.useProgram(post.program);
     if (this.look) viewTransformShader.bindLook(this, post.program);
     context.activeTexture(context.TEXTURE0);
     context.bindTexture(context.TEXTURE_2D, sourceTexture);
     // The fog's glow reads blurred copies of the frame from its mip chain, so a tap is smooth instead of one speckled pixel.
-    if (volume.density > 0 || (localVolumes && this.localVolumeBuffers.blurred)) {
+    if (volume.density > 0 || (localVolumes && !compositedLocalVolumes && this.localVolumeBuffers.blurred)) {
       context.generateMipmap(context.TEXTURE_2D);
       context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR_MIPMAP_LINEAR);
       this.mipmappedTexture = sourceTexture;
@@ -2371,7 +2377,7 @@ export class CrucibleRenderer {
     context.bindTexture(context.TEXTURE_2D, this.depthTexture ?? this.whiteTexture);
     context.uniform1i(post.uniforms.sceneDepth, 1);
     fogSupport?.bindUniforms(this, post, volume, environment, frame);
-    if (localVolumes) requireFeatureCode('volumeFog').support.bindLocalVolumes(this, post, frame, environment);
+    if (localVolumes && !compositedLocalVolumes) requireFeatureCode('volumeFog').support.bindLocalVolumes(this, post, frame, environment);
     context.activeTexture(context.TEXTURE2);
     context.bindTexture(context.TEXTURE_2D, effects.bloom.strength > 0 ? this.bloomTargets[1].texture : this.whiteTexture);
     context.uniform1i(post.uniforms.bloomTexture, 2);
@@ -2711,6 +2717,10 @@ export class CrucibleRenderer {
     const effects = resolveEffects(frame.effects);
     const environment = { lightDirection: [-3, 6, 4], fogColor: [0.35, 0.43, 0.43], fogDensity: 0.006, daylight: 1, explosionCenter: [0, 0, 0], ...this.environment, ...frame.environment };
     environment.fogDensity ??= this.fittedFogDensity ?? 0.006;
+    if (environment.localVolumes?.some?.(localVolume => localVolume?.lightsScene === true)) {
+      // Fire lights the set: the emitting volumes add point lights before the lighting state is written (#1046).
+      environment.pointLights = requireFeatureCode('volumeFog').support.withVolumeFireLights(this, environment, environment.volumeTime ?? frame.time ?? 0).pointLights;
+    }
     const volume = resolveVolumeFog(environment.volumeFog);
     if (this.fogFieldOverride) volume.field = this.fogFieldOverride;
     if (volume.density > 0) {
@@ -2933,6 +2943,7 @@ export class CrucibleRenderer {
     if (this.occlusionProgram) this.context.deleteProgram(this.occlusionProgram);
     this.passSupport?.dispose(this.context);
     for (const stage of this.postStages ?? []) stage.dispose(this.context);
+    if (this.localVolumeComposite) requireFeatureCode('volumeFog').support.releaseLocalVolumeComposite(this, true);
     if (this.environmentBackgroundProgram) this.context.deleteProgram(this.environmentBackgroundProgram);
     this.environmentResources?.dispose();
     for (const texture of this.textures.values()) this.context.deleteTexture(texture);

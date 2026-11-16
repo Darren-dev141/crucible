@@ -19,6 +19,7 @@ import { PATH_TRACER_CAPABILITIES } from '../src/path-tracer-capabilities.js';
 import { chooseDenoiser, finishWithOidn } from './agent-path-trace-denoise.mjs';
 import { createNativeSequence } from './agent-native-sequence.mjs';
 import { chooseNativeTemporal, createTemporalAccumulator, temporalFrameSeed } from './agent-native-temporal.mjs';
+import { readNativeCapacity } from './native-capacity.mjs';
 import { chooseNativeInstancing, chooseNativeKernel, chooseTraceBackend, createNativeTracerLocator, fetchNativeExport, isNativeTimeLimitError, traceFrameNative, traceTexelsNative } from './agent-native-trace.mjs';
 import { addonCapabilities, addonFileFor, addonImportMap } from './mcp-addons.mjs';
 import { createAgentAssetCatalog } from './agent-asset-catalog.mjs';
@@ -80,6 +81,8 @@ const PAGE_HANDOFF_TIMEOUT_MS = 4 * EVALUATION_TIMEOUT_MS;
 const QUERY_ONLY_TIMEOUT_MS = 120000;
 /** A bake runs on a worker for up to its own limit, so a call that bakes gets that much more than a plain call. */
 const BAKE_EVALUATION_TIMEOUT_MS = EVALUATION_TIMEOUT_MS + BAKE_WORKER_MAXIMUM_SECONDS * 1000;
+/** The first draw of a grid volume compiles its shader, which took 23 to 29 s on a loaded GPU, so an add-explosion apply (which adds one) gets twice a plain call. */
+const GRID_VOLUME_EVALUATION_TIMEOUT_MS = 2 * EVALUATION_TIMEOUT_MS;
 
 /** The last set-bake among the operations decides: a bake object adds one, null clears it. Undefined when there is none. */
 function bakeAfterOperations(operations) {
@@ -782,7 +785,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             const blendsOverTime = usesSession && settings.kind === 'video' && chooseNativeKernel() === 'cycles' && chooseNativeTemporal();
             const frameSeed = blendsOverTime ? temporalFrameSeed(tracerOptions.seed, frame) : tracerOptions.seed;
             try {
-              const exported = await fetchNativeExport(jobPage, { ...frameInput, options: { width, height, bounces: tracerOptions.bounces, seed: frameSeed, fireflyClamp: 20, noiseThreshold: tracerOptions.noiseThreshold, samples: tracerOptions.samples, instancing: chooseNativeInstancing(), kernel: chooseNativeKernel() } });
+              const exported = await fetchNativeExport(jobPage, { ...frameInput, options: { width, height, bounces: tracerOptions.bounces, seed: frameSeed, fireflyClamp: 20, noiseThreshold: tracerOptions.noiseThreshold, samples: tracerOptions.samples, instancing: chooseNativeInstancing(), kernel: chooseNativeKernel() } }, { capacity: readNativeCapacity(trace.tracer).capacity });
               exportedScene = true;
               if (usesSession) nativeSequence ??= createNativeSequence({ tracer: trace.tracer });
               if (blendsOverTime) {
@@ -793,9 +796,12 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
               traced = await traceFrameNative({ tracer: trace.tracer, sequence: nativeSequence, temporal: nativeTemporal, exported, width, height, samples: tracerOptions.samples, bounces: tracerOptions.bounces,
                 seed: frameSeed, denoise: choice.denoise === true ? 'wavelet' : choice.denoise === false ? 'none' : choice.denoise, denoiser: choice.denoiser,
                 maxSeconds: tracerOptions.maxSeconds, noiseThreshold: tracerOptions.noiseThreshold });
+              nativeMemoryAllowance.grantForAdapter(traced.report.gpu);
             } catch (error) {
               // Past maxSeconds the job fails as it does on every backend; falling back would only run it twice as long.
               if (isNativeTimeLimitError(error)) throw error;
+              // A scene over the adapter capacity fails the job with its own message; the gpu backend is not tried instead.
+              if (error.nativeCapacity) throw error;
               nativeSequence?.close();
               nativeSequence = undefined;
               nativeTemporal?.restart('a frame rendered on another backend');
@@ -1127,7 +1133,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         const gameAssets = await gameAssetNeeds(input);
         const placedValue = gameAssets?.recipe ?? input.operations;
         const applyInput = { ...input, ...(await motionSources(motions, placedValue)), ...(await placedAssetData(placedValue)), ...(gameAssets ? { assetNeeds: gameAssets.recipe } : {}) };
-        const applied = await invoke('apply', applyInput, rebakes ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
+        const addsGridVolume = (input.operations ?? []).some(operation => operation.type === 'add-explosion');
+        const applyTimeout = rebakes ? BAKE_EVALUATION_TIMEOUT_MS : addsGridVolume ? GRID_VOLUME_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS;
+        const applied = await invoke('apply', applyInput, applyTimeout);
         if (bakeAfter ?? hadBake) bakedSessionIds.add(input.sessionId);
         else bakedSessionIds.delete(input.sessionId);
         return applied;

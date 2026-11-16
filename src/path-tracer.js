@@ -13,7 +13,7 @@ import {
 } from './path-tracer-shading.js';
 import { buildLightTree, chooseLightFromTree, LIGHT_TREE_FIRST_HIT_LIGHTS, resolveLightSelection } from './path-tracer-light-tree.js';
 import { createRandomWalk, WALK_OUTCOME } from './path-tracer-subsurface.js';
-import { henyeyGreensteinPhase, sampleHenyeyGreensteinCosine, volumeInterval, createLocalVolumeCrossing, meanEnvironmentRadiance } from './path-tracer-volume.js';
+import { henyeyGreensteinPhase, sampleHenyeyGreensteinCosine, volumeInterval, createLocalVolumeCrossing, createLocalVolumeSurfaceShadow, meanEnvironmentRadiance } from './path-tracer-volume.js';
 
 // Offline still renderer: unidirectional path tracing on the CPU with next-event estimation for every light, the
 // environment map drawn by importance, and a wavelet denoiser. It reads the same parts, materials, lights and camera
@@ -595,11 +595,13 @@ function createPathTracer(scene, options) {
     const originZ = hit.point[2] + normal[2] * scene.surfaceOffset;
     if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit)) return;
     const scale = cosine * weight(surface) * fogTransmittance(originX, originY, originZ, distance);
+    if (lightIsSun && writeSunShadow) writeSunShadow(originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], sunShadow);
+    else sunShadow.fill(1);
     addRadiance(
       depth,
-      throughput[0] * value[0] * lightRadiance[0] * scale,
-      throughput[1] * value[1] * lightRadiance[1] * scale,
-      throughput[2] * value[2] * lightRadiance[2] * scale,
+      throughput[0] * value[0] * lightRadiance[0] * scale * sunShadow[0],
+      throughput[1] * value[1] * lightRadiance[1] * scale * sunShadow[1],
+      throughput[2] * value[2] * lightRadiance[2] * scale * sunShadow[2],
     );
   }
 
@@ -620,7 +622,9 @@ function createPathTracer(scene, options) {
     const along = sineTheta * Math.sin(phi);
     for (let axis = 0; axis < 3; axis++) lightDirection[axis] = sunFrame[axis] * across + sunFrame[3 + axis] * along + sunFrame[6 + axis] * cosineTheta;
     for (let channel = 0; channel < 3; channel++) lightRadiance[channel] = lights.sun.color[channel];
+    lightIsSun = true;
     addDirect(depth, normal, scene.farDistance, fullWeight);
+    lightIsSun = false;
   }
 
   function aimAt(targetX, targetY, targetZ) {
@@ -868,6 +872,10 @@ function createPathTracer(scene, options) {
     }
     : null;
   const crossLocalVolumes = scene.localVolumes ? createLocalVolumeCrossing(scene.localVolumes, localVolumeLighting) : null;
+  // The local volumes that cast shadows dim the sun's direct light at a surface (#1047); sunShadow holds the per-channel factor of the last sun sample.
+  const writeSunShadow = scene.localVolumes ? createLocalVolumeSurfaceShadow(scene.localVolumes) : null;
+  const sunShadow = new Float64Array(3);
+  let lightIsSun = false;
   const localEmitted = new Float64Array(3);
 
   const walkSubsurface = createRandomWalk(scene, random, intersect);

@@ -66,7 +66,7 @@ Call `loadAgentSceneModules(operations)` before `apply` when the operations add 
 ## Recipe contract
 
 The recipe must contain `format`, `schemaVersion`, `geometries`, `materials`, and `nodes`.
-The optional `camera` object supplies a perspective camera, or an orthographic one with `projection: 'orthographic'` and `orthoScale` (view height in metres, default 4). The lens is `fov` (vertical degrees) or `focalLength` in millimetres with `sensorWidth` (default 36); giving both is an error. `shift: [x, y]` moves the frame by a fraction of its width and height, positive right and up. `fStop` (0.7 to 64) turns on depth of field focused on `target` (1.4 or lower is full blur) and cannot be combined with `effects.depthOfField.blur`. The path tracer draws perspective cameras without shift.
+The optional `camera` object supplies a perspective camera, or an orthographic one with `projection: 'orthographic'` and `orthoScale` (view height in metres, default 4). The lens is `fov` (vertical degrees) or `focalLength` in millimetres with `sensorWidth` (default 36); giving both is an error. `shift: [x, y]` moves the frame by a fraction of its width and height, positive right and up. `fStop` (0.7 to 64) turns on depth of field focused on `target` (1.4 or lower is full blur); `focusDistance` (metres along the view axis, positive, needs `fStop`) puts the focus plane there instead, so the subject can stay sharp without moving `target`, in the rasterizer and the path tracer alike (it is not the `effects.depthOfField.focusDistance` of the blur effect, nor a motion track: the lens keeps it while camera tracks move the camera) and cannot be combined with `effects.depthOfField.blur`. The path tracer draws perspective cameras without shift.
 All objects reject unknown keys.
 Inputs must contain plain, finite, acyclic JSON data without accessors, sparse arrays, or executable values.
 JSON nesting has a fixed maximum of 64 levels.
@@ -239,7 +239,7 @@ Normal transforms must also remain finite.
 Cached local geometry bounds provide a conservative world Float32 check from eight corners per mesh.
 The check bounds the sum of absolute matrix products, so intermediate shader arithmetic cannot overflow before cancellation.
 
-The camera contains `eye`, `target`, `up`, `fov`, `near`, and `far`, plus the optional `projection`, `orthoScale`, `focalLength`, `sensorWidth`, `shift` and `fStop` when the recipe sets them.
+The camera contains `eye`, `target`, `up`, `fov`, `near`, and `far`, plus the optional `projection`, `orthoScale`, `focalLength`, `sensorWidth`, `shift`, `fStop` and `focusDistance` when the recipe sets them.
 Its defaults are `[4, 3, 5]`, `[0, 0, 0]`, `[0, 1, 0]`, `45`, `0.1`, and `1000`.
 FOV uses degrees and ranges between zero and 180.
 The clipping range must satisfy `0 < near < far` at Float32 precision.
@@ -300,6 +300,7 @@ A node with an `asset` field places a GLB from the `--assets` catalog inside the
 ```
 
 - `id` is an id from `scene_asset_catalog`. `materials` override source materials by glTF material name (`color`, `metallic`, `roughness`, `opacity`, `emission`, `emissiveColor`, and `tag`: `foliage` or `grass` makes the leaves of an imported tree sway in `environment.wind` and cast moving shadows, like grown ones); `scene_inspect` lists the names. Placements with the same overrides share one material. An override with an `id` (1 to 128 characters, one per placement, not an existing material id) gets a material of its own that a `motion` material track names: `{ "kind": "material", "id": "stool-heat", "property": "emission" }` (also `emissiveColor`, `color`, `metallic`, `roughness`) fades a heat glow without another `scene_create`; textures and shading stay.
+- `flatten` flattens every material of the placement in one call, so an imported asset with many materials needs no override per name: `{ "unlit": true }` draws them without lighting, `{ "color": [0.8, 0.8, 0.8] }` paints them one linear colour, and both together give a flat unlit silhouette for a sketch-to-3D composite. It drops normal, metallic-roughness, occlusion and emissive maps and any glow; `color` also drops the base map, and `unlit` alone keeps it. Other placements in the scene are unchanged, and a named override in `materials` still wins over `flatten`. To flatten the whole scene, give each placement the same `flatten`.
 - `emissionMask` on an override (and on a recipe material) makes the glow follow a ramp along one axis: `{ "axis": "y", "from": 0.2, "to": 0.5 }` multiplies `emission` by a smooth step that is 0 at `from` and 1 at `to` (a `from` above `to` flips it), so a part glows only at the end that would cool last while its texture and shading stay. The axis and the numbers are metres in the part's own space (the coordinates its mesh stores, at the placement's scale), so read them from the bounds in `scene_inspect`. Without `emissionMask` nothing changes and the shader pays nothing. The rasterizer applies it; the path tracers and GLB export ignore it (the path tracer says so in its notes). Errors name the field and what to pass, such as `emissionMask.axis` needing `x`, `y` or `z`.
 - Placements of the same asset share geometry and materials, so they draw as one instanced batch per material (`drawBatches` in the render status stays flat as copies are added). Skins and morphs keep working.
 - `clip` plays that clip, held at its first frame until scene time `start`, then at `speed`, looping unless `loop` is false. Each placement that plays a clip gets a decoded copy of its own (its geometry is not shared), because a pose is state of one decoded asset. A seek gives the same frame as playing to that time. `set-motion` tracks still move the node itself, so a walking figure is a clip plus a motion track on the same node.
@@ -400,13 +401,44 @@ Final resource references and hierarchy must be valid before publication.
 | --- | --- |
 | `set-node` | `id`, optional `translation`, `rotation`, `scale`, `parent`, `label`, `geometry`, `material` |
 | `set-material` | `id`, optional `color`, `metallic`, `roughness`, `emission`, `emissiveColor`, `pattern`, `map` |
-| `set-camera` | Optional `eye`, `target`, `up`, `fov`, `near`, `far`, `projection`, `orthoScale`, `focalLength`, `sensorWidth`, `shift`, `fStop` directly on the command; `focalLength` replaces `fov` and `fov` replaces `focalLength` |
+| `set-camera` | Optional `eye`, `target`, `up`, `fov`, `near`, `far`, `projection`, `orthoScale`, `focalLength`, `sensorWidth`, `shift`, `fStop`, `focusDistance` directly on the command; `focalLength` replaces `fov` and `fov` replaces `focalLength` |
 | `add-geometry` | `geometry`, containing a complete geometry record |
 | `remove-geometry` | `id` |
 | `add-material` | `material`, containing a complete material record |
 | `remove-material` | `id` |
 | `add-node` | `node`, containing a complete node record |
 | `remove-node` | `id`, optional boolean `recursive`, default `false` |
+| `add-explosion` | `id`, `center`, `size`, optional `start`, `seed`, `fuel`, `debris`, `shake`, `ground` (see Explosions below) |
+
+### Explosions
+
+`add-explosion` writes a layered blast into ordinary recipe sections in one call, so an agent does not hand-build six systems (#1050).
+`{ "type": "add-explosion", "id": "blast", "center": [0, 0, 0], "size": 6, "start": 0.5, "seed": 7, "fuel": "oily", "debris": { "node": "crate" }, "shake": 0.4 }`
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `id` | required | Letters, digits, `-` and `_`, up to 64. Every part of the blast gets an ID that starts with `id-` |
+| `center`, `size` | required | Charge position and fireball diameter in metres, 0.5 to 100 |
+| `start` | `0` | Scene time of the blast in seconds, 0 to 3600 |
+| `seed` | `1` | The same seed writes the same recipe byte for byte |
+| `fuel` | `dry` | `oily` bakes more dark smoke, thickens the volume and adds more sparks |
+| `ground` | `center` y | Height of the ground for the dust, rubble landing and the scorch |
+| `shake` | `0.4` | Camera shake 0 to 1 over about 1 s; skipped when the camera already has an eye track, refused when you ask for it |
+| `debris` | none | `{ node }`: a convex mesh node broken into 12 loose pieces thrown outward by impulse events at `start`. Needs a `physics` section with a fixed floor body first; its `duration` grows to cover `start + 3` |
+
+What it writes (read it back with `scene_export_recipe`, then tweak any part):
+
+- `effects.flash` and an `effects.distortion` ring at the centre, which fade by their own decay and falloff on the scene clock.
+- One gas-sim grid volume in `environment.localVolumes` for the fireball and the smoke: a baked simulation of a ground blast (`src/gas-sim.js`), lit by the physical blackbody of each voxel's temperature (`blackbodyIntensity`), with `castShadow` on so the smoke shades the floor and `lightsScene` on so the fire lights the set. It is the look of the gas-sim preview (#1735). `size` scales it: the box is 3.2 times `size` on a side, the density and emission shrink with the box so the blast keeps its optical depth, and it plays at 24 frames a second divided by the square root of `size / 2.5`, so a bigger fire rises slower. The grid is 32 cubed and 72 frames (3 s of simulation at the reference size), held on its last frame, baked once per fuel and seed in about 4 s. `oily` bakes more and darker smoke and thickens the volume.
+- The grid files are named `explosion-<fuel>-<seed>_0000.67vg` to `_0071`, plus `explosion-empty.67vg` for the wait before `start` (one empty frame per frame of playback, so `start` is at most about 18 s at size 2.5 and the error says the limit for the size you pass). No such files exist on disk: the MCP server bakes them from the name (about 4 s the first time for a fuel and seed, cached after) and sends them to the preview page with `scene_apply`, so the page spends no time on the bake, and so `scene_export_recipe`, `scene_create` and the render jobs work with the recipe as it is.
+- `effects.bloom.strength` raised to at least 0.5 so the glow spills past the flames. The volume's own light replaces the old point light and its track.
+- `effects.flash` and an `effects.distortion` ring at the centre, which fade by their own decay and falloff on the scene clock.
+- Particle systems `id-sparks`, `id-dust` and `id-rubble`, delayed to `start` (the `delay` field of a particle system). Sparks and a velocity motion blur on the fireball are planned as options (#1761, #1762).
+- A dark `id-scorch` disc decal that appears at `start`, and a camera eye shake track.
+- The motion duration becomes at least `start` plus the playing time of the blast plus 1 s.
+
+It needs a scene with no grid volume yet (a scene draws one), a free local volume, 3 of the 4 particle systems, and a free flash and distortion slot, and fails naming the field otherwise.
+Gaps: the grid is 32 cubed, so the detail is coarser than the 64 cubed preview and the smoke holds its last frame after the simulation ends; the dust is a puff, not a flat ring; there is no crater.
 
 Reparenting changes hierarchy while preserving each node's local transform.
 Commands can add or remove nodes and resources.

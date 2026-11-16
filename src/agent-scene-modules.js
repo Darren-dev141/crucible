@@ -14,6 +14,8 @@ const MODULE_LOADERS = {
   drive: () => import('./agent-drive.js'),
   physics: () => import('./agent-physics.js'),
   fracture: () => import('./agent-fracture.js'),
+  explosion: () => import('./agent-explosion.js'),
+  vehicleDamage: () => import('./vehicle-damage.js'),
   cloth: () => import('./agent-cloth.js'),
   particles: () => import('./agent-particles.js'),
   bake: () => import('./agent-bake.js'),
@@ -45,6 +47,7 @@ const MODULE_LOADERS = {
   postSteps: () => import('./post-steps.js'),
   materialSnippet: () => import('./material-snippet.js'),
   volumeGrid: () => import('./local-volume-grid.js'),
+  volumeRamp: () => import('./local-volume-ramp.js'),
 };
 
 const loadedModules = {};
@@ -57,15 +60,17 @@ const MODULE_MARKERS = {
   mesh: ['"type":"mesh"', '"instances"'],
   modeling: ['"type":"lathe"', '"type":"extrude"', '"type":"tube"', '"type":"curve"', '"type":"sdf"'],
   text: ['"type":"text"'],
-  motion: ['"motion":{', '"bake-motion"'],
+  motion: ['"motion":{', '"bake-motion"', '"add-explosion"'],
   motionBake: ['"bake-motion"'],
   springs: ['"springs":{'],
   settle: ['"type":"settle"'],
   drive: ['"drive":{'],
-  physics: ['"physics":{', '"fracture-node"'],
-  fracture: ['"type":"fragment"', '"fracture-node"'],
+  physics: ['"physics":{', '"fracture-node"', '"add-explosion"'],
+  fracture: ['"type":"fragment"', '"fracture-node"', '"add-explosion"'],
+  explosion: ['"add-explosion"'],
+  vehicleDamage: ['"type":"dented"'],
   cloth: ['"cloth":{'],
-  particles: ['"particles":{'],
+  particles: ['"particles":{', '"add-explosion"'],
   bake: ['"bake":{'],
   // A metallic value of 0.5 or more may make a part reflective; the module skips a scene that has no smooth one.
   reflections: [/"metallic":(0\.[5-9]|1(?![0-9]))/],
@@ -77,7 +82,7 @@ const MODULE_MARKERS = {
   liquidShader: ['"transmission"', '"liquid"', '"foam"'],
   subsurfaceShader: ['"subsurface"'],
   // Any mention loads it, because an edit can set the density through a path or the environment of an operation.
-  fogShader: ['volumeFog', 'localVolumes'],
+  fogShader: ['volumeFog', 'localVolumes', '"add-explosion"'],
   worldMaterials: ['"tag":"water"', '"waterPreset"', '"absorption"', '"turbidity"', '"vegetation":{', '"tag":"foliage"', '"tag":"grass"', '"tag":"terrain"', '"tag":"fire"', '"tag":"smoke"', '"moss"'],
   terrain: ['"type":"terrain"'],
   // No recipe text asks for it, only the path option of scene_inspect does, so a host loads it with loadAllAgentSceneModules.
@@ -101,9 +106,10 @@ const MODULE_MARKERS = {
   game: ['"game":{', '"set-game"'],
   materialSnippet: ['"snippet":{'],
   volumeGrid: ['"shape":"grid"'],
+  volumeRamp: ['"emissionRamp"'],
   // Only a motionBlur object that sets a non-zero `objects` loads it; the common `"shutter":0` look does not.
   objectMotionBlur: [/"motionBlur":\{[^}]*"objects":(?!0[,}])/],
-  postSteps: [/"(?:colorBalance|glare|lensDistortion|stylize|composite)"|"(?:distortion|flash)":[\[{]/],
+  postSteps: [/"(?:colorBalance|glare|lensDistortion|stylize|composite)"|"(?:distortion|flash)":[\[{]|"add-explosion"/],
 };
 
 /** Whether a recipe, operation list or edit list contains a boolean edit, which needs loadMeshBooleans() first. */
@@ -114,7 +120,7 @@ export function needsMeshBooleans(value) {
 /** True when a recipe or an operation list carries a physics section or a settle operation, so the host loads the solver first. */
 export function needsPhysics(value) {
   const text = JSON.stringify(value ?? null);
-  return text.includes('"physics":{') || text.includes('"fracture-node"') || text.includes('"type":"settle"');
+  return text.includes('"physics":{') || text.includes('"fracture-node"') || text.includes('"type":"settle"') || (text.includes('"add-explosion"') && text.includes('"debris"'));
 }
 
 /** True when a recipe has a body with a float field, so the host passes { buoyancy: true } to loadPhysicsEngine. */

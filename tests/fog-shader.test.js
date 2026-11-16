@@ -58,3 +58,19 @@ test('the film imports the fog code, so its fog scene draws without further setu
   `);
   assert.equal(output[0], 'true');
 });
+
+test('the grid volume samples the padded texture and a baked blackbody texture, with no cubic temperature read (#1752)', () => {
+  const output = runModule(`
+    await import('./src/fog-shader.js');
+    const { createPostFragment } = await import('./src/post.js');
+    const { GRID_BORDER_VOXELS } = await import('./src/volume-grid.js');
+    const fragment = createPostFragment(['local']);
+    console.log(fragment.includes('uniform highp sampler3D localGridEmissionTexture;'));
+    console.log(fragment.includes('vec3 localGridBlackbody(int index, vec3 position)'));
+    console.log(fragment.includes('vec3(textureSize(localGridTexture, 0))'));
+    console.log(fragment.includes('unit * (paddedSize - ' + 2 * GRID_BORDER_VOXELS + '.0) + ' + GRID_BORDER_VOXELS + '.0'));
+    console.log(fragment.includes('localGridBlackbody(nearest, position) * localVolumeGrid[nearest].z'));
+    console.log(fragment.includes('Cubic') || fragment.includes('pow(kelvin'));
+  `);
+  assert.deepEqual(output, ['true', 'true', 'true', 'true', 'true', 'false']);
+});

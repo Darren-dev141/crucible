@@ -19,6 +19,11 @@ function resolveGridVolumeOnDemand(input, resolved, label) {
   return agentSceneModule('volumeGrid').resolveGridVolume(input, resolved, label);
 }
 
+// The emission ramp of a local volume resolves in the volumeRamp module, which loads when a recipe names emissionRamp.
+function resolveEmissionRampOnDemand(input, shape, label) {
+  return agentSceneModule('volumeRamp').resolveEmissionRamp(input, shape, label);
+}
+
 // The longest list in a look is the longest light list.
 const MAX_LOOK_ARRAY_ENTRIES = Math.max(MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS);
 
@@ -337,7 +342,7 @@ function environmentFrom(input = {}) {
   }
   // Optional like the lights above, so a recipe without local volumes keeps its exported shape.
   if (input.localVolumes !== undefined) {
-    environment.localVolumes = copiedJson(resolveLocalVolumesWith(resolveGridVolumeOnDemand, input.localVolumes, 'environment.localVolumes'));
+    environment.localVolumes = copiedJson(resolveLocalVolumesWith(resolveGridVolumeOnDemand, input.localVolumes, 'environment.localVolumes', resolveEmissionRampOnDemand));
   }
   if (input.shadowCascades !== undefined) {
     environment.shadowCascades = shadowCascadesFrom(input.shadowCascades);

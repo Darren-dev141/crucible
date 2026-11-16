@@ -467,6 +467,12 @@ function checkCameraLens(camera) {
   if (camera.fStop !== undefined && !(Number.isFinite(camera.fStop) && camera.fStop >= 0.7 && camera.fStop <= 64)) {
     throw invalidField('camera.fStop', camera.fStop, 'a number from 0.7 to 64, such as 2.8 (smaller numbers blur more)');
   }
+  if (camera.focusDistance !== undefined) {
+    if (camera.fStop === undefined) throw invalidField('camera.focusDistance', camera.focusDistance, 'a field used with fStop, such as fStop 2.8; add fStop or remove focusDistance');
+    if (!(Number.isFinite(camera.focusDistance) && camera.focusDistance > 0)) {
+      throw invalidField('camera.focusDistance', camera.focusDistance, 'a positive distance in metres along the view axis, such as 3.5 (default: the distance to target)');
+    }
+  }
 }
 
 function cameraFrom(value = {}) {
@@ -529,6 +535,7 @@ const GEOMETRY_FIELDS = {
   mesh: ['base', 'edits', 'stack', 'smoothAngle', 'shapeKeys'],
   terrain: ['size', 'resolution', 'seed', 'amplitude', 'holes'],
   fragment: ['source', 'seed', 'cells', 'index', 'impact', 'impactRadius'],
+  dented: ['source', 'impacts', 'stiffness', 'maxDepth', 'radius'],
 };
 
 // A line is a two-point curve; both ends must be finite and apart.
@@ -561,7 +568,7 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
   for (const field of GEOMETRY_FIELDS[value.type]) {
     // Terrain checks its own numbers (a whole resolution from 2 to 256), so its message names the real range; null is not absent there, so it still fails below.
     if (value.type === 'terrain' && ['size', 'resolution', 'amplitude'].includes(field) && value[field] !== null) continue;
-    if (value[field] !== undefined && !['profile', 'contour', 'holes', 'path', 'closed', 'base', 'edits', 'stack', 'shapeKeys', 'points', 'taper', 'text', 'font', 'align', 'from', 'to', 'shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'root', 'source', 'impact'].includes(field)) {
+    if (value[field] !== undefined && !['profile', 'contour', 'holes', 'path', 'closed', 'base', 'edits', 'stack', 'shapeKeys', 'points', 'taper', 'text', 'font', 'align', 'from', 'to', 'shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'root', 'source', 'impact', 'impacts'].includes(field)) {
       finite(value[field], field);
     }
   }
@@ -633,6 +640,8 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
     }
     case 'fragment':
       return fragmentEstimate(value, scope);
+    case 'dented':
+      return agentSceneModule('vehicleDamage').dentedVertexEstimate(value, scope.definitions, source => geometryEstimate(source, { definitions: scope.definitions, chain: [] }));
     case 'mesh': {
       const base = value.base;
       if (!base || typeof base !== 'object' || Array.isArray(base) || base.type === 'mesh' || Object.hasOwn(base, 'id')) {
@@ -755,6 +764,10 @@ function geometrySignature(definition, definitions) {
     geometryEstimate(definition, { definitions, chain: [] });
     return `${JSON.stringify(definition)}|source|${geometrySignature(definitions.get(definition.source), definitions)}`;
   }
+  if (definition.type === 'dented') {
+    geometryEstimate(definition, { definitions, chain: [] });
+    return `${JSON.stringify(definition)}|source|${geometrySignature(definitions.get(definition.source), definitions)}`;
+  }
   const dependencies = definition.type === 'mesh' ? checkedCutterDependencies(definition, definitions) : '';
   return dependencies ? `${JSON.stringify(definition)}|cutters|${dependencies}` : JSON.stringify(definition);
 }
@@ -813,6 +826,11 @@ function generateGeometry(value, maxVertices, scope) {
       const source = scope.definitions.get(value.source);
       return agentSceneModule('fracture').fragmentGeometry(value, geometrySignature(source, scope.definitions),
         () => generateGeometry(source, maxVertices, { definitions: scope.definitions, chain: [] }));
+    }
+    case 'dented': {
+      if (!scope) throw invalidField('type', 'dented', 'a geometry inside a recipe, where its source geometry is found by ID');
+      const { source, id, type, ...dent } = value;
+      return agentSceneModule('vehicleDamage').dentGeometry(generateGeometry(scope.definitions.get(source), maxVertices, { definitions: scope.definitions, chain: [] }), dent);
     }
     case 'mesh': {
       const cutterScope = meshCutterScope(value, scope);
@@ -2180,6 +2198,12 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           const { id: fracturedId } = candidate.nodes.find(node => node.id === operation.node) ?? {};
           agentSceneModule('fracture').fractureNode(candidate, operation, geometryId => generateOperationGeometry(candidate, geometryId, limits));
           if (fracturedId !== undefined) removedNodes.add(fracturedId);
+          continue;
+        }
+        if (operation.type === 'add-explosion') {
+          const sourceGeometry = geometryId => generateOperationGeometry(candidate, geometryId, limits);
+          agentSceneModule('explosion').addExplosion(candidate, operation, { sourceGeometry, fractureNode: fracture => agentSceneModule('fracture').fractureNode(candidate, fracture, sourceGeometry) });
+          if (typeof operation.debris?.node === 'string') removedNodes.add(operation.debris.node);
           continue;
         }
         if (operation.type === 'settle') {

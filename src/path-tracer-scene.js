@@ -597,11 +597,11 @@ export function refuseLocalVolumes(scene, tracerName) {
 
 // The volumes of the trace, and the hidden parts that only bound a mesh volume: the rasterizer does not draw a part with
 // `visible: false`, and the trace leaves it out of the geometry too, so a part can shape smoke without becoming a wall.
-function resolveTraceLocalVolumes(input, parts, volumeTime = 0) {
+function resolveTraceLocalVolumes(input, parts, volumeTime = 0, volumeShutter = 0) {
   if (!input?.length) return { volumes: null, boundsOnlyParts: [] };
   const resolved = resolveLocalVolumes(input, 'environment.localVolumes');
   const meshPartNames = new Set(resolved.filter(volume => volume.shape === 'mesh').map(volume => volume.part));
-  const volumes = bindLocalVolumeParts(resolved, parts, { time: volumeTime }).map((volume, index) => (volume.part ? prepareMeshVolume(volume, `environment.localVolumes[${index}]`) : volume));
+  const volumes = bindLocalVolumeParts(resolved, parts, { time: volumeTime, shutter: volumeShutter }).map((volume, index) => (volume.part ? prepareMeshVolume(volume, `environment.localVolumes[${index}]`) : volume));
   return { volumes, boundsOnlyParts: parts.filter(part => meshPartNames.has(part.name) && part.visible === false) };
 }
 
@@ -850,7 +850,7 @@ export async function buildTraceSceneForDevice(allParts, environment, gpuModule)
  */
 export function buildTraceScene(allParts, environment = {}, options = {}) {
   const limits = { ...resolveTriangleLimits(options), instances: resolveInstanceLimit(options), lights: resolveLightLimit(options), parts: resolvePartLimit(options) };
-  const { volumes: localVolumes, boundsOnlyParts } = resolveTraceLocalVolumes(environment.localVolumes, allParts, environment.volumeTime ?? 0);
+  const { volumes: localVolumes, boundsOnlyParts } = resolveTraceLocalVolumes(environment.localVolumes, allParts, environment.volumeTime ?? 0, environment.volumeShutter ?? 0);
   const parts = boundsOnlyParts.length ? allParts.filter(part => !boundsOnlyParts.includes(part)) : allParts;
   const tryInstancing = options.instancing === true && Array.isArray(parts) && parts.length > 0;
   const geometries = tryInstancing ? parts.map(traceGeometry) : undefined;

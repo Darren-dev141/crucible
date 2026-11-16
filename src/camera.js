@@ -1,7 +1,7 @@
 import { mat4, vec3 } from 'gl-matrix';
 
 /** Lens fields a camera may carry on top of eye, target, up, fov, near and far; each is absent unless the scene sets it. */
-export const CAMERA_LENS_FIELDS = Object.freeze(['projection', 'orthoScale', 'focalLength', 'sensorWidth', 'shift', 'fStop']);
+export const CAMERA_LENS_FIELDS = Object.freeze(['projection', 'orthoScale', 'focalLength', 'sensorWidth', 'shift', 'fStop', 'focusDistance']);
 
 /** Image-centre shift as fractions of the frame width and height, like Blender's lens shift; positive moves the frame right and up. */
 export function validateCameraShift(shift) {

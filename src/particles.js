@@ -137,7 +137,7 @@ export function createParticleLaunches(settings) {
     }
     life[index] = between(lifetime, random());
     particleSize[index] = between(size, random());
-    birth[index] = rate ? index / rate : 0;
+    birth[index] = (settings.delay ?? 0) + (rate ? index / rate : 0);
     // Drawn last, so adding spin never changes the launch of a particle that existed before.
     const spinDirection = directionInCone([0, 1, 0], Math.PI, random(), random());
     spinAxis.set(spinDirection, index * 3);
