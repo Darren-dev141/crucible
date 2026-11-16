@@ -5,7 +5,7 @@
 | Option | Meaning |
 |---|---|
 | `--backend gpu` or `cpu` | gpu is the default and fast; cpu is SwiftShader, for machines without hardware WebGL, much slower. |
-| `--memory <32..384>` | Render-target budget in MiB, default 192. A 1920x1080 frame needs about 175 MiB at 4 samples (measured), so use 256 for it and more for textured scenes. |
+| `--memory <32..4096>` | Render-target budget in MiB, default 192, at most half of the machine's RAM. It also sets the job memory guard (Node RSS max(512, budget + 128) MiB; browser heap max(256, two thirds of budget) MiB) and the native tracer allowance. A 1920x1080 frame needs about 175 MiB at 4 samples (measured), so use 256 for it and more for textured scenes. |
 | `--jobs <abs dir>` | Private store for job files. Required for any job. |
 | `--ffmpeg <abs path>` | Needed for MP4 when ffmpeg is not on PATH. |
 | `--audio <abs dir>` | The folder `settings.audio.file` names a file from. |

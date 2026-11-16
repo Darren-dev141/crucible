@@ -155,6 +155,8 @@ export function createParticleLaunches(settings) {
   const launches = {
     count, birth, life, origin, velocity, size: particleSize, spinAxis, spinRate, spinStart, orientation, instancePick,
     hasSpin: spin[0] !== 0 || spin[1] !== 0,
+    // Seconds after which no particle is born (the end of the emission window); Infinity when the system has no `stop`.
+    stop: settings.stop ?? Infinity,
     // Age at which a particle stops moving: its landing, or where it came to rest.
     landing: new Float64Array(count).fill(Infinity),
   };
@@ -377,7 +379,7 @@ export function particleStateAt(launches, index, forces, scaleMode, time, target
   const age = time - launches.birth[index];
   const lifetime = launches.life[index];
   target.fraction = Math.min(Math.max(age / lifetime, 0), 1);
-  if (age < 0 || age >= lifetime) {
+  if (age < 0 || age >= lifetime || launches.birth[index] >= launches.stop) {
     target.scale = 0;
     target.motionAge = 0;
     // A spun particle is still rotated while it is hidden, so the angle must be a number, not whatever the last call left.
