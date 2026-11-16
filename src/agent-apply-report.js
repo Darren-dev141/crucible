@@ -111,6 +111,9 @@ function describeOperation(working, operation, maxText) {
   if (type === 'fracture-node') {
     return { changed: `fractured ${operation.node} into ${operation.cells} pieces with glue` };
   }
+  if (type === 'add-explosion') {
+    return { changed: `blast ${operation.id}: flash, ring, fireball, smoke, sparks, dust, rubble, scorch${operation.debris ? `, ${operation.debris.node} thrown apart` : ''}` };
+  }
   if (type === 'settle') {
     return { changed: `settled props under ${operation.settle?.id}; scene_inspect lists them` };
   }

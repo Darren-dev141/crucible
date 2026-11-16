@@ -407,6 +407,34 @@ Final resource references and hierarchy must be valid before publication.
 | `remove-material` | `id` |
 | `add-node` | `node`, containing a complete node record |
 | `remove-node` | `id`, optional boolean `recursive`, default `false` |
+| `add-explosion` | `id`, `center`, `size`, optional `start`, `seed`, `fuel`, `debris`, `shake`, `ground` (see Explosions below) |
+
+### Explosions
+
+`add-explosion` writes a layered blast into ordinary recipe sections in one call, so an agent does not hand-build six systems (#1050).
+`{ "type": "add-explosion", "id": "blast", "center": [0, 0, 0], "size": 6, "start": 0.5, "seed": 7, "fuel": "oily", "debris": { "node": "crate" }, "shake": 0.4 }`
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `id` | required | Letters, digits, `-` and `_`, up to 64. Every part of the blast gets an ID that starts with `id-` |
+| `center`, `size` | required | Charge position and fireball diameter in metres, 0.5 to 100 |
+| `start` | `0` | Scene time of the blast in seconds, 0 to 3600 |
+| `seed` | `1` | The same seed writes the same recipe byte for byte |
+| `fuel` | `dry` | `oily` adds more dark smoke, a bigger fire and more sparks |
+| `ground` | `center` y | Height of the ground for the dust, rubble landing and the scorch |
+| `shake` | `0.4` | Camera shake 0 to 1 over about 1 s; skipped when the camera already has an eye track, refused when you ask for it |
+| `debris` | none | `{ node }`: a convex mesh node broken into 12 loose pieces thrown outward by impulse events at `start`. Needs a `physics` section with a fixed floor body first; its `duration` grows to cover `start + 3` |
+
+What it writes (read it back with `scene_export_recipe`, then tweak any part):
+
+- `effects.flash` and an `effects.distortion` ring at the centre, which fade by their own decay and falloff on the scene clock.
+- Hidden nodes `id-fireball`, `id-core` and `id-smoke` that shape three `environment.localVolumes`; scale and translation tracks grow and lift them.
+- Particle systems `id-sparks`, `id-dust` and `id-rubble`, delayed to `start` (the `delay` field of a particle system).
+- A dark `id-scorch` disc decal that appears at `start`, and a camera eye shake track.
+- The motion duration becomes at least `start + 8`.
+
+It needs 3 free local volumes, 3 of the 4 particle systems, and a free flash and distortion slot, and fails naming the field otherwise.
+Gaps: a volume has no track, so the fireball fades by shrinking, not by cooling; the dust is a puff, not a flat ring; there is no fire light on the ground (#1046), no grid volume (#1045), no self-shadow (#1047) and no crater.
 
 Reparenting changes hierarchy while preserving each node's local transform.
 Commands can add or remove nodes and resources.
