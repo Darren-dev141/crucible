@@ -4,7 +4,7 @@
     blender -b --factory-startup --python scripts/grid-to-vdb.py -- sim_frames_folder out/ --size 4 3 4
 
 Each input is one .67vg file, a folder of them (numeric order) or several paths; every one becomes <name>.vdb in the output folder with FloatGrids
-named density, temperature and flame (the channels the file has). Used by scripts/cycles-volume-reference.py, which renders them in Cycles as the
+named density, temperature and flame (the channels the file has), plus velocity_x, velocity_y and velocity_z when it has the velocity channels. Used by scripts/cycles-volume-reference.py, which renders them in Cycles as the
 reference for Crucible's grid volumes (docs/volumetric.md, "Cycles reference for grid volumes").
 
 Placement convention (src/local-volumes.js, localVolumeGridSample): a grid volume fills the box [center - size/2, center + size/2] in Crucible's
@@ -24,6 +24,9 @@ import numpy
 import openvdb
 
 CHANNEL_NAMES = ("density", "temperature", "flame")
+# The gas velocity channels of a grid (#1759), written as three scalar grids in Blender's axes (x, -Crucible z, Crucible y) for Cycles' motion blur
+# (Volume Data > Velocity X, Y, Z grid); the values stay in the header size units per second.
+VELOCITY_GRIDS = (("velocity_x", "velocityX", 1.0), ("velocity_y", "velocityZ", -1.0), ("velocity_z", "velocityY", 1.0))
 
 
 def read_volume_grid(path):
@@ -57,10 +60,11 @@ def write_vdb(path, resolution, size, channels):
         [minimum[0] + voxel[0] / 2, minimum[1] + voxel[1] / 2, minimum[2] + voxel[2] / 2, 1],
     ])
     grids = []
-    for name in CHANNEL_NAMES:
-        if name not in channels:
-            continue
-        in_blender_axes = numpy.ascontiguousarray(numpy.flip(channels[name], axis=2).transpose(0, 2, 1))
+    sources = [(name, channels[name]) for name in CHANNEL_NAMES if name in channels]
+    if all(source in channels for _, source, _ in VELOCITY_GRIDS):
+        sources += [(name, channels[source] * sign) for name, source, sign in VELOCITY_GRIDS]
+    for name, values in sources:
+        in_blender_axes = numpy.ascontiguousarray(numpy.flip(values, axis=2).transpose(0, 2, 1))
         grid = openvdb.FloatGrid()
         grid.name = name
         grid.transform = transform

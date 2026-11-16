@@ -193,6 +193,9 @@ function explosionFunctionFor(enabledSteps) {
   return code.post;
 }
 
+// A marker step, not a condition: it adds the velocity blur of a grid volume to the local step (#1759). Every program without it has the source it had before the blur.
+export const GRID_MOTION_STEP = 'gridMotion';
+
 function fogCodeFor(enabledSteps) {
   let declarations = '';
   let functions = '';
@@ -210,8 +213,9 @@ function fogCodeFor(enabledSteps) {
   }
   if (enabledSteps.has('local')) {
     const code = requireFeatureCode('volumeFog');
-    declarations += code.localDeclarations;
-    functions += code.localFunctions;
+    const motion = enabledSteps.has(GRID_MOTION_STEP);
+    declarations += code.localDeclarations + (motion ? code.localMotionDeclarations : '');
+    functions += code.localFunctions(motion);
   } else {
     functions += LOCAL_VOLUMES_STUB;
   }
@@ -225,8 +229,8 @@ const LOCAL_VOLUME_COMPOSITE_MAIN = `void main() {
 }`;
 
 /** The fragment shader that composites the local volumes over the frame and nothing else (no anti-aliasing, bloom, fog or tone map). */
-export function createLocalVolumeCompositeFragment() {
-  const enabled = new Set(['local']);
+export function createLocalVolumeCompositeFragment(motion = false) {
+  const enabled = new Set(motion ? ['local', GRID_MOTION_STEP] : ['local']);
   const definitions = Object.entries(POST_STEP_CONDITIONS)
     .map(([step, [macro, condition]]) => `#define ${macro} ${enabled.has(step) ? `(${condition})` : 'false'}`)
     .join('\n');

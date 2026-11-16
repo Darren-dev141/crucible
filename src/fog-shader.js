@@ -6,7 +6,7 @@ import { LOCAL_VOLUME_RAMP_STOPS } from './local-volume-ramp.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
-import { GRID_BORDER_VOXELS, HALF_FLOAT_MAXIMUM, bakedGridEmission, floatToHalf } from './volume-grid.js';
+import { GRID_BORDER_VOXELS, GRID_MOTION_TIME_STEP, HALF_FLOAT_MAXIMUM, bakedGridEmission, floatToHalf, gridUnitVelocity } from './volume-grid.js';
 import { drawMeshVolumes } from './mesh-volume-pass.js';
 import { FogFieldTexture, createFogLightBuffers, packFogLights, volumeShadowAmbient, DEFAULT_FLOW_STRENGTH, DEFAULT_FLOW_PERIOD, resolveFogDetail, fogUsesDetail } from './fog-field.js';
 
@@ -84,12 +84,12 @@ function bindFieldAndLights(renderer, post, volume) {
 
 // The local volumes of the frame (environment.localVolumes), checked and packed once before the post program is chosen, so a bad
 // field or a renderer without depth or HDR throws before any program is bound. Returns the count packed, or 0 for an empty list.
-function prepareLocalVolumes(renderer, input, frame, volumeTime = 0) {
+function prepareLocalVolumes(renderer, input, frame, volumeTime = 0, volumeShutter = 0) {
   const resolved = resolveLocalVolumes(input, 'environment.localVolumes');
   if (resolved.length === 0) return 0;
   if (!renderer.depth || !renderer.hdr || renderer.transparent || renderer.benchmark) throw new Error('Local volumes require depth:true, active HDR and an opaque canvas');
   const buffers = (renderer.localVolumeBuffers ??= createLocalVolumeBuffers());
-  packLocalVolumes(bindLocalVolumeParts(resolved, renderer.sceneParts, { time: volumeTime }), buffers);
+  packLocalVolumes(bindLocalVolumeParts(resolved, renderer.sceneParts, { time: volumeTime, shutter: volumeShutter }), buffers);
   drawMeshVolumes(renderer, frame);
   return buffers.count;
 }
@@ -110,9 +110,16 @@ function withVolumeFireLights(renderer, environment, volumeTime = 0) {
 // skips its local step and reads this texture. The pass runs only for a frame with bloom and a glowing volume, so every other frame draws as before.
 function compositeLocalVolumes(renderer, frame, environment, sourceTexture) {
   const context = renderer.context;
-  const composite = (renderer.localVolumeComposite ??= { program: null, uniforms: {}, target: null });
+  const composite = (renderer.localVolumeComposite ??= { program: null, uniforms: {}, target: null, motion: false });
+  const motion = renderer.localVolumeBuffers.gridShutter > 0;
+  if (composite.program && composite.motion !== motion) {
+    context.deleteProgram(composite.program);
+    composite.program = null;
+    composite.uniforms = {};
+  }
   if (!composite.program) {
-    composite.program = compileProgram(context, fullscreenVertex, createLocalVolumeCompositeFragment());
+    composite.motion = motion;
+    composite.program = compileProgram(context, fullscreenVertex, createLocalVolumeCompositeFragment(motion));
     for (const name of ['frameTexture', 'sceneDepth', 'resolution', 'inverseViewProjection', 'eye']) composite.uniforms[name] = context.getUniformLocation(composite.program, name);
   }
   if (!composite.target) composite.target = createCompositeTarget(renderer);
@@ -206,6 +213,13 @@ function bindLocalVolumes(renderer, post, frame, environment) {
   context.activeTexture(context.TEXTURE9);
   context.bindTexture(context.TEXTURE_3D, localGridEmissionTexture(renderer, buffers.gridVolume));
   context.uniform1i(locate('localGridEmissionTexture'), 9);
+  // The velocity texture and the shutter exist only in the 'gridMotion' program variant, so a frame with the shutter off binds nothing more than it did before (#1759).
+  if (buffers.gridShutter > 0) {
+    context.uniform1f(locate('localGridShutter'), buffers.gridShutter);
+    context.activeTexture(context.TEXTURE10);
+    context.bindTexture(context.TEXTURE_3D, localGridVelocityTexture(renderer, buffers.gridVolume));
+    context.uniform1i(locate('localGridVelocityTexture'), 10);
+  }
 }
 
 // The two 3D textures of a grid volume, RGBA16F, linear and clamped, uploaded once per grid (and per temperature scale for the emission): `localGridTexture` holds
@@ -228,6 +242,17 @@ function localGridEmissionTexture(renderer, volume) {
     texels[texel] = floatToHalf(Math.min(baked.red[voxel], HALF_FLOAT_MAXIMUM));
     texels[texel + 1] = floatToHalf(Math.min(baked.green[voxel], HALF_FLOAT_MAXIMUM));
     texels[texel + 2] = floatToHalf(Math.min(baked.blue[voxel], HALF_FLOAT_MAXIMUM));
+  });
+}
+
+// The gas velocity of a grid with velocity channels as box fractions per second, x y z (volume-grid.js gridUnitVelocity), for the motion blur of the march (#1759).
+function localGridVelocityTexture(renderer, volume) {
+  const grid = volume?.gridData ?? null;
+  const velocity = grid ? gridUnitVelocity(grid, volume.size) : null;
+  return uploadGridTexture(renderer, 'localGridVelocityCache', velocity ? grid : null, velocity ? volume.size.join(',') : null, (texels, voxel, texel) => {
+    texels[texel] = floatToHalf(velocity.x[voxel]);
+    texels[texel + 1] = floatToHalf(velocity.y[voxel]);
+    texels[texel + 2] = floatToHalf(velocity.z[voxel]);
   });
 }
 
@@ -313,9 +338,32 @@ uniform highp sampler3D localGridTexture;
 uniform highp sampler3D localGridEmissionTexture;
 `;
 
+// The motion blur of a grid (#1759) compiles in only for a frame whose grid carries velocity and whose shutter is open (post step 'gridMotion'), so every other program
+// has exactly the source it had without the feature.
+const LOCAL_MOTION_DECLARATIONS = `uniform highp sampler3D localGridVelocityTexture;
+uniform float localGridShutter;
+`;
+
+// Motion blur of a grid (#1759). The frame's grid is the gas as the shutter opens and the gas moves on by its velocity, so the point seen timeFraction * localGridShutter
+// seconds into the shutter reads the grid back along the velocity, as Cycles does with a velocity grid (local-volumes.js localVolumeGridMotionPoint repeats it). The
+// velocity texture holds box fractions per second.
+const LOCAL_MOTION_POSITION_FUNCTION = `// Motion blur of a grid (#1759): the point a march step reads for its time in the shutter.
+vec3 localGridMotionPosition(int index, vec3 position, float timeFraction) {
+  vec3 size = localVolumeExtents[index].xyz * 2.0;
+  vec3 unit = (position - localVolumeCenters[index].xyz) / size + 0.5;
+  vec3 paddedSize = vec3(textureSize(localGridVelocityTexture, 0));
+  vec3 velocity = textureLod(localGridVelocityTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
+  return position - velocity * size * (localGridShutter * timeFraction);
+}
+`;
+// One shutter time per step, spread over the ray by the golden ratio (volume-grid.js gridMotionTimeFraction), so the blur adds one velocity tap per step.
+const LOCAL_MOTION_SAMPLE_POSITION = `vec3 samplePosition = localGridMotionPosition(nearest, position, fract(gridJitter + float(step) * ${GRID_MOTION_TIME_STEP}));
+        vec3 cell = localGridSample(nearest, samplePosition);`;
+
 // Each volume is marched on its own between its entry and exit (cut at the first surface) and composited nearest first: the colour
 // behind it is dimmed by exp(-absorption * profile * step) and its emission is added, both per colour channel.
-const LOCAL_VOLUME_FUNCTIONS = `
+// With `motion` the grid march reads the point its shutter time selects; without it the source is exactly what it was before the blur existed.
+const localVolumeFunctions = motion => `
 // Interleaved gradient noise (Jimenez 2014): the start offsets of neighbouring pixels stay far apart, so the march error is a fine, even dither
 // and not the clumps a white-noise hash leaves, which read as grain at 8 to 16 steps.
 float localVolumeJitter() {
@@ -386,7 +434,7 @@ vec3 localGridBlackbody(int index, vec3 position) {
   vec3 paddedSize = vec3(textureSize(localGridEmissionTexture, 0));
   return textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
 }
-// The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
+${motion ? LOCAL_MOTION_POSITION_FUNCTION : ''}// The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
 // code (0 none, 1 density, 2 temperature, 3 flame), y the stop count and z, w the source range; the stops are baked in local-volume-ramp.js with the exposure and
 // the emission strength applied. The light fades to nothing with the source, so a cold cell gives none.
 vec3 localVolumeRampLight(int index, float value) {
@@ -600,9 +648,9 @@ vec3 localVolumes(vec3 background) {
       for (int step = 0; step < ${LOCAL_VOLUME_GRID_MAXIMUM_STEPS}; step++) {
         if (step >= gridSteps) break;
         vec3 position = origin + direction * (entry + (float(step) + gridJitter) * gridStepSize);
-        vec3 cell = localGridSample(nearest, position);
+        ${motion ? LOCAL_MOTION_SAMPLE_POSITION : 'vec3 cell = localGridSample(nearest, position);'}
         vec3 extinction = localVolumeAbsorption[nearest].rgb * (cell.x * gridStepSize);
-        radiance += transmittance * (localVolumeEmission[nearest].rgb * cell.z + localGridBlackbody(nearest, position) * localVolumeGrid[nearest].z) * gridStepSize;
+        radiance += transmittance * (localVolumeEmission[nearest].rgb * cell.z + localGridBlackbody(nearest, ${motion ? 'samplePosition' : 'position'}) * localVolumeGrid[nearest].z) * gridStepSize;
         if (localVolumeRampSetup[nearest].y > 0.5) radiance += transmittance * localVolumeRampLight(nearest, localVolumeRampSetup[nearest].x < 1.5 ? cell.x : (localVolumeRampSetup[nearest].x < 2.5 ? cell.y : cell.z)) * gridStepSize;
         if (gridScatter > 0.0 && cell.x > 0.0) radiance += transmittance * (gridScatter * (1.0 - exp(-extinction))) * localVolumeInScatter(nearest, position, direction);
         transmittance *= exp(-extinction);
@@ -674,7 +722,8 @@ registerShaderFeatureCode('volumeFog', {
   keyDeclarations: KEY_LIGHT_DECLARATIONS,
   keyFunctions: KEY_LIGHT_FUNCTIONS,
   localDeclarations: LOCAL_VOLUME_DECLARATIONS,
-  localFunctions: LOCAL_VOLUME_FUNCTIONS,
+  localMotionDeclarations: LOCAL_MOTION_DECLARATIONS,
+  localFunctions: localVolumeFunctions,
   postDeclarations: `
 uniform float volumeDensity;
 uniform vec3 volumeMinimum;

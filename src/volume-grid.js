@@ -12,7 +12,10 @@ import { blackbodyChromaticity } from './local-volume-ramp-bake.js';
 export const VOLUME_GRID_VERSION = 1;
 export const VOLUME_GRID_MAX_AXIS = 256;
 export const VOLUME_GRID_MAX_BYTES = 64 * 1024 * 1024;
-export const VOLUME_GRID_CHANNELS = Object.freeze(['density', 'temperature', 'flame']);
+// The three velocity channels (#1759) hold the gas velocity in the units of the header `size` per second (metres per second from the gas sim), x, y, z.
+// A grid has all three or none; they drive the motion blur of a volume and change nothing else.
+export const VOLUME_GRID_VELOCITY_CHANNELS = Object.freeze(['velocityX', 'velocityY', 'velocityZ']);
+export const VOLUME_GRID_CHANNELS = Object.freeze(['density', 'temperature', 'flame', ...VOLUME_GRID_VELOCITY_CHANNELS]);
 const MAGIC = [0x36, 0x37, 0x56, 0x47];
 
 // Blackbody emission (#1733). The light of a hot body at `kelvin` is its Stefan-Boltzmann radiance, sigma * T^4 / pi, times a colour of luminance 1 whose
@@ -100,6 +103,13 @@ export function checkVolumeGridShape(resolution, channelCount, label) {
   return bytes;
 }
 
+function checkVelocityChannels(names, label) {
+  const present = VOLUME_GRID_VELOCITY_CHANNELS.filter(name => names.includes(name));
+  if (present.length !== 0 && present.length !== VOLUME_GRID_VELOCITY_CHANNELS.length) {
+    throw new TypeError(`${label}: a grid holds all of ${VOLUME_GRID_VELOCITY_CHANNELS.join(', ')} or none of them, got ${present.join(', ')}; add the missing velocity channels or drop these`);
+  }
+}
+
 function checkGridSize(size, label) {
   if (size !== undefined && (!Array.isArray(size) || size.length !== 3 || !size.every(extent => Number.isFinite(extent) && extent > 0))) {
     throw new TypeError(`${label} header size must be three positive numbers`);
@@ -114,6 +124,7 @@ export function encodeVolumeGrid({ resolution, channels, size }) {
   if (unknownName !== undefined) throw new TypeError(`encodeVolumeGrid: channel "${unknownName}" is not one of ${VOLUME_GRID_CHANNELS.join(', ')}`);
   checkGridSize(size ?? undefined, 'encodeVolumeGrid');
   if (!names.includes('density')) throw new TypeError('encodeVolumeGrid: channels needs a "density" channel');
+  checkVelocityChannels(names, 'encodeVolumeGrid');
   const voxels = resolution[0] * resolution[1] * resolution[2];
   const header = JSON.stringify({ resolution, channels: names, ...(size ? { size } : {}) });
   const headerBytes = Math.ceil(header.length / 4) * 4;
@@ -153,6 +164,7 @@ export function decodeVolumeGrid(source, label = 'volume grid') {
     throw new TypeError(`${label} header channels must be a list of ${VOLUME_GRID_CHANNELS.join(', ')}`);
   }
   if (!names.includes('density')) throw new TypeError(`${label} has no density channel`);
+  checkVelocityChannels(names, label);
   checkVolumeGridShape(header.resolution, names.length, label);
   const voxels = header.resolution[0] * header.resolution[1] * header.resolution[2];
   const dataStart = 12 + headerBytes;
@@ -230,6 +242,50 @@ export function sampleVolumeGrid(floats, resolution, u, v, w, out, baked = null)
     out[4] = mixCorners(baked.green);
     out[5] = mixCorners(baked.blue);
   }
+  return out;
+}
+
+/**
+ * How far into the shutter (0 as it opens at the frame's own time, 1 as it closes) march step `step` samples a moving grid: the ray's jitter plus the golden ratio per
+ * step, wrapped to 0..1. One sample per step spreads the steps of a ray evenly over the shutter, so the blur costs one velocity tap per step and no extra density taps;
+ * the fog shader repeats this (fog-shader.js, localGridTimeFraction).
+ */
+export const GRID_MOTION_TIME_STEP = 0.618034;
+export function gridMotionTimeFraction(jitter, step) {
+  const position = jitter + step * GRID_MOTION_TIME_STEP;
+  return position - Math.floor(position);
+}
+
+/** True when the grid carries the three velocity channels (VOLUME_GRID_VELOCITY_CHANNELS) that a volume's motion blur reads. */
+export function hasGridVelocity(grid) {
+  return Boolean(grid.channels.velocityX);
+}
+
+const unitVelocityByGrid = new WeakMap();
+
+/**
+ * The grid's velocity as the fraction of the box crossed per second along each axis, as three Float32Arrays (`x`, `y`, `z`) in voxel order, decoded once per grid
+ * and size, or null for a grid with no velocity channels. The channels are in header-size units per second; a grid with no header size takes `fallbackSize`,
+ * the box the volume draws it in, so a gas that crosses half the box in a second reads 0.5 either way.
+ */
+export function gridUnitVelocity(grid, fallbackSize) {
+  if (!hasGridVelocity(grid)) return null;
+  const size = grid.size ?? fallbackSize;
+  if (!size) throw new RangeError('gridUnitVelocity: a grid with velocity needs a header size or a volume size to turn its velocity into box fractions per second');
+  const cached = unitVelocityByGrid.get(grid);
+  if (cached?.key === size.join(',')) return cached.velocity;
+  const floats = volumeGridFloats(grid);
+  const velocity = { x: floats.velocityX.map(value => value / size[0]), y: floats.velocityY.map(value => value / size[1]), z: floats.velocityZ.map(value => value / size[2]) };
+  unitVelocityByGrid.set(grid, { key: size.join(','), velocity });
+  return velocity;
+}
+
+/** Writes the unit velocity (gridUnitVelocity) at a point of the unit cube into `out[0..2]`, trilinear like sampleVolumeGrid and 0 beyond the faces. */
+export function sampleVolumeGridVelocity(unitVelocity, resolution, u, v, w, out) {
+  gatherCorners(resolution, u, v, w);
+  out[0] = mixCorners(unitVelocity.x);
+  out[1] = mixCorners(unitVelocity.y);
+  out[2] = mixCorners(unitVelocity.z);
   return out;
 }
 

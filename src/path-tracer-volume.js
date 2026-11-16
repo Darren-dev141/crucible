@@ -1,6 +1,7 @@
 import { resolveVolumeFog } from './volumetric.js';
-import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_GRID_SHADOW_TAPS, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY } from './local-volumes.js';
+import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, localVolumeGridMotionPoint, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_GRID_SHADOW_TAPS, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY } from './local-volumes.js';
 import { countOpenEdges } from './local-volume-parts.js';
+import { gridMotionTimeFraction } from './volume-grid.js';
 import { bakeEmissionRamp, emissionRampPosition, sampleBakedRamp } from './local-volume-ramp-bake.js';
 import { buildTriangleBvh } from './triangle-bvh.js';
 import { createTracer } from './ray-query.js';
@@ -274,11 +275,18 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
   }
 
   const gridCell = new Float64Array(6);
+  const motionPoint = new Float64Array(3);
 
   // One step through a grid volume (shape "grid"): extinction from the density, emission from the flame channel and, with blackbodyIntensity, from the
   // temperature channel. The rasterizer's march repeats it (fog-shader.js).
-  function crossGridStep(volume, x, y, z, directionX, directionY, directionZ, stepLength, throughput, emitted) {
-    localVolumeGridSample(volume, x, y, z, gridCell, volume.blackbodyIntensity > 0);
+  // With a motion shutter (#1759) the step reads the grid back along the gas velocity by its place in the shutter, the same one-sample-per-step blur as the rasterizer's march.
+  function crossGridStep(volume, x, y, z, directionX, directionY, directionZ, stepLength, throughput, emitted, timeFraction) {
+    if (volume.motionShutter > 0) {
+      localVolumeGridMotionPoint(volume, x, y, z, timeFraction, motionPoint);
+      localVolumeGridSample(volume, motionPoint[0], motionPoint[1], motionPoint[2], gridCell, volume.blackbodyIntensity > 0);
+    } else {
+      localVolumeGridSample(volume, x, y, z, gridCell, volume.blackbodyIntensity > 0);
+    }
     const width = gridCell[0] * stepLength;
     if (width > 0 && volume.scatter > 0 && lighting) addScatteredLight(volume, x, y, z, directionX, directionY, directionZ, width, throughput, emitted);
     const flameWidth = gridCell[2] * stepLength;
@@ -326,7 +334,7 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
       for (let step = 0; step < stepCount; step++) {
         const distance = entry + (step + jitter) * stepLength;
         if (volume.gridData) {
-          crossGridStep(volume, originX + directionX * distance, originY + directionY * distance, originZ + directionZ * distance, directionX, directionY, directionZ, stepLength, throughput, emitted);
+          crossGridStep(volume, originX + directionX * distance, originY + directionY * distance, originZ + directionZ * distance, directionX, directionY, directionZ, stepLength, throughput, emitted, gridMotionTimeFraction(jitter, step));
           continue;
         }
         const profile = localVolumeProfile(volume, originX + directionX * distance, originY + directionY * distance, originZ + directionZ * distance);

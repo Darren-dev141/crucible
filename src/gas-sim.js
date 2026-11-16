@@ -95,6 +95,8 @@ export function resolveGasSimOptions(options = {}) {
   const advection = options.advection ?? ADVECTION_MODES[0];
   if (!ADVECTION_MODES.includes(advection)) throw new RangeError(`bakeGasSim: advection must be one of ${ADVECTION_MODES.join(', ')}, got ${JSON.stringify(advection)}`);
   resolved.advection = advection;
+  if (options.velocity !== undefined && typeof options.velocity !== 'boolean') throw new TypeError(`bakeGasSim: velocity must be true or false, got ${JSON.stringify(options.velocity)}; pass true to bake the gas velocity for motion blur or leave it out`);
+  resolved.velocity = options.velocity === true;
   resolved.resolution = checkResolution(options.resolution);
   resolved.burstPosition = checkPosition(options.burstPosition, resolved.resolution, resolved.cellSize);
   resolved.size = resolved.resolution.map(axis => axis * resolved.cellSize);
@@ -433,7 +435,10 @@ function createSolver(options) {
   function snapshot() {
     const kelvinPerUnit = 1 / GAS_SIM_TEMPERATURE_UNIT;
     const excess = temperature.map(kelvin => (kelvin - options.ambientTemperature) * kelvinPerUnit);
-    return { density: density.slice(), temperature: excess, flame: flame.slice() };
+    const channels = { density: density.slice(), temperature: excess, flame: flame.slice() };
+    // The velocity channels are written only on request (#1759), so a bake without them is byte for byte what it was.
+    if (options.velocity) Object.assign(channels, { velocityX: velocityX.slice(), velocityY: velocityY.slice(), velocityZ: velocityZ.slice() });
+    return channels;
   }
 
   return { step, snapshot };
@@ -458,7 +463,10 @@ function runGasSim(options, onFrame) {
   }
 }
 
-/** Bakes a ground blast. Returns `{ frames: [{ density, temperature, flame }], resolution, size, fps }`, Float32Arrays, temperature in GAS_SIM_TEMPERATURE_UNIT kelvin above ambient. */
+/**
+ * Bakes a ground blast. Returns `{ frames: [{ density, temperature, flame }], resolution, size, fps }`, Float32Arrays, temperature in GAS_SIM_TEMPERATURE_UNIT kelvin above ambient.
+ * With `velocity: true` each frame also holds `velocityX`, `velocityY` and `velocityZ` in metres per second, which a grid volume blurs along when the scene's motion blur shutter is on.
+ */
 export function bakeGasSim(options = {}) {
   const resolved = resolveGasSimOptions(options);
   const frames = [];
@@ -468,12 +476,12 @@ export function bakeGasSim(options = {}) {
 
 /**
  * Bakes a blast and registers each frame as a grid named `<namePrefix>_0000.67vg`, `_0001`, ... Returns the list of names: pass it as `frames` of a
- * local volume `{ shape: 'grid', frames, fps }` (fps is the option you baked with) with `temperatureScale: GAS_SIM_TEMPERATURE_UNIT`.
+ * local volume `{ shape: 'grid', frames, fps }` (fps is the option you baked with) with `temperatureScale: GAS_SIM_TEMPERATURE_UNIT`. `velocity: true` adds the velocity channels (see bakeGasSim).
  */
 export function bakeGasSimToGrids(options = {}, namePrefix = 'gas') {
   if (typeof namePrefix !== 'string' || namePrefix === '') throw new TypeError('bakeGasSimToGrids: namePrefix must be a non-empty string, such as "blast"');
   const resolved = resolveGasSimOptions(options);
-  const frameBytes = resolved.resolution[0] * resolved.resolution[1] * resolved.resolution[2] * 6;
+  const frameBytes = resolved.resolution[0] * resolved.resolution[1] * resolved.resolution[2] * 2 * (resolved.velocity ? 6 : 3);
   if (frameBytes * resolved.frames > VOLUME_GRID_SEQUENCE_MAX_BYTES) {
     const fitting = Math.floor(VOLUME_GRID_SEQUENCE_MAX_BYTES / frameBytes);
     throw new RangeError(`bakeGasSimToGrids: ${resolved.frames} frames of ${resolved.resolution.join('x')} take ${frameBytes * resolved.frames} bytes, over the ${VOLUME_GRID_SEQUENCE_MAX_BYTES} byte sequence limit; pass frames up to ${fitting} or a smaller resolution`);
