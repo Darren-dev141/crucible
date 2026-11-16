@@ -688,9 +688,10 @@ function countingCatalog(sizeByAssetId) {
 
 const catalogAssetIds = ['a', 'b', 'c'].map(letter => letter.repeat(64));
 
-async function catalogLimitHarness(sizeEach) {
+async function catalogLimitHarness(sizeEach, exportedRecipe) {
   const catalog = countingCatalog(Object.fromEntries(catalogAssetIds.map(assetId => [assetId, sizeEach])));
   const harness = await reviewRuntimeHarness({
+    exportedRecipe,
     runtimeOptions: { assets: join(tmpdir(), 'crucible-counting-catalog') },
     contextOverrides: { createAgentAssetCatalog: async () => catalog },
   });
@@ -727,6 +728,39 @@ runTest('motion source assets count in the sum before a scene_apply reads them (
   const motion = { layers: catalogAssetIds.map(assetId => ({ from: { asset: assetId } })) };
   await assert.rejects(runtime.apply({ sessionId, operations: [{ type: 'set-motion', motion }] }), refusedAtTotal(3 * sizeEach));
   assert.equal(catalog.counts.reads, 0);
+});
+
+// A scene that already holds assets: scene_apply add-node must count them with the new ones, since a render job loads the whole scene at once (#1771).
+function sceneHolding(...assetIds) {
+  return { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [],
+    nodes: assetIds.map((assetId, index) => ({ id: `held-${index}`, asset: { id: assetId } })) };
+}
+
+function addNodes(assetId, count) {
+  return Array.from({ length: count }, (_, index) => ({ type: 'add-node', node: { id: `added-${index}`, asset: { id: assetId } } }));
+}
+
+runTest('scene_apply refuses an add-node that pushes the scene past the combined limit (#1771)', async () => {
+  const sizeEach = 30 * 1024 * 1024;
+  const { runtime, sessionId, catalog, events } = await catalogLimitHarness(sizeEach, sceneHolding(catalogAssetIds[0], catalogAssetIds[1]));
+  await assert.rejects(runtime.apply({ sessionId, operations: addNodes(catalogAssetIds[2], 1) }), error => refusedAtTotal(3 * sizeEach)(error)
+    && error.message.includes('scene'));
+  assert.equal(catalog.counts.reads, 0);
+  assert.equal(events.includes('source:apply'), false, 'the preview page never receives the refused edit');
+});
+
+runTest('scene_apply accepts an add-node while the scene stays under the combined limit (#1771)', async () => {
+  const sizeEach = 30 * 1024 * 1024;
+  const { runtime, sessionId, events } = await catalogLimitHarness(sizeEach, sceneHolding(catalogAssetIds[0]));
+  await runtime.apply({ sessionId, operations: addNodes(catalogAssetIds[1], 1) });
+  assert.ok(events.includes('source:apply'));
+});
+
+runTest('one asset placed many times counts once in the scene total (#1771)', async () => {
+  const sizeEach = 30 * 1024 * 1024;
+  const { runtime, sessionId, events } = await catalogLimitHarness(sizeEach, sceneHolding(catalogAssetIds[0], catalogAssetIds[1]));
+  await runtime.apply({ sessionId, operations: addNodes(catalogAssetIds[0], 7) });
+  assert.ok(events.includes('source:apply'));
 });
 
 // The same GLB with one extra field in its JSON chunk, so the catalog gives it another asset id.
