@@ -228,6 +228,33 @@ function createSolver(options) {
     values.set(second);
   }
 
+  // The share of a cell's content that this step carries out of the box: how far its moved cell reaches past the outer face (0 to 1 per axis).
+  // The sides and the top are open; the floor is a wall, so nothing leaves there.
+  function leavingShare(index) {
+    const outX = Math.min(Math.max(forwardX[index] - maxX, 0) + Math.max(-forwardX[index], 0), 1);
+    const outY = Math.min(Math.max(forwardY[index] - maxY, 0), 1);
+    const outZ = Math.min(Math.max(forwardZ[index] - maxZ, 0) + Math.max(-forwardZ[index], 0), 1);
+    return 1 - (1 - outX) * (1 - outY) * (1 - outZ);
+  }
+
+  // Advects a quantity that is mass (smoke, fuel). Advection only moves it around, so the total after the step must equal the total before,
+  // less what leaves through the open sides and top. The limiter and the interpolation do not keep that, so the result is scaled back to it.
+  function advectConserved(values) {
+    let before = 0;
+    let leaving = 0;
+    for (let index = 0; index < count; index++) {
+      before += values[index];
+      leaving += values[index] * leavingShare(index);
+    }
+    advect(values, useMacCormack);
+    let after = 0;
+    for (let index = 0; index < count; index++) after += values[index];
+    const wanted = before - leaving;
+    if (after <= 1e-12 || wanted <= 0) return;
+    const scale = wanted / after;
+    for (let index = 0; index < count; index++) values[index] *= scale;
+  }
+
   // The burst: a noisy sphere on the floor that feeds fuel, smoke, heat and outward speed for `burstSeconds`.
   function applyBurst(dt, time) {
     if (time >= options.burstSeconds) return;
@@ -396,7 +423,10 @@ function createSolver(options) {
     advect(velocityZ, false);
     project();
     traceVelocity(dt);
-    for (const values of [density, temperature, fuel, flame]) advect(values, useMacCormack);
+    advectConserved(density);
+    advectConserved(fuel);
+    advect(temperature, useMacCormack);
+    advect(flame, useMacCormack);
     applyCombustion(dt);
   }
 
