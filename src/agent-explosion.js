@@ -225,8 +225,10 @@ function addScorch(candidate, plan) {
   const radius = round(size * 0.55);
   candidate.geometries.push({ id: `${id}-disc`, type: 'cylinder', bevel: 0 });
   addMaterial(candidate, `${id}-char`, { color: [0.02, 0.02, 0.02], roughness: 1 });
-  candidate.nodes.push({ id: `${id}-scorch`, geometry: `${id}-disc`, material: `${id}-char`, translation: [center[0], round(ground + 0.004), center[2]], scale: [radius, 0.004, radius], decal: true, castShadow: false, visible: false });
-  return [{ kind: 'node', id: `${id}-scorch`, property: 'visible', interpolation: 'STEP', keyframes: uniqueKeys([{ time: 0, value: 0 }, { time: start, value: 1 }]) }];
+  candidate.nodes.push({ id: `${id}-scorch`, geometry: `${id}-disc`, material: `${id}-char`, translation: [center[0], round(ground + 0.004), center[2]], scale: [radius, 0.004, radius], decal: true, castShadow: false });
+  // The MCP schema has no node visible track, so the disc is a speck until the blast and jumps to full size at `start`.
+  const speck = [TINY, TINY, TINY];
+  return [{ kind: 'node', id: `${id}-scorch`, property: 'scale', interpolation: 'STEP', keyframes: uniqueKeys([{ time: 0, value: speck }, { time: start, value: [radius, 0.004, radius] }]) }];
 }
 
 function shakeTrack(candidate, plan, random) {
