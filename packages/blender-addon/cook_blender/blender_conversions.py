@@ -163,6 +163,14 @@ def light_feature_notes(light_name, light_type, use_temperature, use_shadow, dif
     return notes
 
 
+def lens_feature_notes(aperture_ratio):
+    """What a camera's depth of field carries that Cook does not read, one sentence each."""
+    notes = []
+    if abs(aperture_ratio - 1.0) > 1e-6:
+        notes.append(f"the camera has aperture ratio {aperture_ratio:g} (anamorphic bokeh); Cook uses a round aperture")
+    return notes
+
+
 # Blackbody colour. Blender's Blackbody node integrates Planck's law against the CIE 1931 colour matching functions and
 # converts to linear Rec.709, scaled so 6500 K is white. Blender's own table is not available here, so the matching
 # functions use the multi-lobe Gaussian fit of Wyman, Sloan and Shirley, "Simple Analytic Approximations to the CIE XYZ
