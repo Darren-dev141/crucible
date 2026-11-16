@@ -114,6 +114,45 @@ function bindLocalVolumes(renderer, post, frame, environment) {
   context.uniform1i(locate('localGridTexture'), 8);
 }
 
+// Bloom reads the frame with the glow of the local volumes already in it. The volumes are composited in the post pass, after the bloom
+// is added, so this draws that composite (the frame plus the volumes, nothing else) at the bloom's size into a third bloom target,
+// allocated on the first frame that has an emitting volume with bloom on. Returns its texture, or the source when no volume emits.
+function drawVolumeBloomSource(renderer, frame, environment, sourceTexture) {
+  if (!packedVolumesEmit(renderer.localVolumeBuffers)) return sourceTexture;
+  const context = renderer.context;
+  renderer.ensureBloomTargets();
+  if (renderer.bloomTargets.length < 3) {
+    renderer.bloomTargets.push(renderer.createBloomTarget());
+    renderer.renderTargets.record('bloomVolumeSource', { width: renderer.bloomWidth, height: renderer.bloomHeight, format: renderer.hdr ? 'RGBA16F' : 'RGBA8' });
+  }
+  const target = renderer.bloomTargets[2];
+  const post = renderer.selectPostProgram(['local']);
+  context.bindFramebuffer(context.FRAMEBUFFER, target.framebuffer);
+  context.viewport(0, 0, renderer.bloomWidth, renderer.bloomHeight);
+  context.disable(context.DEPTH_TEST);
+  context.disable(context.CULL_FACE);
+  context.bindVertexArray(null);
+  context.useProgram(post.program);
+  context.activeTexture(context.TEXTURE0);
+  context.bindTexture(context.TEXTURE_2D, sourceTexture);
+  if (renderer.localVolumeBuffers.blurred) {
+    context.generateMipmap(context.TEXTURE_2D);
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR_MIPMAP_LINEAR);
+    renderer.mipmappedTexture = sourceTexture;
+  }
+  context.uniform1i(post.uniforms.frameTexture, 0);
+  context.activeTexture(context.TEXTURE1);
+  context.bindTexture(context.TEXTURE_2D, renderer.depthTexture ?? renderer.whiteTexture);
+  context.uniform1i(post.uniforms.sceneDepth, 1);
+  bindLocalVolumes(renderer, post, frame, environment);
+  context.uniform1f(post.uniforms.hdrEnabled, 0);
+  context.uniform2f(post.uniforms.resolution, renderer.bloomWidth, renderer.bloomHeight);
+  context.uniformMatrix4fv(post.uniforms.inverseViewProjection, false, renderer.inverseViewProjection);
+  context.uniform3fv(post.uniforms.eye, frame.eye);
+  context.drawArrays(context.TRIANGLES, 0, 3);
+  return target.texture;
+}
+
 // The 3D texture of a grid volume: RGBA16F, r density, g temperature, b flame (the density when the grid has no flame channel), linear and clamped, uploaded
 // once per grid. A frame with no grid volume gets a 1 x 1 x 1 texture, so the sampler is always valid.
 function localGridTexture(renderer, grid) {
@@ -491,7 +530,7 @@ function packLights(renderer) {
 
 registerShaderFeatureCode('volumeFog', {
   // The JavaScript half, which the renderer calls for a frame that draws a volume fog.
-  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeEmissionLights, packedVolumesEmit },
+  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeEmissionLights, drawVolumeBloomSource },
   keyDeclarations: KEY_LIGHT_DECLARATIONS,
   keyFunctions: KEY_LIGHT_FUNCTIONS,
   localDeclarations: LOCAL_VOLUME_DECLARATIONS,

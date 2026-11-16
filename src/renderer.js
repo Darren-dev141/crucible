@@ -2347,7 +2347,7 @@ export class CrucibleRenderer {
     let sourceTexture = this.frameTexture;
     for (const stage of this.postStages) sourceTexture = stage.apply(this, frame, effects, sourceTexture) ?? sourceTexture;
     const localVolumes = this.prepareLocalVolumes(environment.localVolumes, frame, environment.volumeTime ?? frame.time ?? 0);
-    const bloomSource = effects.bloom.strength > 0 && localVolumes && requireFeatureCode('volumeFog').support.packedVolumesEmit(this.localVolumeBuffers) ? this.drawVolumeBloomSource(frame, environment, sourceTexture) : sourceTexture;
+    const bloomSource = effects.bloom.strength > 0 && localVolumes ? requireFeatureCode('volumeFog').support.drawVolumeBloomSource(this, frame, environment, sourceTexture) : sourceTexture;
     if (effects.bloom.strength > 0) this.drawBloom(effects.bloom, bloomSource);
     const occluded = effects.ambientOcclusion > 0 && Boolean(this.depthTexture);
     if (occluded) this.drawAmbientOcclusion(frame, effects);
@@ -2439,44 +2439,6 @@ export class CrucibleRenderer {
     if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) throw new Error('Bloom framebuffer allocation failed. Choose a lower quality preset.');
     context.bindFramebuffer(context.FRAMEBUFFER, null);
     return { texture, framebuffer };
-  }
-
-  // Bloom reads the frame with the glow of the local volumes already in it. The volumes are composited in the post pass, after
-  // the bloom is added, so this draws that composite (the frame plus the volumes, nothing else) at the bloom's size into a
-  // third bloom target, allocated on the first frame that has an emitting volume with bloom on. Returns its texture.
-  drawVolumeBloomSource(frame, environment, sourceTexture) {
-    const context = this.context;
-    this.ensureBloomTargets();
-    if (this.bloomTargets.length < 3) {
-      this.bloomTargets.push(this.createBloomTarget());
-      this.renderTargets.record('bloomVolumeSource', { width: this.bloomWidth, height: this.bloomHeight, format: this.hdr ? 'RGBA16F' : 'RGBA8' });
-    }
-    const target = this.bloomTargets[2];
-    const post = this.selectPostProgram(['local']);
-    context.bindFramebuffer(context.FRAMEBUFFER, target.framebuffer);
-    context.viewport(0, 0, this.bloomWidth, this.bloomHeight);
-    context.disable(context.DEPTH_TEST);
-    context.disable(context.CULL_FACE);
-    context.bindVertexArray(null);
-    context.useProgram(post.program);
-    context.activeTexture(context.TEXTURE0);
-    context.bindTexture(context.TEXTURE_2D, sourceTexture);
-    if (this.localVolumeBuffers.blurred) {
-      context.generateMipmap(context.TEXTURE_2D);
-      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR_MIPMAP_LINEAR);
-      this.mipmappedTexture = sourceTexture;
-    }
-    context.uniform1i(post.uniforms.frameTexture, 0);
-    context.activeTexture(context.TEXTURE1);
-    context.bindTexture(context.TEXTURE_2D, this.depthTexture ?? this.whiteTexture);
-    context.uniform1i(post.uniforms.sceneDepth, 1);
-    requireFeatureCode('volumeFog').support.bindLocalVolumes(this, post, frame, environment);
-    context.uniform1f(post.uniforms.hdrEnabled, 0);
-    context.uniform2f(post.uniforms.resolution, this.bloomWidth, this.bloomHeight);
-    context.uniformMatrix4fv(post.uniforms.inverseViewProjection, false, this.inverseViewProjection);
-    context.uniform3fv(post.uniforms.eye, frame.eye);
-    context.drawArrays(context.TRIANGLES, 0, 3);
-    return target.texture;
   }
 
   drawBloom(bloom, sourceTexture = this.frameTexture) {
