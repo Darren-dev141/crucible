@@ -3,7 +3,7 @@
 // A volume that fits the closed mesh keeps the part: the CPU path tracer walks the mesh itself (path-tracer-volume.js,
 // prepareMeshVolume) and the rasterizer draws it into a depth buffer first (mesh-volume-pass.js).
 import { missingPartMessage } from './local-volume-resolve.js';
-import { findVolumeGrid } from './volume-grid.js';
+import { findVolumeGrid, hasGridVelocity } from './volume-grid.js';
 import { findVolumeGridSequence, volumeGridFrameIndex } from './volume-grid-sequence.js';
 
 function weldedVertexIds(positions, tolerance) {
@@ -111,7 +111,7 @@ export function assertClosedMesh(part, label) {
 }
 
 /** Gives every grid volume (shape "grid") its registered grid, and its size from the grid file when the volume names none. */
-function bindLocalVolumeGrids(volumes, label, time) {
+function bindLocalVolumeGrids(volumes, label, time, shutter) {
   if (!volumes.some(volume => volume.shape === 'grid')) return volumes;
   return volumes.map((volume, index) => {
     if (volume.shape !== 'grid') return volume;
@@ -121,7 +121,8 @@ function bindLocalVolumeGrids(volumes, label, time) {
     const gridData = gridFrames ? gridFrames[volumeGridFrameIndex(gridFrames.length, volume.fps, time, volume.loop)] : findVolumeGrid(volume.grid, field);
     const size = volume.size ?? gridData.size;
     if (!size) throw new RangeError(`${field}.size is required: grid "${volume.grid ?? volume.frames[0]}" carries no size of its own`);
-    return { ...volume, size, gridData };
+    // Motion blur (#1759): only a grid that carries velocity blurs, and only while the shutter is open; any other volume binds as it always did.
+    return shutter > 0 && hasGridVelocity(gridData) ? { ...volume, size, gridData, motionShutter: shutter } : { ...volume, size, gridData };
   });
 }
 
@@ -134,9 +135,10 @@ function findPart(parts, name, label) {
 /**
  * Returns the resolved volumes with every mesh volume bound to its part. A volume with fit "bounds" becomes a box; one with
  * fit "mesh" keeps its part and also carries the bounds. Volumes that are not meshes are returned as they are.
+ * `shutter` (seconds, 0 is off) opens the motion blur of a grid volume whose grid carries velocity (#1759): the bound volume then has `motionShutter`.
  */
-export function bindLocalVolumeParts(input, parts, { label = 'environment.localVolumes', time = 0 } = {}) {
-  const volumes = bindLocalVolumeGrids(input, label, time);
+export function bindLocalVolumeParts(input, parts, { label = 'environment.localVolumes', time = 0, shutter = 0 } = {}) {
+  const volumes = bindLocalVolumeGrids(input, label, time, Number.isFinite(shutter) ? shutter : 0);
   if (!volumes.some(volume => volume.shape === 'mesh')) return volumes;
   return volumes.map((volume, index) => {
     if (volume.shape !== 'mesh') return volume;

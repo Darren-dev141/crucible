@@ -27,6 +27,9 @@ Spec (JSON). The same file is meant to drive Glaze and Cook renders of the same 
       "floor": { "y": 0, "color": [0.4, 0.35, 0.3] },              a diffuse plane, or omit
       "background": [0.02, 0.03, 0.05],                            linear world colour, default black
       "image": { "width": 960, "height": 540, "samples": 256, "device": "CPU" }   device CPU (default) or GPU; no denoising, so noise is comparable
+      "motionBlur": { "shutter": 0.0417, "fps": 24 }               optional (#1759): scene motion blur over this shutter in seconds; a VDB with velocity_x, velocity_y and velocity_z
+                                                                   grids (grid-to-vdb.py writes them from a grid with velocity) then smears along them. Measured on the
+                                                                   #1735 blast: Cycles moves the frame's gas on over the shutter whichever shutter position is set
     }
 
 How the shading maps (measured with a probe cube in Blender 5.3):
@@ -166,13 +169,15 @@ def stored_size(vdb_path):
     return [float(extent) for extent in grid["crucible_size"].split()]
 
 
-def build_volume(scene, vdb_path, volume):
+def build_volume(scene, vdb_path, volume, motion_blur=None):
     names = grid_names(vdb_path)
     if "density" not in names:
         raise SystemExit(f"{vdb_path} has no density grid; it holds {names}. Make it with scripts/grid-to-vdb.py")
     data = bpy.data.volumes.new("Grid")
     data.filepath = str(vdb_path)
     data.grids.load()
+    if motion_blur:
+        use_velocity_grids(data, names)
     box = bpy.data.objects.new("Grid volume", data)
     size = volume.get("size") or stored_size(vdb_path)
     native = stored_size(vdb_path)
@@ -218,6 +223,25 @@ def build_volume(scene, vdb_path, volume):
     data.materials.append(material)
 
 
+def use_motion_blur(scene, motion_blur):
+    """Scene motion blur over `shutter` seconds (Cycles' shutter is in frames). The position only moves object and camera keyframes; a velocity grid smears forward from the frame either way."""
+    scene.render.fps = int(motion_blur.get("fps", 24))
+    scene.render.use_motion_blur = True
+    scene.render.motion_blur_shutter = motion_blur["shutter"] * scene.render.fps
+    scene.render.motion_blur_position = "END"
+
+
+def use_velocity_grids(data, names):
+    """Points the volume at the velocity_x, velocity_y and velocity_z grids grid-to-vdb.py writes, in seconds, which is what Crucible's velocity channels are in."""
+    if not all(name in names for name in ("velocity_x", "velocity_y", "velocity_z")):
+        raise SystemExit(f"motionBlur needs velocity_x, velocity_y and velocity_z grids; the VDB holds {names}. Bake the grids with velocity: true and convert them with scripts/grid-to-vdb.py")
+    # Blender finds the three component grids by their names (velocity_x, velocity_y, velocity_z); the properties that report them are read-only.
+    if not (data.velocity_x_grid and data.velocity_y_grid and data.velocity_z_grid):
+        raise SystemExit("Blender did not pick up the velocity_x, velocity_y and velocity_z grids of the VDB as the volume's velocity")
+    data.velocity_unit = "SECOND"
+    data.velocity_scale = 1.0
+
+
 def read_spec(path):
     spec = json.loads(Path(path).read_text(encoding="utf-8"))
     for field in ("vdb", "volume", "camera"):
@@ -250,7 +274,10 @@ def main():
         build_sun(scene, spec["sun"])
     if "floor" in spec:
         build_floor(scene, spec["floor"])
-    build_volume(scene, resolve(spec_path.parent, vdb_list[frame]), spec["volume"])
+    motion_blur = spec.get("motionBlur")
+    if motion_blur:
+        use_motion_blur(scene, motion_blur)
+    build_volume(scene, resolve(spec_path.parent, vdb_list[frame]), spec["volume"], motion_blur)
 
     output_prefix.parent.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()

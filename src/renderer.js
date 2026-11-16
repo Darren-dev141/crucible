@@ -2276,9 +2276,9 @@ export class CrucibleRenderer {
   }
 
   // True when the frame draws local volumes. An empty list costs nothing; anything else is checked here, before a program is bound.
-  prepareLocalVolumes(input, frame, volumeTime) {
+  prepareLocalVolumes(input, frame, volumeTime, volumeShutter = 0) {
     if (input === undefined || (Array.isArray(input) && input.length === 0)) return false;
-    return requireFeatureCode('volumeFog').support.prepareLocalVolumes(this, input, frame, volumeTime) > 0;
+    return requireFeatureCode('volumeFog').support.prepareLocalVolumes(this, input, frame, volumeTime, volumeShutter) > 0;
   }
 
   // The post steps this frame uses. A step that is off costs nothing in a program that has it compiled out.
@@ -2339,7 +2339,8 @@ export class CrucibleRenderer {
     this.restoreSingleLevelFiltering();
     let sourceTexture = this.frameTexture;
     for (const stage of this.postStages) sourceTexture = stage.apply(this, frame, effects, sourceTexture) ?? sourceTexture;
-    const localVolumes = this.prepareLocalVolumes(environment.localVolumes, frame, environment.volumeTime ?? frame.time ?? 0);
+    // A grid with velocity blurs over the shutter of the scene's motion blur, or over environment.volumeShutter when the caller sets one (#1759).
+    const localVolumes = this.prepareLocalVolumes(environment.localVolumes, frame, environment.volumeTime ?? frame.time ?? 0, environment.volumeShutter ?? effects.motionBlur.shutter);
     // A glowing volume is drawn before bloom extraction so it blooms; the final pass then skips its local step.
     const compositedLocalVolumes = localVolumes && effects.bloom.strength > 0 && this.localVolumeBuffers.emissive;
     if (compositedLocalVolumes) sourceTexture = requireFeatureCode('volumeFog').support.compositeLocalVolumes(this, frame, environment, sourceTexture);

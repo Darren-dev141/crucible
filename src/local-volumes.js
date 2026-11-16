@@ -1,6 +1,6 @@
 import { MAX_LOCAL_VOLUMES, LOCAL_VOLUME_MAXIMUM_STEPS, ONE_GRID_VOLUME_MESSAGE, resolveLocalVolumesWith } from './local-volume-resolve.js';
 import { localVolumeNoise } from './local-volume-noise.js';
-import { sampleVolumeGrid, bakedGridEmission, volumeGridFloats } from './volume-grid.js';
+import { sampleVolumeGrid, sampleVolumeGridVelocity, gridUnitVelocity, bakedGridEmission, volumeGridFloats } from './volume-grid.js';
 import { LOCAL_VOLUME_RAMP_STOPS, rampSourceCode, resolveEmissionRamp } from './local-volume-ramp.js';
 import { bakeEmissionRamp } from './local-volume-ramp-bake.js';
 import { resolveGridVolume, LOCAL_VOLUME_GRID_MAXIMUM_STEPS } from './local-volume-grid.js';
@@ -19,7 +19,7 @@ export function resolveLocalVolumes(input, label = 'localVolumes') {
 /** The uniform arrays the post shader reads, one vec4 per volume. Pass resolved volumes. */
 export function createLocalVolumeBuffers() {
   const size = MAX_LOCAL_VOLUMES * 4;
-  return { count: 0, blurred: false, meshParts: [], grid: new Float32Array(size), gridVolume: null, centers: new Float32Array(size), extents: new Float32Array(size), absorption: new Float32Array(size), emission: new Float32Array(size), steps: new Float32Array(size), axes: new Float32Array(size * 3), rampSetup: new Float32Array(size), rampColors: new Float32Array(size * LOCAL_VOLUME_RAMP_STOPS) };
+  return { count: 0, blurred: false, meshParts: [], grid: new Float32Array(size), gridVolume: null, gridShutter: 0, centers: new Float32Array(size), extents: new Float32Array(size), absorption: new Float32Array(size), emission: new Float32Array(size), steps: new Float32Array(size), axes: new Float32Array(size * 3), rampSetup: new Float32Array(size), rampColors: new Float32Array(size * LOCAL_VOLUME_RAMP_STOPS) };
 }
 
 // The emission ramp of volume `index` (#1046): rampSetup holds x the source code (0 none), y the stop count and z, w the source range; rampColors
@@ -45,6 +45,7 @@ export function packLocalVolumes(volumes, buffers) {
   buffers.count = volumes.length;
   buffers.meshParts = [];
   buffers.gridVolume = null;
+  buffers.gridShutter = 0;
   buffers.grid.fill(0);
   buffers.rampSetup.fill(0);
   buffers.blurred = volumes.some(volume => volume.blur > 0 && volume.density > 0);
@@ -68,6 +69,7 @@ export function packLocalVolumes(volumes, buffers) {
     if (volume.shape === 'grid') {
       if (buffers.gridVolume) throw new RangeError(ONE_GRID_VOLUME_MESSAGE);
       buffers.gridVolume = volume;
+      buffers.gridShutter = volume.motionShutter ?? 0;
       buffers.grid.set([volume.castShadow === true ? 2 : 1, volume.temperatureScale, volume.blackbodyIntensity * volume.emissionStrength, volume.anisotropy], at);
     }
     const axes = volume.axes ?? IDENTITY_AXES;
@@ -166,6 +168,30 @@ export function warpedFadePosition(position, noiseAmount, noise) {
 }
 
 const gridScratch = new Float64Array(3);
+const velocityScratch = new Float64Array(3);
+
+/**
+ * Writes into `out` the point a motion-blurred grid volume reads instead of (x, y, z) (#1759). The frame's grid is the gas as the shutter opens, and the gas moves on by its
+ * velocity, so the point seen `timeFraction * motionShutter` seconds into the shutter reads the grid back along the velocity there: the sum over the shutter is a smear that
+ * leads the gas, which is what Cycles does with a velocity grid (measured on the #1735 blast, docs/volumetric.md). A volume with no `motionShutter`, and a point outside the
+ * box (no gas, no velocity), read where they are.
+ */
+export function localVolumeGridMotionPoint(volume, x, y, z, timeFraction, out) {
+  out[0] = x;
+  out[1] = y;
+  out[2] = z;
+  if (!(volume.motionShutter > 0)) return out;
+  const unitX = (x - volume.center[0]) / volume.size[0] + 0.5;
+  const unitY = (y - volume.center[1]) / volume.size[1] + 0.5;
+  const unitZ = (z - volume.center[2]) / volume.size[2] + 0.5;
+  if (unitX < 0 || unitX > 1 || unitY < 0 || unitY > 1 || unitZ < 0 || unitZ > 1) return out;
+  sampleVolumeGridVelocity(gridUnitVelocity(volume.gridData, volume.size), volume.gridData.resolution, unitX, unitY, unitZ, velocityScratch);
+  const seconds = volume.motionShutter * timeFraction;
+  out[0] -= velocityScratch[0] * volume.size[0] * seconds;
+  out[1] -= velocityScratch[1] * volume.size[1] * seconds;
+  out[2] -= velocityScratch[2] * volume.size[2] * seconds;
+  return out;
+}
 
 /**
  * Writes the density, temperature and flame of a grid volume at a world point into `out` (all 0 outside its box) and returns it. With `withBlackbody`, `out` has

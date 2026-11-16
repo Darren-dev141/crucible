@@ -1051,7 +1051,8 @@ window.__agentPreview = {
     const environment = record.scene.environment;
     const result = await renderPathTracedImage({
       parts: record.scene.parts,
-      environment: { ...environment, map: agentEnvironmentMap(environment) },
+      // The scene's motion blur shutter also blurs a grid volume that carries velocity (#1759), in the trace as in the rasterizer.
+      environment: { ...environment, map: agentEnvironmentMap(environment), ...(record.scene.effects.motionBlur.shutter > 0 ? { volumeShutter: record.scene.effects.motionBlur.shutter } : {}) },
       camera: record.scene.camera,
     }, options);
     // An external denoiser (denoise "oidn") works on the traced features outside the page; finishPathTrace then draws its result.
