@@ -52,9 +52,9 @@ async function readExportChunkInPage({ name, offset }) {
 
 // Runs in the page: packs the loaded scene into the tables the native tracer reads, like the MCP render job does.
 async function exportTablesInPage({ width, height, bounces, seed, instancing, camera, listParts, hideParts, patchMaterials }) {
-  const [{ createCamera, describeIgnoredFeatures }, { buildTraceScene, refuseLocalVolumes, resolveTexture }, pack, { buildNativeInput }, { buildJobNativeInput, buildFlattenedJobNativeInput }, { exportNativeSceneTables, splitExportForChunks }] = await Promise.all([
+  const [{ createCamera, describeIgnoredFeatures }, { buildTraceScene, resolveTexture }, pack, { buildNativeInput }, { buildJobNativeInput, buildFlattenedJobNativeInput }, { exportNativeSceneTables, splitExportForChunks }, gridVolumeInput] = await Promise.all([
     import('/src/path-tracer.js'), import('/src/path-tracer-scene.js'), import('/src/path-tracer-gpu-pack.js'),
-    import('/node_modules/@codepawlhq/cook/pack-input.mjs'), import('/node_modules/@codepawlhq/cook/job-input.mjs'), import('/scripts/native-bake-page.js'),
+    import('/node_modules/@codepawlhq/cook/pack-input.mjs'), import('/node_modules/@codepawlhq/cook/job-input.mjs'), import('/scripts/native-bake-page.js'), import('/node_modules/@codepawlhq/cook/grid-volume-input.mjs'),
   ]);
   const { environment } = window.__scene;
   const describePart = part => ({
@@ -73,7 +73,7 @@ async function exportTablesInPage({ width, height, bounces, seed, instancing, ca
   const parts = window.__scene.parts.filter(part => !hidden.has(part));
   const tracerCamera = createCamera(camera, width, height);
   const packed = exportNativeSceneTables({ parts, environment, camera: tracerCamera, options: { width, height, bounces, seed, fireflyClamp: 20, noiseThreshold: 0 }, kernel: 'cycles', instancing, transport: 'chunks',
-    modules: { buildTraceScene, refuseLocalVolumes, resolveTexture, buildNativeInput, buildJobNativeInput, buildFlattenedJobNativeInput, pack } });
+    modules: { buildTraceScene, resolveTexture, buildNativeInput, buildJobNativeInput, buildFlattenedJobNativeInput, pack, gridVolumeInput } });
   // The tables stay in the page for readExportChunkInPage: no single message has to carry the scene.
   const { manifest, tables } = splitExportForChunks(packed);
   window.__nativeExportTables = tables;
