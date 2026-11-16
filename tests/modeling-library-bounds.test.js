@@ -67,3 +67,11 @@ test('the recipe layer reads the same segment and cut limits as the library', ()
   assert.throws(() => normalizeMeshEdits([overSegments]), error => error.message.includes(`1 to ${MAX_BEVEL_SEGMENTS}`));
   assert.throws(() => normalizeMeshEdits([overCuts]), error => error.message.includes(`1 to ${MAX_LOOP_CUTS}`));
 });
+
+test('bevelEdges, subdivideMesh and loopCut refuse a NaN or out-of-range profile, sharpness and factor', () => {
+  refuses(() => bevelEdges(cube(), ALL, { width: 0.1, profile: NaN }), 'bevelEdges', 'profile', 'NaN', 'from 0 to 1');
+  refuses(() => bevelEdges(cube(), ALL, { width: 0.1, profile: -0.5 }), 'profile', '-0.5');
+  refuses(() => subdivideMesh(cube(), { levels: 1, crease: ALL, sharpness: NaN }), 'subdivideMesh', 'sharpness', 'NaN');
+  refuses(() => loopCut(cube(), VERTICAL, { factor: NaN }), 'loopCut', 'factor', 'NaN', 'from 0 to 1');
+  refuses(() => loopCut(cube(), VERTICAL, { factor: 1.5 }), 'factor', '1.5');
+});
