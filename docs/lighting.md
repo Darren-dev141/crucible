@@ -57,7 +57,7 @@ Set `environment.map` in the constructor or in `frame.environment`. Maps spread 
 
 When a map is set:
 
-- Standard PBR surfaces take specular reflection by roughness from a GGX-prefiltered chain and diffuse ambient from L2 spherical harmonics, with a split-sum BRDF lookup. `ambientIntensity` and occlusion maps still scale it.
+- Standard PBR surfaces take specular reflection by roughness from a GGX-prefiltered chain and diffuse ambient from an exact cosine convolution of the map (a 64 by 32 irradiance grid, read by normal), with a split-sum BRDF lookup. `ambientIntensity` and occlusion maps still scale it.
 - Liquid reflections sample the same chain.
 - `showBackground: true` draws the map behind the scene in studio and world mode, blurred by `backgroundBlur`. It is skipped on transparent canvases.
 - Key, fill and point lights still add direct light. Set `keyIntensity` and `fillIntensity` to zero to light a scene from the map alone.
@@ -65,7 +65,7 @@ When a map is set:
 
 Cost and memory: prefiltering runs once when a map is first used, not per frame (about 30 ms for a 512x256 map on an RTX 3060 after shader compilation, plus about 0.6 s of first-use shader compile). The renderer keeps a half-float chain of at most 1024 wide (about 8 MB for 1024x512, 1.4 MB for 512x256) and a 128x128 BRDF lookup, and counts both in the memory budget. The source upload is freed after prefiltering. A 2048x1024 source briefly needs about 11 MB of GPU memory and 32 MB of CPU memory while loading. Maps need `EXT_color_buffer_float`; without it the constructor throws.
 
-Limits: the diffuse term uses L2 spherical harmonics, so a very small intense sun gives soft, slightly ringing diffuse light and no shadow. Use the key light for sun shadows. Reflections have no parallax or occlusion, and the procedural water tag does not use the map.
+Limits: the diffuse term is the map's cosine-weighted light by direction, so a very small intense sun gives soft diffuse light and no shadow. Before 0.21.0 it was a nine-term spherical harmonic fit, which on a map with a strong sun was off by up to 50 percent in the shade (it rang); the grid is within 4 percent of the exact integral on `assets/looks/sky-clouds.hdr` (`tests/environment-irradiance-grid.test.js`). The grid is built on the CPU from the map averaged down to at most 128 by 64 (about 30 ms) and shares the texture of the split-sum lookup, so a lit program needs no extra sampler and the GPU cost grows by 98 KB. The light shading preset still uses the first four spherical harmonic terms. Use the key light for sun shadows. Reflections have no parallax or occlusion, and the procedural water tag does not use the map.
 
 ## Point lights
 
