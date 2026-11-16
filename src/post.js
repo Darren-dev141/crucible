@@ -3,7 +3,7 @@ import { registeredFeatureCode, requireFeatureCode } from './shader-registry.js'
 export { fullscreenVertex } from './gl-program.js';
 
 // The main function of the post pass; the local volume composite before bloom swaps it for a smaller one.
-const POST_MAIN_BODY = `void main() {
+const POST_MAIN = `void main() {
   vec2 texel = 1.0 / resolution;
   vec3 center = texture(frameTexture, textureCoordinate).rgb;
   vec3 northwest = texture(frameTexture, textureCoordinate + vec2(-1.0, -1.0) * texel).rgb;
@@ -61,12 +61,7 @@ const POST_MAIN_BODY = `void main() {
 }
 `;
 
-// The linear output step (#1749) holds its GLSL in linear-output-shader.js, so only a frame that asks for it carries that text.
-function postMainFor(enabledSteps) {
-  return enabledSteps.has('linearOutput') ? requireFeatureCode('linearOutput').post(POST_MAIN_BODY) : POST_MAIN_BODY;
-}
-
-function postFragmentSource(definitions, explosionFunction, fogDeclarations, fogFunctions, mainBody = POST_MAIN_BODY) {
+function postFragmentSource(definitions, explosionFunction, fogDeclarations, fogFunctions, mainBody = POST_MAIN) {
   return `#version 300 es
 ${definitions}
 precision highp float;
@@ -269,7 +264,7 @@ export function createPostFragment(steps = POST_STEPS) {
     .map(([step, [macro, condition]]) => `#define ${macro} ${enabled.has(step) ? `(${condition})` : 'false'}`)
     .join('\n');
   const fogCode = fogCodeFor(enabled);
-  return postFragmentSource(definitions, explosionFunctionFor(enabled), fogCode.declarations, fogCode.functions, postMainFor(enabled));
+  return postFragmentSource(definitions, explosionFunctionFor(enabled), fogCode.declarations, fogCode.functions, enabled.has('linearOutput') ? requireFeatureCode('linearOutput').post(POST_MAIN) : undefined);
 }
 
 export const postFragment = createPostFragment();
