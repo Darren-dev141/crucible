@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { padded, readGlb, writeGlb } from './agent-glb-io.mjs';
 
 // Draco-compressed GLBs through MCP (#1698). The preview page cannot be handed a Draco decoder by an agent, so the server
 // decompresses the file as it reads it from the catalog: every primitive's attributes and indices are decoded with the
@@ -7,9 +8,6 @@ import { createRequire } from 'node:module';
 
 export const DRACO_EXTENSION = 'KHR_draco_mesh_compression';
 
-const GLB_MAGIC = 0x46546c67;
-const JSON_CHUNK = 0x4e4f534a;
-const BINARY_CHUNK = 0x004e4942;
 const ARRAY_TYPES = { 5120: Int8Array, 5121: Uint8Array, 5122: Int16Array, 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array };
 const COMPONENTS_PER_TYPE = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 };
 const UNSIGNED_INT = 5125;
@@ -36,42 +34,6 @@ export function loadDefaultDracoDecoder() {
     defaultDecoderModule = Promise.resolve(draco.createDecoderModule({}));
   }
   return defaultDecoderModule;
-}
-
-function readGlb(bytes) {
-  if (bytes.length < 20 || bytes.readUInt32LE(0) !== GLB_MAGIC || bytes.readUInt32LE(16) !== JSON_CHUNK) {
-    throw new Error('A Draco GLB must be a complete glTF 2.0 binary file.');
-  }
-  const jsonLength = bytes.readUInt32LE(12);
-  const document = JSON.parse(bytes.subarray(20, 20 + jsonLength).toString('utf8'));
-  const binaryStart = 20 + jsonLength;
-  if (bytes.length < binaryStart + 8 || bytes.readUInt32LE(binaryStart + 4) !== BINARY_CHUNK) {
-    throw new Error('A Draco GLB needs a binary chunk that holds the compressed meshes.');
-  }
-  const binaryLength = bytes.readUInt32LE(binaryStart);
-  return { document, binary: bytes.subarray(binaryStart + 8, binaryStart + 8 + binaryLength) };
-}
-
-function padded(buffer, fill) {
-  const padding = (4 - (buffer.length % 4)) % 4;
-  return padding ? Buffer.concat([buffer, Buffer.alloc(padding, fill)]) : buffer;
-}
-
-function writeGlb(document, binary) {
-  const json = padded(Buffer.from(JSON.stringify(document)), 0x20);
-  const total = 12 + 8 + json.length + 8 + binary.length;
-  const result = Buffer.alloc(total);
-  result.writeUInt32LE(GLB_MAGIC, 0);
-  result.writeUInt32LE(2, 4);
-  result.writeUInt32LE(total, 8);
-  result.writeUInt32LE(json.length, 12);
-  result.writeUInt32LE(JSON_CHUNK, 16);
-  json.copy(result, 20);
-  const binaryOffset = 20 + json.length;
-  result.writeUInt32LE(binary.length, binaryOffset);
-  result.writeUInt32LE(BINARY_CHUNK, binaryOffset + 4);
-  binary.copy(result, binaryOffset + 8);
-  return result;
 }
 
 function dracoDataType(draco, ArrayType) {
@@ -158,7 +120,7 @@ function withoutDracoExtension(list) {
  * buffer views stay in the binary chunk, unreferenced. `loadDecoder` returns the draco3d decoder module.
  */
 export async function decompressDracoGlb(bytes, { filename = 'GLB', loadDecoder = loadDefaultDracoDecoder } = {}) {
-  const { document, binary } = readGlb(bytes);
+  const { document, binary } = readGlb(bytes, 'A Draco GLB');
   const draco = await loadDecoder();
   const chunks = [padded(Buffer.from(binary), 0)];
   let size = chunks[0].length;
