@@ -248,6 +248,20 @@ test('the shaders keep their fixed sample patterns and read no history', () => {
   }
 });
 
+test('a user pass reads its time from the motion clock when the frame has one, else from the renderer time', () => {
+  const calls = [];
+  const renderer = { context: recordingContext(calls), canvas: { width: 16, height: 9 }, postStages: [], depthTexture: 'depth', whiteTexture: 'white',
+    inverseViewProjection: mat4.create(), resolveFrame() {}, benchmark: false };
+  installUserPasses(renderer);
+  renderer.userPasses.set([{ name: 'clock', fragment: 'vec4 userPass(vec2 uv) { return vec4(vec3(time), 1.0); }' }]);
+  const uploads = [{ time: 0, passTime: 2 }, { time: 0, passTime: 6.5 }, { time: 3 }, { time: 0, passTime: 0 }].map(frame => {
+    calls.length = 0;
+    renderer.resolveFrame(frame);
+    return calls.filter(call => call[0] === 'uniform1f').at(-1)[2];
+  });
+  assert.deepEqual(uploads, [2, 6.5, 3, 0]);
+});
+
 // Draws the default frame and each step in Chrome, so it runs only when asked:
 //   RENDER_TESTS=1 node --test tests/post-steps.test.js (on a shared GPU, start it through the machine GPU lock)
 const chromePath = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';

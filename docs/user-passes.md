@@ -29,7 +29,7 @@ You do not declare uniforms or the version line; the engine writes them. A snipp
 | `sceneColor` | `sampler2D` | The frame, or the previous pass. |
 | `sceneDepth` | `sampler2D` | Depth of the scene, at full size. It needs `depth: true` on the renderer (the MCP preview has it); without it every sample reads 1. |
 | `resolution` | `vec2` | Size of this pass in pixels. |
-| `time` | `float` | Frame time in seconds. |
+| `time` | `float` | Frame time in seconds. A frame drawn at a motion time (a render job with `motion`, a `scene_look` or `scene_review` motion time) reads that motion time, so a still at `motion.start: 6.5` gets 6.5, the same value the video frame at 6.5 s gets. Without a motion time it is the renderer time, which is 0 in a still. |
 | `depthAt(uv)`, `worldPointAt(uv)` | functions | Raw depth, and the world position of the pixel. |
 | `worldNormalAt(uv)` | function | The surface normal, found from neighbouring depth samples. It is exact on flat faces and wrong at silhouettes and in the sky. |
 | `objectSlotAt(uv)` | function | The position in the pass's `objects` list of the part under `uv`, or -1 for the background, any other part, and a pass with no `objects`. A name that matches several parts gives all of them its one position. Edges are hard: an object ID cannot be antialiased. A name that is not a part in the frame fails the render and lists part names to use. |
