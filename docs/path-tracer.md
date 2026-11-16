@@ -57,7 +57,8 @@ A glass part with a material `dispersion` above 0 splits white light into colour
 
 - It shows when the camera sees through the glass. A rainbow cast by the glass on a diffuse floor is not resolved yet and needs caustics (#1715).
 - It is a path tracer feature: the rasterizer and the other tracers ignore the field. The `dispersion` of the lens distortion pass is a different, post-process effect.
-- Measured on an RTX 3060 at 256 samples, a prism or gem view takes Cook 3.1 to 4.5 s against Cycles 1.0 to 1.8 s. The mean colour is within 1 to 9% of Cycles, and the fringe saturation is 0.67 to 0.90 times Cycles'.
+- Dispersive glass keeps signed spectral weights, as Cycles does (codepawl/cook#53), so the fringes match Cycles' saturation: the prism view fringe is 0.94 times Cycles' and its mean colour is within 0.2%. The most saturated fringe pixels can hold small negative values; `rawLinear` and the returned linear film keep them, and Crucible clamps them to zero only before OIDN and the display transform.
+- Measured on an RTX 3060 at 256 samples, a prism or gem view takes Cook 3.1 to 4.5 s against Cycles 1.0 to 1.8 s. Those timings and the 1 to 9% mean colour gap are from before the signed weights, which raised the fringe saturation from 0.67 to 0.90 times Cycles' to the figure above.
 - At 1080p Cook takes 8.6 s at 64 samples, 34.1 s at 256 and 138 s at 1024.
 
 ## What it does not draw
