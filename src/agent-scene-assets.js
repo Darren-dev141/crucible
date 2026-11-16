@@ -169,20 +169,26 @@ export function gamePosedNodeIds(game) {
   return ids;
 }
 
-function collectPlacements(value, found, depth = 0) {
+/** Calls `visit` with the `asset` object of every node in a recipe or an edit list, however deep the node sits. */
+export function visitPlacements(value, visit, depth = 0) {
   if (!value || typeof value !== 'object' || depth > 8) return;
   if (Array.isArray(value)) {
-    for (const item of value) collectPlacements(item, found, depth + 1);
+    for (const item of value) visitPlacements(item, visit, depth + 1);
     return;
   }
   const placement = value.asset;
-  if (placement && typeof placement === 'object' && typeof placement.id === 'string' && ASSET_ID.test(placement.id.toLowerCase())) {
-    found.push(placement);
-  }
+  if (placement && typeof placement === 'object') visit(placement);
   for (const [key, child] of Object.entries(value)) {
-    if (key !== 'asset') collectPlacements(child, found, depth + 1);
+    if (key !== 'asset') visitPlacements(child, visit, depth + 1);
   }
 }
+
+function collectPlacements(value, found) {
+  visitPlacements(value, placement => {
+    if (typeof placement.id === 'string' && ASSET_ID.test(placement.id.toLowerCase())) found.push(placement);
+  });
+}
+
 
 /**
  * The catalog assets a recipe (or a list of edit operations) places: `{ id, copies }` where `copies` is how many decoded

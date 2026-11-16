@@ -2,7 +2,7 @@ import './support/load-agent-scene-modules.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { previewHarness } from './support/preview-harness.mjs';
-import { MAXIMUM_MEMORY_MIB } from '../src/agent-scene-capabilities.js';
+import { MEMORY_CEILING_MIB } from '../src/agent-scene-capabilities.js';
 
 function recipe() {
   return { format: 'crucible.scene', schemaVersion: 1,
@@ -68,5 +68,5 @@ test('the preview hands the runtime memory ceiling to its renderer (#1313)', () 
   const harness = previewHarness();
   harness.preview.create({ recipe: recipe(), sessionId: 'ceiling', backend: 'cpu', memoryBudgetMiB: 192 });
   assert.equal(harness.rendererOptions.length > 0, true);
-  for (const options of harness.rendererOptions) assert.equal(options.maximumMemoryBudgetMiB, MAXIMUM_MEMORY_MIB);
+  for (const options of harness.rendererOptions) assert.equal(options.maximumMemoryBudgetMiB, MEMORY_CEILING_MIB);
 });

@@ -1567,6 +1567,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   let clothBake = null;
   let particleBake = null;
   let lightBake = null;
+  // Why the last stage's rebake could not run (a size limit), for the staged state to report.
+  let skippedBake = null;
   let lightLinkCache = null;
   let objectReflectionCache = null;
   // Puts the staged graph's matrices back when an edit that moved them in place is refused after the move.
@@ -1795,6 +1797,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       // Part identity decides what the next stage reuses, so it compares the parts as built, before any bake.
       sourceRestParts,
       parts: restParts, restParts,
+      bakeSkipped: skippedBake,
       bakeReport: lightBakeResult ? agentSceneModule('bake').withLocalVolumeReport({ ...lightBakeResult.report, reused: lightBakeResult.reused }, recipe.environment.localVolumes) : null,
       reflectionReport: reflected ? reflected.report : null,
       // A renderer holding the deformed cloth parts of the old state needs the rest parts back as a topology change.
@@ -1851,7 +1854,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
 
   // bake.rebake: a frame sampled at a pose the bake was not traced at is lit by a bake of that pose, cached by its key.
   function rebakeAtPose(pose) {
-    const rebaked = state.recipe.bake?.rebake && agentSceneModule('bake').bakeAtSampledPose(lightBake, state.recipe, pose);
+    const rebaked = lightBake && state.recipe.bake?.rebake && agentSceneModule('bake').bakeAtSampledPose(lightBake, state.recipe, pose);
     if (rebaked) {
       state.restParts = stageRestParts(state.recipe, state.sourceRestParts, rebaked, pose.graph).restParts;
       state.bakeReport = agentSceneModule('bake').withLocalVolumeReport(rebaked.report, state.recipe.environment.localVolumes);
@@ -1861,6 +1864,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // A light bake costs seconds of ray tracing: it runs when the parts, the lights, the materials or the bake fields
   // change, and every other edit, seek or camera move reuses the last result.
   function stageLightBake(recipe, sourceRestParts, graph) {
+    skippedBake = null;
     if (!recipe.bake) {
       return null;
     }
@@ -1871,7 +1875,13 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       lightBake.currentKey = key;
       return { ...lightBake, reused: true };
     }
-    const baked = agentSceneModule('bake').bakeAgentParts(sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators);
+    // The first build of a scene still fails loudly. A later edit stays applied: the old bake no longer fits the edited parts, so it is dropped.
+    const { baked, refusal } = agentSceneModule('bake').bakeUnlessRefused(Boolean(state), sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators);
+    if (refusal) {
+      lightBake = null;
+      skippedBake = refusal;
+      return null;
+    }
     lightBake = { key, currentKey: key, sourceRestParts, parts: baked.parts, report: baked.report };
     return { ...lightBake, reused: false };
   }
@@ -2327,7 +2337,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         return result;
       });
       const resident = geometryStats(ownedGeometryRecords());
-      const diagnostics = [...recipeDiagnostics(state.recipe), ...closedRoomProblems(), ...staleBakeProblems(), ...coplanarProblems()];
+      const diagnostics = [...recipeDiagnostics(state.recipe), ...closedRoomProblems(), ...staleBakeProblems(), ...(state.bakeSkipped ? [agentSceneModule('bake').bakeSkippedDiagnostic(state.bakeSkipped)] : []),...coplanarProblems()];
       return {
         revision, topologyRevision,
         ...(state.recipe.motion?.ik?.length ? { motionIk: agentSceneModule('motion').compileAgentMotion(state.recipe.motion, state.recipe).sweepIk() } : {}),
