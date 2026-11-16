@@ -11,8 +11,8 @@ import { pullRequestBaseOf } from './size-base.mjs';
 const gateNames = new Set(['protected files', 'change note', 'release changelog']);
 
 // Returns the failing gates for a list of changed paths. Pure, so tests can call it without git.
-export function failingGatesFor(changedPaths, { release = false, releaseProblem = null } = {}) {
-  return planChecks(changedPaths, { skipTests: true, release, releaseProblem })
+export function failingGatesFor(changedPaths, { release = false, releaseProblem = null, addedPaths = null } = {}) {
+  return planChecks(changedPaths, { skipTests: true, release, releaseProblem, addedPaths })
     .filter(check => gateNames.has(check.name) && check.failure)
     .map(check => ({ name: check.name, failure: check.failure, fix: check.fix }));
 }
@@ -32,10 +32,11 @@ function baseRefFromArguments() {
 async function main() {
   const baseRef = baseRefFromArguments();
   const changedPaths = git(['diff', '--name-only', '--no-renames', baseRef, 'HEAD']).split('\n').filter(Boolean);
+  const addedPaths = git(['diff', '--name-only', '--no-renames', '--diff-filter=A', baseRef, 'HEAD']).split('\n').filter(Boolean);
   const release = isVersionBump(git(['show', `${baseRef}:package.json`]), git(['show', 'HEAD:package.json']));
   if (release) console.log('The package version changed, so this is a release: the protected file and change note gates do not apply, the release changelog gate does.');
   const releaseProblem = release ? await readReleaseProblem(process.cwd()) : null;
-  const failing = failingGatesFor(changedPaths, { release, releaseProblem });
+  const failing = failingGatesFor(changedPaths, { release, releaseProblem, addedPaths });
   for (const gate of failing) {
     console.error(`FAIL ${gate.name}: ${gate.failure}\n     Fix: ${gate.fix}`);
   }

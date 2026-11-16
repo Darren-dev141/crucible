@@ -51,6 +51,13 @@ test('an arc primitive lies on its circle and ends where the sweep ends', () => 
   assert.equal(shapeToSpline({ type: 'arc', sweep: Math.PI * 2 }).closed, true, 'a full turn closes');
 });
 
+test('an arc span wider than a half turn is refused with the segment count to pass', () => {
+  assert.throws(() => shapeToSpline({ type: 'arc', sweep: Math.PI * 2, segments: 1 }), /Pass shape\.segments of 2 or more/);
+  assert.throws(() => shapeToSpline({ type: 'arc', sweep: 6, segments: 1 }), /too wide for a Bezier span/);
+  const halfTurn = shapeToSpline({ type: 'arc', sweep: Math.PI, segments: 1 });
+  assert.ok(halfTurn.points.every(point => point.handleOut.every(value => Math.abs(value) < 10)));
+});
+
 test('a spiral rises and widens, and a spiral staircase rail is a watertight swept tube', () => {
   const rail = curveSet([{ shape: { type: 'spiral', rotations: 1.5, startRadius: 1, endRadius: 1, height: 3, pointsPerRotation: 24 } }], { radius: 0.03, radialSegments: 6 });
   const { minimum, maximum } = bounds(rail);

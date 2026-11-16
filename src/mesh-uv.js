@@ -3,6 +3,13 @@ import { faceNormals } from './mesh-normals.js';
 import { triangulateMesh } from './mesh-render.js';
 import { cornerCycles, cornerFaces, edgeCornerTable, UnionFind } from './mesh-topology.js';
 import { selectEdges, edgeFaces } from './mesh-bevel.js';
+import { requireFiniteInRange } from './modeling-limits.js';
+
+/** The gap between islands, as a share of the square: NaN gives non-finite uv and 0.5 or more leaves no room. */
+export const MAX_UV_MARGIN = 0.2;
+export function requireUvMargin(functionName, margin) {
+  requireFiniteInRange(functionName, 'margin', margin, 0, MAX_UV_MARGIN);
+}
 
 // Automatic UV unwrapping: seams from an edge rule, extra cuts until every island is a disk, least-squares conformal
 // maps (LSCM, the "Conformal" method Blender offers) solved per island, area normalisation for an even texel density,
@@ -615,6 +622,7 @@ function splitIntoAxisCharts(mesh, islands, seam, table, faceNormal) {
  * global scale), and utilization (share of the square islands cover).
  */
 export function unwrapUv(mesh, { seams = { angle: 60 }, margin = 0.01, maxDistortion = 0.25 } = {}) {
+  requireUvMargin('unwrapUv', margin);
   const table = edgeCornerTable(mesh);
   const { nextCorner } = cornerCycles(mesh);
   const facesOfCorners = cornerFaces(mesh);

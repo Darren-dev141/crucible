@@ -270,3 +270,11 @@ test('a recipe sheet takes softBody and a stiffness group and bakes them', async
   badGroup.cloth.sheets[0].stiffnessGroup = 'missing';
   assert.throws(() => createAgentScene(badGroup).sampleMotion(1), /stiffnessGroup.*vertex group/s);
 });
+
+test('a closed mesh with one triangle wound the wrong way is rejected before pressure uses its volume', () => {
+  const positions = new Float64Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]);
+  const outward = [0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3];
+  assert.doesNotThrow(() => createCloth(positions, outward, { softBody: { pressure: 1 } }));
+  const oneFlipped = [0, 1, 2, 0, 1, 3, 0, 3, 2, 1, 2, 3];
+  assert.throws(() => createCloth(positions, oneFlipped, { softBody: { pressure: 1 } }), /wound the same way.*particles 0 and 1.*Flip/s);
+});

@@ -14,7 +14,7 @@ const renderer = new CrucibleRenderer(canvas, parts, { hdr: true, environment: {
 
 ## Build a map and turn it
 
-`createEnvironmentMap({ width, height, data, intensity, rotation, showBackground, backgroundBlur })` takes a `Float32Array` of linear RGB or RGBA, top row first. The image centre looks toward -Z. The example paints a small sky with a bright sun, and the sphere row reflects it. Drag to orbit, and use the slider to turn the map with `{ ...map, rotation }`: maps spread from one created map reuse their GPU textures, so rotation animates for free.
+`createEnvironmentMap({ width, height, data, intensity, rotation, showBackground, backgroundBlur })` takes a `Float32Array` of linear RGB or RGBA, top row first. In a map built this way the image centre looks toward -Z. An authored HDRI (`environment.hdri`, `loadHdri`, the catalog) is turned a quarter first, so its centre looks toward +X as in three.js and Blender. The example paints a small sky with a bright sun, and the sphere row reflects it. Drag to orbit, and use the slider to turn the map with `{ ...map, rotation }`: maps spread from one created map reuse their GPU textures, so rotation animates for free.
 
 ```js live poster=hdr-rotate
 import { CrucibleRenderer, sphere, createEnvironmentMap } from 'crucible';

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene, agentSceneModulesNeeded } from '../src/agent-scene.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
-import { bakeCloth, sampleClothFrames, weldVertices, CLOTH_LIMITS } from '../src/cloth.js';
+import { bakeCloth, createCloth, sampleClothFrames, weldVertices, CLOTH_LIMITS } from '../src/cloth.js';
 
 function flagRecipe(cloth, extraNodes = [], segments = 12) {
   return {
@@ -276,4 +276,35 @@ test('the solver is bit-exact between runs', () => {
   const first = bakeSheet({ wind: [1, 0, 4], frames: 61, pinned: 'top' }).result.frames;
   const second = bakeSheet({ wind: [1, 0, 4], frames: 61, pinned: 'top' }).result.frames;
   assert.deepEqual(Buffer.from(first.buffer), Buffer.from(second.buffer));
+});
+
+const QUAD_POSITIONS = new Float32Array([0, 1, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1]);
+const QUAD_TRIANGLES = new Uint32Array([0, 1, 2, 1, 3, 2]);
+
+test('a zero time step leaves the cloth where it is', () => {
+  const cloth = createCloth(QUAD_POSITIONS, QUAD_TRIANGLES, {});
+  cloth.step(0);
+  assert.deepEqual(Array.from(cloth.positions), Array.from(QUAD_POSITIONS));
+});
+
+test('a time step that is negative, not a number or longer than a second names deltaSeconds', () => {
+  const cloth = createCloth(QUAD_POSITIONS, QUAD_TRIANGLES, {});
+  for (const bad of [-1 / 60, NaN, 1e6]) {
+    assert.throws(() => cloth.step(bad), /Cloth step needs deltaSeconds from 0 to 1,/, `deltaSeconds ${bad}`);
+  }
+});
+
+test('bakeCloth names a frameCount or framesPerSecond it cannot record', () => {
+  for (const frameCount of [-2, 2.5, undefined]) {
+    assert.throws(() => bakeCloth(QUAD_POSITIONS, QUAD_TRIANGLES, { frameCount }), /Cloth frameCount must be a whole number from 1/, `frameCount ${frameCount}`);
+  }
+  assert.throws(() => bakeCloth(QUAD_POSITIONS, QUAD_TRIANGLES, { frameCount: 3, framesPerSecond: 0 }), /Cloth framesPerSecond must be at least 1/);
+});
+
+test('sampleClothFrames rejects a NaN time and still reads the end for Infinity', () => {
+  const recording = bakeCloth(QUAD_POSITIONS, QUAD_TRIANGLES, { frameCount: 3 });
+  const target = new Float32Array(12);
+  assert.throws(() => sampleClothFrames(recording, NaN, target), /Cloth sample time must be seconds/);
+  sampleClothFrames(recording, Infinity, target);
+  assert.deepEqual(Array.from(target), Array.from(recording.frames.subarray(24, 36)));
 });

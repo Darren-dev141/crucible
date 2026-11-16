@@ -1,6 +1,6 @@
 import { buildWorld, cosineDirection, hashUnit, radicalInverse, sceneScale } from './light-bake.js';
 import { createTracer } from './ray-query.js';
-import { CLOSED_ROOM_SHARE } from './closed-room.js';
+import { CLOSED_ROOM_SHARE, partMatrixLookup } from './closed-room.js';
 import { fittedClosedRoomShare } from './fitted-closed-room.js';
 import { partDiffuseAlbedo } from './ground-bounce.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
@@ -193,7 +193,7 @@ function lightOfPatch(group, strength, tracer, probeOffset, sceneSize) {
  */
 export function findSunBounceLights(parts, environment, { strength = 1, maximumLights = SUN_BOUNCE_PATCH_LIGHTS } = {}) {
   if (strength <= 0 || maximumLights <= 0 || !hasSun(environment) || parts.some(part => part.material?.lightMap || part.material?.irradianceGrid)) return [];
-  const share = fittedClosedRoomShare(parts, new Map(parts.map(part => [part.name, part.matrix])));
+  const share = fittedClosedRoomShare(parts, partMatrixLookup(parts));
   if (share === null || share < CLOSED_ROOM_SHARE) return [];
   const surfaces = parts.filter(isBounceSurface);
   const sun = sunOf(environment);

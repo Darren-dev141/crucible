@@ -30,6 +30,33 @@ test('smooth_by_angle marks bends over the angle sharp and the rest smooth, over
   assert.equal(cornerNormals(hard, { sharpAngle: degrees(120) }).groupCount, 24);
 });
 
+// A collinear triangle glued to a real one: the sliver has no normal of its own and stays in its own smooth group.
+function triangleWithSliver() {
+  return createMeshData({
+    positions: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0, 0]),
+    faceOffsets: Uint32Array.from([0, 3, 6]),
+    cornerVertices: Uint32Array.from([0, 1, 2, 1, 0, 3]),
+  });
+}
+
+test('weighted_normal gives a zero-area face the same +Z fallback corner normals use', () => {
+  const shaded = run(triangleWithSliver(), { op: 'weighted_normal', angle: 30, weight: 50 });
+  const data = shaded.attributes.corner.normal.data;
+  for (let corner = 0; corner < shaded.cornerCount; corner++) {
+    const length = Math.hypot(data[corner * 3], data[corner * 3 + 1], data[corner * 3 + 2]);
+    assert.ok(Math.abs(length - 1) < 1e-6, `corner ${corner} has a unit normal, got length ${length}`);
+  }
+});
+
+test('extractRender refuses a NaN, negative or oversized sharpAngle and accepts 180 degrees and Infinity', () => {
+  for (const sharpAngle of [Number.NaN, -0.5, 4, '30']) {
+    assert.throws(() => extractRender(cube(), { sharpAngle }), /sharpAngle is .*pass radians from 0 to .*deg \* Math\.PI \/ 180/, `sharpAngle ${sharpAngle}`);
+  }
+  for (const sharpAngle of [0, degrees(30), degrees(180), Infinity]) {
+    assert.doesNotThrow(() => extractRender(cube(), { sharpAngle }), `sharpAngle ${sharpAngle}`);
+  }
+});
+
 test('smooth_by_angle keeps hand-marked sharp edges unless told to ignore them', () => {
   const marked = run(cube(), { op: 'smooth_by_angle', angle: 100, ignoreSharp: true });
   const sharpData = Uint8Array.from(marked.attributes.edge.sharp.data);

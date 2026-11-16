@@ -247,3 +247,28 @@ test('input is validated with messages that say what to pass', () => {
   assert.throws(() => createRuntime(target, { scheduler, frame: 3 }), /frame must be a function/);
   assert.throws(() => createRuntime(target), /requestAnimationFrame/);
 });
+
+test('a system whose init threw is initialised again by the next start', () => {
+  let initCalls = 0;
+  const failingOnce = { name: 'late', init() { initCalls += 1; if (initCalls === 1) throw new Error('not ready'); }, update() {} };
+  const harness = createHarness({ mode: 'variable', systems: [failingOnce] });
+  assert.throws(() => harness.runtime.start(), /Runtime system "late" init failed: not ready/);
+  harness.runtime.start();
+  assert.equal(initCalls, 2);
+});
+
+test('one NaN reading from the clock does not stop time for good', () => {
+  let reading = 1000;
+  const log = [];
+  const harness = createHarness({ mode: 'variable', clock: () => reading, systems: [recorder('a', log)] });
+  harness.runtime.start();
+  harness.frame(0);
+  reading = Number.NaN;
+  harness.frame(0);
+  reading = 1100;
+  harness.frame(0);
+  reading = 1116;
+  harness.frame(0);
+  assert.ok(Number.isFinite(harness.runtime.stats.elapsedSeconds));
+  assert.ok(harness.runtime.stats.elapsedSeconds > 0.01);
+});

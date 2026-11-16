@@ -4,12 +4,38 @@ const SHADOW_VIEWS = {
   studio: { distance: 7.2, target: [0, 1, 0], extent: 3.5, near: 0.1, far: 15 },
 };
 
+// The fitted view covers the casters' bounding sphere with this much room to spare.
+const FIT_PADDING = 1.1;
+// The extent snaps up to a quarter octave and the target to an eighth of the extent, so a part that moves a little
+// keeps the same shadow view instead of making its shadow edges crawl.
+const EXTENT_STEPS_PER_OCTAVE = 4;
+const TARGET_STEPS_PER_EXTENT = 8;
+
+/**
+ * The world shadow view fitted to `bounds` (`{ minimum, maximum }` of the shadow casters), or null when the fixed
+ * world view is already as tight: the depth bias grows with the view, and the 130 m world view's bias (about 22 cm)
+ * let the sun through walls thinner than that (issue #1695). A scene as large as the fixed view keeps it unchanged.
+ * The far plane reaches well past the casters so a low sun still finds the ground their shadows fall on.
+ */
+export function fitWorldShadowView(bounds) {
+  if (!bounds) return null;
+  const size = bounds.maximum.map((value, axis) => value - bounds.minimum[axis]);
+  const radius = Math.hypot(size[0], size[1], size[2]) / 2;
+  if (!(radius > 0)) return null;
+  const extent = 2 ** (Math.ceil(Math.log2(radius * FIT_PADDING) * EXTENT_STEPS_PER_OCTAVE) / EXTENT_STEPS_PER_OCTAVE);
+  if (extent >= SHADOW_VIEWS.world.extent) return null;
+  const step = extent / TARGET_STEPS_PER_EXTENT;
+  const target = bounds.maximum.map((value, axis) => Math.round((value + bounds.minimum[axis]) / 2 / step) * step);
+  return { distance: extent * 2.4, target, extent, near: extent * 0.2, far: extent * 64 };
+}
+
 /**
  * The sun's shadow view for whatever `shadowBounds` leaves out. The eye sits on the sun's side of the target, so
- * shadows fall the way the shading says the light travels. A `shadowBounds.eye` still wins.
+ * shadows fall the way the shading says the light travels. A `shadowBounds.eye` still wins. `fittedView`, from
+ * fitWorldShadowView, replaces the fixed world view.
  */
-export function resolveShadowLight(world, lightDirection, shadowBounds = {}) {
-  const { distance, ...view } = SHADOW_VIEWS[world ? 'world' : 'studio'];
+export function resolveShadowLight(world, lightDirection, shadowBounds = {}, fittedView = null) {
+  const { distance, ...view } = fittedView ?? SHADOW_VIEWS[world ? 'world' : 'studio'];
   const target = shadowBounds.target ?? view.target;
   const requested = lightDirection ?? DEFAULT_SUN_DIRECTION;
   const direction = Math.hypot(requested[0], requested[1], requested[2]) > 1e-6 ? requested : DEFAULT_SUN_DIRECTION;

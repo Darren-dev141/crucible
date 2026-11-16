@@ -23,7 +23,14 @@ function transformFields(translation, rotation, scale) {
 export function decomposeMatrix(matrix) {
   const translation = mat4.getTranslation(vec3.create(), matrix);
   const scale = mat4.getScaling(vec3.create(), matrix);
-  const rotation = mat4.getRotation(quat.create(), matrix);
+  // A mirrored matrix (negative determinant) keeps its reflection as a negative x scale, so the rotation stays proper.
+  const mirrored = mat4.determinant(matrix) < 0;
+  const properMatrix = Float32Array.from(matrix);
+  if (mirrored) {
+    scale[0] = -scale[0];
+    for (let index = 0; index < 3; index++) properMatrix[index] = -properMatrix[index];
+  }
+  const rotation = mat4.getRotation(quat.create(), properMatrix);
   return transformFields(translation, rotation, scale);
 }
 
@@ -172,7 +179,17 @@ function trackOutput(track) {
 
 const GLTF_INTERPOLATION = { LINEAR: 'LINEAR', STEP: 'STEP', SMOOTH: 'CUBICSPLINE', CUBICSPLINE: 'CUBICSPLINE' };
 
+// glTF needs strictly increasing finite times and finite values of the path's width; anything else makes a file loaders reject or misread.
+function validateKeyframes(track) {
+  const keyframes = track.keyframes;
+  let previousTime = -Infinity;
+  const timesValid = keyframes?.length > 0 && keyframes.every(({ time }) => time > previousTime && Number.isFinite(previousTime = time));
+  const valuesValid = keyframes?.every(({ value }) => Array.from(value).every(Number.isFinite));
+  if (!timesValid || !valuesValid) throw new RangeError(`GLB ${track.property} track on ${track.target} needs keyframes with finite values and strictly increasing finite times.`);
+}
+
 function writeTrack(writer, animation, sourceTrack, nodeIndex) {
+  validateKeyframes(sourceTrack);
   const bakedKeyframes = bakeEasedKeyframes(sourceTrack, EASING_BAKE_STEPS_PER_SEGMENT);
   const track = bakedKeyframes === sourceTrack.keyframes ? sourceTrack : { ...sourceTrack, keyframes: bakedKeyframes, interpolation: 'LINEAR' };
   const path = GLTF_PATHS[track.property];

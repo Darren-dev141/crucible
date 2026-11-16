@@ -50,9 +50,9 @@ def grid_object(name, center, width, height, plane):
             builder.faces.new((vertices[first], vertices[first + 1], vertices[below + 1], vertices[below]))
     builder.to_mesh(mesh)
     builder.free()
-    obj = bpy.data.objects.new(name, mesh)
-    bpy.context.scene.collection.objects.link(obj)
-    return obj
+    cloth_object = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(cloth_object)
+    return cloth_object
 
 
 # Blender's default air damping of 1 is a drag of about 54 per second on a sheet this light (terminal speed 0.18 m/s,
@@ -61,11 +61,11 @@ AIR_DAMPING = 0.1
 EQUIVALENT_CRUCIBLE_DAMPING = 5.4
 
 
-def add_cloth(obj, pinned_indices, vertex_mass):
+def add_cloth(cloth_object, pinned_indices, vertex_mass):
     if pinned_indices:
-        group = obj.vertex_groups.new(name="pin")
+        group = cloth_object.vertex_groups.new(name="pin")
         group.add(pinned_indices, 1.0, "REPLACE")
-    modifier = obj.modifiers.new("Cloth", "CLOTH")
+    modifier = cloth_object.modifiers.new("Cloth", "CLOTH")
     settings = modifier.settings
     settings.quality = 8
     settings.mass = vertex_mass
@@ -82,12 +82,12 @@ def add_cloth(obj, pinned_indices, vertex_mass):
 HISTORY_FRAMES = (16, 31, 61, 91, 121, 181, 241, 361, 481)
 
 
-def vertex_positions(obj):
-    evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+def vertex_positions(cloth_object):
+    evaluated = cloth_object.evaluated_get(bpy.context.evaluated_depsgraph_get())
     return [[round(v.co.x, 5), round(v.co.z, 5), round(-v.co.y, 5)] for v in evaluated.data.vertices]
 
 
-def simulate(obj):
+def simulate(cloth_object):
     """Step every frame in order (the cloth cache needs that) and keep the positions at a few frames.
 
     The comparison frame is the one at SECONDS; the later frames show whether the bake has settled."""
@@ -96,7 +96,7 @@ def simulate(obj):
     for frame in range(scene.frame_start, scene.frame_end + 1):
         scene.frame_set(frame)
         if frame in HISTORY_FRAMES:
-            history[str(frame)] = vertex_positions(obj)
+            history[str(frame)] = vertex_positions(cloth_object)
     return {
         "positions": history[str(SECONDS * FRAMES_PER_SECOND + 1)],
         "history": history,

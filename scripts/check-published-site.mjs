@@ -15,17 +15,20 @@ const externalPattern = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
 // Written by `prepare:release`, `build-pack-index.mjs` or the browser at run time, and an example path in the guide.
 const generatedLinks = new Set(['/release.json', '/changelog.json', '/api-reference.json', './main.js']);
 
+// Only the guides the build copies count. A stale file from an older build is not served.
+function publishedTextNames() {
+  return ['llms.txt', 'guide.md', 'gltf.md', ...publishedDocuments.filter((document) => document.endsWith('.md'))];
+}
+
 function publishedTextFiles(root) {
-  const publicFolder = join(root, 'public');
-  const files = [];
-  const llms = join(publicFolder, 'llms.txt');
-  if (existsSync(llms)) files.push(llms);
-  // Only the guides the build copies count. A stale file from an older build is not served.
-  for (const name of ['guide.md', 'gltf.md', ...publishedDocuments.filter((document) => document.endsWith('.md'))]) {
-    const path = join(publicFolder, name);
-    if (existsSync(path)) files.push(path);
-  }
-  return files;
+  return publishedTextNames().map((name) => join(root, 'public', name)).filter((path) => existsSync(path));
+}
+
+// A file the build should have written but did not leaves nothing to scan, which must not read as zero problems.
+export function findMissingPublishedFiles(root) {
+  return publishedTextNames()
+    .filter((name) => !existsSync(join(root, 'public', name)))
+    .map((name) => `public/${name} is missing. Run \`npm run prepare:release\` to write it.`);
 }
 
 // Example code in a guide names paths of the reader's own project, such as /src/main.js.
@@ -94,8 +97,8 @@ if (isMain) {
     console.error('public/release.json is missing. Run `npm run prepare:release` first.');
     process.exit(1);
   }
-  const problems = [...findUnpublishedLinks(root), ...findMissingReleaseLinks(root)];
-  console.log(`${problems.length} links to files or releases the site does not serve`);
+  const problems = [...findMissingPublishedFiles(root), ...findUnpublishedLinks(root), ...findMissingReleaseLinks(root)];
+  console.log(`${problems.length} missing files, or links to files or releases the site does not serve`);
   for (const problem of problems) console.log(problem);
   if (problems.length > 0) {
     console.log('Fix: add the guide to scripts/published-documents.mjs or link it on GitHub instead; for a release link use <version> and read it from release.json.');

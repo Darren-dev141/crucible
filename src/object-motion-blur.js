@@ -57,9 +57,9 @@ void main() {
   outputColor = sum / ${MOTION_BLUR_SAMPLES}.0;
 }`;
 
-/** The world matrix of every part, by name, at this instant. Matrices are copied, so a later seek does not change them. */
+/** The world matrix of every part, keyed by the part itself (glTF parts often share a name), at this instant. Matrices are copied, so a later seek does not change them. */
 export function sampleWorldMatrices(parts) {
-  return new Map(parts.map(part => [part.name, mat4.clone(part.matrix)]));
+  return new Map(parts.map(part => [part, mat4.clone(part.matrix)]));
 }
 
 /**
@@ -67,15 +67,15 @@ export function sampleWorldMatrices(parts) {
  * A part with no matrix in `previous` or one that did not move keeps the identity, and so does a pixel of no object.
  */
 export function packObjectMotion(renderer, current, previous) {
-  const identifiers = renderer.batches.filter(batch => renderer.drawsInOpaqueLoop(batch)).flatMap(batch => batch.parts.map(part => part.name));
-  const rows = Math.max(1, Math.ceil(identifiers.length / MATRICES_PER_ROW));
+  const drawnParts = renderer.batches.filter(batch => renderer.drawsInOpaqueLoop(batch)).flatMap(batch => batch.parts);
+  const rows = Math.max(1, Math.ceil(drawnParts.length / MATRICES_PER_ROW));
   const matrices = new Float32Array(TEXTURE_WIDTH * rows * 4);
   const inverse = mat4.create();
   const delta = mat4.create();
-  identifiers.forEach((name, index) => {
+  drawnParts.forEach((part, index) => {
     const slot = matrices.subarray(index * 16, index * 16 + 16);
-    const now = current.get(name);
-    const before = previous.get(name);
+    const now = current.get(part);
+    const before = previous.get(part);
     // The texture upload is row-major with 256 matrices per row, so the matrix of ID n + 1 starts at float 16 * n.
     if (now && before && mat4.invert(inverse, now)) {
       mat4.multiply(delta, before, inverse);
@@ -84,8 +84,8 @@ export function packObjectMotion(renderer, current, previous) {
       slot.set(mat4.create());
     }
   });
-  for (let index = identifiers.length; index < MATRICES_PER_ROW * rows; index++) matrices.set(mat4.create(), index * 16);
-  return { matrices, rows, count: identifiers.length };
+  for (let index = drawnParts.length; index < MATRICES_PER_ROW * rows; index++) matrices.set(mat4.create(), index * 16);
+  return { matrices, rows, count: drawnParts.length };
 }
 
 function createObjectMotionStage() {

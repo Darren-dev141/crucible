@@ -15,7 +15,9 @@ import { createGridMedium, MAXIMUM_FOG_SCATTERS } from './grid-medium.js';
 // This module is optional. A scene without `bake.irradianceGrid` never loads it, and the renderer's only link to it is the
 // material field `irradianceGrid`, which batches parts by grid.
 
-export const IRRADIANCE_GRID_LIMITS = Object.freeze({ resolution: [8, 48], samples: [4, 128], bounces: [1, 8], maxNodes: 65536 });
+const MAXIMUM_GRID_NODES = 65536;
+// A grid of n nodes along the longest side can need n cubed nodes (a cubic scene), so the recipe takes at most the largest n whose cube fits the node cap: a value that passes recipe validation always fits the build.
+export const IRRADIANCE_GRID_LIMITS = Object.freeze({ resolution: [8, Math.floor(Math.cbrt(MAXIMUM_GRID_NODES))], samples: [4, 128], bounces: [1, 8], maxNodes: MAXIMUM_GRID_NODES });
 // `true` picks the cell size itself: at most this many nodes along the longest side and at most AUTO_NODE_BUDGET in all. The
 // budget keeps the trace inside the bake's time limit (20 s on the page's thread): a closed 68 m hall with 31,768 nodes took
 // 40 s, the bake was refused and the scene was drawn with no grid at all (temple-hall-b, FLIP 0.1535 against 0.1211 with a grid).
@@ -69,7 +71,7 @@ export function normalizeIrradianceGrid(input) {
   const resolution = input;
   const [minimum, maximum] = IRRADIANCE_GRID_LIMITS.resolution;
   if (!Number.isInteger(resolution) || resolution < minimum || resolution > maximum) {
-    throw new RangeError(`bake.irradianceGrid must be true or an integer node count from ${minimum} to ${maximum}.`);
+    throw new RangeError(`bake.irradianceGrid must be true or an integer node count from ${minimum} to ${maximum}; true picks up to 48 along the longest side within the node budget.`);
   }
   return resolution;
 }
@@ -216,6 +218,16 @@ function smoothNodes(data, valid, size, isConnected) {
   }
 }
 
+// A node count under 2 gives a cell size of infinity or less (nodes at NaN), and no samples divide the light by zero.
+function requireTraceSettings(resolution, samples) {
+  if (resolution !== true && !(Number.isInteger(resolution) && resolution >= 2)) {
+    throw new RangeError('The irradiance grid resolution must be true or a whole node count of at least 2 along the longest side.');
+  }
+  if (!Number.isInteger(samples) || samples < 1) {
+    throw new RangeError('The irradiance grid samples must be a whole number of at least 1.');
+  }
+}
+
 /**
  * Traces the grid. For each node, the cosine weighted light arriving along the six axis directions (the bake's gatherer:
  * emission and direct light at every hit, bounced over `bounces` reflections) becomes a first order fit per colour channel:
@@ -227,6 +239,7 @@ export function traceIrradianceGrid(parts, lighting, { resolution = true, sample
     throw new RangeError(`The irradiance grid takes from 1 to ${MAX_BAKE_PARTS} parts.`);
   }
   parts.forEach(validatePart);
+  requireTraceSettings(resolution, samples);
   const layout = gridLayout(parts, resolution);
   const nodeCount = layout.size[0] * layout.size[1] * layout.size[2];
   if (nodeCount > IRRADIANCE_GRID_LIMITS.maxNodes) {

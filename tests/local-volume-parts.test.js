@@ -24,8 +24,8 @@ function lPrism() {
   for (const height of [0, 1]) for (const [x, z] of outline) positions.push(x, height, z);
   const indices = [];
   const top = outline.length;
-  for (const [a, b, c, d] of [[0, 1, 4, 7], [1, 2, 3, 4], [7, 4, 5, 6]]) {
-    indices.push(a, b, c, a, c, d, top + a, top + c, top + b, top + a, top + d, top + c);
+  for (const [firstCorner, secondCorner, thirdCorner, fourthCorner] of [[0, 1, 4, 7], [1, 2, 3, 4], [7, 4, 5, 6]]) {
+    indices.push(firstCorner, secondCorner, thirdCorner, firstCorner, thirdCorner, fourthCorner, top + firstCorner, top + thirdCorner, top + secondCorner, top + firstCorner, top + fourthCorner, top + thirdCorner);
   }
   for (let corner = 0; corner < outline.length; corner++) {
     const next = (corner + 1) % outline.length;

@@ -248,7 +248,8 @@ export class CascadedShadows {
     const corners = frustumCorners(renderer.inverseViewProjection);
     const nearDistance = viewDepthOf(corners[0], renderer.view);
     const planeFarDistance = viewDepthOf(corners[4], renderer.view);
-    const farDistance = Math.min(planeFarDistance, this.maximumDistance);
+    // A maximum distance nearer than the camera near plane would put the splits in front of the camera and out of order.
+    const farDistance = Math.max(Math.min(planeFarDistance, this.maximumDistance), nearDistance);
     const splits = cascadeSplitDistances(this.count, nearDistance, farDistance, this.splitLambda);
     const planeSpan = planeFarDistance - nearDistance;
     let previousFraction = 0;

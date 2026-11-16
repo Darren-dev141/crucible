@@ -167,8 +167,11 @@ test('GLB defaults remain dark without extensions and active emission preserves 
     part.material.emission = emission;
     const binary = exportGlb([part]);
     const { document } = glbDocument(binary);
-    assert.deepEqual(document.materials[0].emissiveFactor, emission ? part.material.color : [0, 0, 0]);
-    assert.equal(Boolean(document.extensionsUsed), Boolean(emission && emission !== 1));
+    // Below 1 the strength is folded into the factor, because emissiveStrength may not be under 1.
+    const factorScale = emission < 1 ? emission : 1;
+    const expectedFactor = emission ? part.material.color.map(channel => channel * factorScale) : [0, 0, 0];
+    document.materials[0].emissiveFactor.forEach((channel, index) => assert.ok(Math.abs(channel - expectedFactor[index]) < 1e-6));
+    assert.equal(Boolean(document.extensionsUsed), emission > 1);
     const loaded = await new GLTFLoader().parseAsync(binary, '');
     const material = loaded.scene.children[0].material;
     assert.equal(material.emissive.r * material.emissiveIntensity, part.material.color[0] * (emission ?? 0));

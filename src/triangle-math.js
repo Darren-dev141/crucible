@@ -211,7 +211,8 @@ export function trianglesIntersect(first, second, segment = null) {
   const secondDistances = planeDistances(second, firstNormal, first);
   if (onOneSide(firstDistances) || onOneSide(secondDistances)) return false;
   if (segment) segment.fill(0);
-  if (firstDistances.every(distance => distance === 0)) return coplanarTrianglesOverlap(first, second, firstNormal);
+  // A zero area triangle has no normal, so the other triangle supplies the plane its edge axes are built from.
+  if (firstDistances.every(distance => distance === 0)) return coplanarTrianglesOverlap(first, second, firstNormal.some(Boolean) ? firstNormal : secondNormal);
   const direction = [
     firstNormal[1] * secondNormal[2] - firstNormal[2] * secondNormal[1],
     firstNormal[2] * secondNormal[0] - firstNormal[0] * secondNormal[2],

@@ -6,6 +6,7 @@ import { exportGlb } from '../src/export.js';
 import { parseGltf } from '../src/gltf.js';
 import { box } from '../src/geometry.js';
 import { createAgentAssetScene } from '../src/agent-asset.js';
+import { normalizeMeshEditEntries } from '../src/agent-asset-mesh.js';
 import { loadMeshBooleans } from '../src/agent-scene.js';
 import { importedMeshReport } from '../src/agent-mesh-engine.js';
 import { validateSkinGeometry } from '../src/skinning.js';
@@ -220,12 +221,13 @@ test('hostile mesh edits are rejected without changing the scene', async () => {
   asset.dispose();
 });
 
-function uvBoxGlb() {
+function uvBoxGlb(normalizeToBounds = false) {
   const geometry = box(0, 1);
   const uvs = new Float32Array(geometry.positions.length / 3 * 2);
   for (let vertex = 0; vertex < geometry.positions.length / 3; vertex++) {
-    uvs[vertex * 2] = geometry.positions[vertex * 3] * 0.5 + 0.5;
-    uvs[vertex * 2 + 1] = geometry.positions[vertex * 3 + 2] * 0.5 + 0.5;
+    const scale = normalizeToBounds ? 1 : 0.5;
+    uvs[vertex * 2] = geometry.positions[vertex * 3] * scale + 0.5;
+    uvs[vertex * 2 + 1] = geometry.positions[vertex * 3 + 2] * scale + 0.5;
   }
   const part = { name: 'Crate', geometry: { ...geometry, uvs }, matrix: mat4.create(), material: { color: [1, 1, 1], metallic: 0, roughness: 1 } };
   return exportGlb([part]);
@@ -245,6 +247,20 @@ test('UVs survive an edit, and faces an edit leaves without UVs read the nearest
   }
   assert.ok(zero < edited.uvs.length / 2 / 4, `${zero} vertices kept the empty 0,0 UV`);
   assert.ok(scene.inspectMeshes({ geometries: ['mesh-0'] }).meshes[0].transfer.uvFacesRebuilt > 0);
+  asset.dispose();
+});
+
+test('a face with a real UV at 0,0 keeps its UVs through an edit that does not touch it', async () => {
+  const asset = await parseGltf(uvBoxGlb(true));
+  const scene = createScene(asset);
+  const before =Array.from(partOf(scene, 'mesh-0').geometry.uvs);
+  const cornerAtOrigin = before.some((value, index) => index % 2 === 0 && value === 0 && before[index + 1] === 0);
+  assert.ok(cornerAtOrigin, 'the fixture has a corner at UV 0,0');
+  applyEdits(scene, 'mesh-0', [{ op: 'delete', select: { tag: 'top' } }]);
+  assert.equal(scene.inspectMeshes({ geometries: ['mesh-0'] }).meshes[0].transfer.uvFacesRebuilt, 0);
+  const after = Array.from(partOf(scene, 'mesh-0').geometry.uvs);
+  const afterCornerAtOrigin = after.some((value, index) => index % 2 === 0 && value === 0 && after[index + 1] === 0);
+  assert.ok(afterCornerAtOrigin, 'the corner at UV 0,0 survived');
   asset.dispose();
 });
 
@@ -285,4 +301,12 @@ test('inspect accepts a source-node ID and lists its parts and those of the node
   assert.ok(joint, 'the rigged robot has a joint with no mesh below it');
   assert.equal(scene.inspect({ ids: [joint.id] }).nodes[0].joint, true);
   assert.throws(() => scene.inspect({ ids: ['nothing-here'] }), /^RangeError: geometry: got "nothing-here"; expected an imported mesh ID such as "mesh-0"/);
+});
+
+test('a meshEdits entry that is not an object is reported as that entry', () => {
+  const records = [{ id: TORSO }];
+  for (const entry of ['abc', 7, ['id'], null]) {
+    assert.throws(() => normalizeMeshEditEntries([entry], records), error => /^meshEdits\[0\]: got /.test(error.message));
+  }
+  assert.throws(() => normalizeMeshEditEntries([{ id: TORSO, edits: [], stack: [] }], records), /meshEdits\[0\]\.stack/);
 });

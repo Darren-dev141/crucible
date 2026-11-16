@@ -31,5 +31,7 @@ body .controls, body .landscape-controls { background:#17161ae8; border:1px soli
 .demo-presets { display:flex; flex-wrap:wrap; gap:6px; margin:12px 0; }
 .demo-presets button { padding:7px 10px; font-size:12px; }
 @media (max-width:700px) { .studio-nav, .world-header nav { flex-wrap:wrap; } .brand .brand-mark { width:28px; height:28px; margin-right:8px; } }
-/* The Crucible wordmark: lowercase Fredoka SemiBold beside the pot mark, on every page (brand kit rule 8). */
-body a.brand { font-family:"Fredoka",system-ui,sans-serif; font-weight:600; letter-spacing:-0.01em; text-transform:lowercase; }
+/* The Crucible wordmark: lowercase Plus Jakarta Sans Bold beside the pot mark, on every page (brand kit rule 8). */
+body a.brand { font-family:"Plus Jakarta Sans",system-ui,sans-serif; font-weight:700; letter-spacing:-0.035em; text-transform:lowercase; }
+/* On a dark ground the mark's body and dark side are lighter (brand kit): pages that are dark by default, and the branded pages when the visitor picks dark. */
+body:not(.site) .brand .brand-mark, :root[data-color="dark"] .site .brand .brand-mark { content:url('/brand/crucible-mark-dark.svg'); }

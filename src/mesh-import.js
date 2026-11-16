@@ -125,11 +125,12 @@ function boundsDiagonal(positions) {
   return Math.hypot(maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2]);
 }
 
-function hasZeroUv(uv, start, end) {
+/** A face has no UVs when every corner sits at 0,0; one corner there is a real texture corner. */
+function hasOnlyZeroUv(uv, start, end) {
   for (let corner = start; corner < end; corner++) {
-    if (uv.data[corner * 2] === 0 && uv.data[corner * 2 + 1] === 0) return true;
+    if (uv.data[corner * 2] !== 0 || uv.data[corner * 2 + 1] !== 0) return false;
   }
-  return false;
+  return true;
 }
 
 /**
@@ -148,7 +149,7 @@ function rebuildMissingUvs(mesh, source, sampler) {
   for (let face = 0; face < mesh.faceCount; face++) {
     const start = mesh.faceOffsets[face];
     const end = mesh.faceOffsets[face + 1];
-    if (existing && !hasZeroUv(existing, start, end)) continue;
+    if (existing && !hasOnlyZeroUv(existing, start, end)) continue;
     let centreX = 0;
     let centreY = 0;
     let centreZ = 0;

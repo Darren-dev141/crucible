@@ -75,13 +75,13 @@ function sampleLinear(track, interval, time, result, size, isRotation) {
 function sampleCubic(track, interval, time, result, size, isRotation) {
   const t0 = track.times[interval];
   const delta = track.times[interval + 1] - t0;
-  const p = (time - t0) / delta;
-  const pp = p * p;
-  const ppp = pp * p;
+  const progress = (time - t0) / delta;
+  const pp = progress * progress;
+  const ppp = pp * progress;
   const blendEnd = -2 * ppp + 3 * pp;
   const blendEndTangent = ppp - pp;
   const blendStart = 1 - blendEnd;
-  const blendStartTangent = blendEndTangent - pp + p;
+  const blendStartTangent = blendEndTangent - pp + progress;
   const stride = size * 3;
   const first = interval * stride;
   const second = (interval + 1) * stride;
