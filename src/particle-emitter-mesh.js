@@ -36,11 +36,11 @@ function trianglesOf(positions, indices, weights) {
   for (let offset = 0; offset + 2 < indices.length; offset += 3) {
     const a = corner(positions, indices[offset]);
     const b = corner(positions, indices[offset + 1]);
-    const c = corner(positions, indices[offset + 2]);
-    const faceVector = crossProduct(subtract(b, a), subtract(c, a));
+    const thirdCorner = corner(positions, indices[offset + 2]);
+    const faceVector = crossProduct(subtract(b, a), subtract(thirdCorner, a));
     const doubleArea = Math.hypot(faceVector[0], faceVector[1], faceVector[2]);
     const groupWeight = weights ? (weights[indices[offset]] + weights[indices[offset + 1]] + weights[indices[offset + 2]]) / 3 : 1;
-    triangles.push({ a, b, c, doubleArea, emitWeight: doubleArea * groupWeight, normal: doubleArea > 0 ? faceVector.map(component => component / doubleArea) : [0, 1, 0] });
+    triangles.push({ a, b, c: thirdCorner, doubleArea, emitWeight: doubleArea * groupWeight, normal: doubleArea > 0 ? faceVector.map(component => component / doubleArea) : [0, 1, 0] });
   }
   return triangles;
 }

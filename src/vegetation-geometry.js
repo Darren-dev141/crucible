@@ -241,14 +241,14 @@ export function addLeafSurface(builder, surface) {
       for (let column = 0; column < columns.length - 1; column++) {
         const a = rowIndices[row][column];
         const b = rowIndices[row][column + 1];
-        const c = rowIndices[row + 1][column];
-        const d = rowIndices[row + 1][column + 1];
+        const belowLeft = rowIndices[row + 1][column];
+        const belowRight = rowIndices[row + 1][column + 1];
         if (front) {
-          builder.addTriangle(a, b, c);
-          builder.addTriangle(b, d, c);
+          builder.addTriangle(a, b, belowLeft);
+          builder.addTriangle(b, belowRight, belowLeft);
         } else {
-          builder.addTriangle(a, c, b);
-          builder.addTriangle(b, c, d);
+          builder.addTriangle(a, belowLeft, b);
+          builder.addTriangle(b, belowLeft, belowRight);
         }
       }
     }

@@ -127,9 +127,9 @@ function particleAreas(positions, triangles, particleCount) {
 function triangleNormal(positions, first, second, third, normal) {
   const a = first * 3;
   const b = second * 3;
-  const c = third * 3;
+  const thirdVertexOffset = third * 3;
   const edgeOne = [positions[b] - positions[a], positions[b + 1] - positions[a + 1], positions[b + 2] - positions[a + 2]];
-  const edgeTwo = [positions[c] - positions[a], positions[c + 1] - positions[a + 1], positions[c + 2] - positions[a + 2]];
+  const edgeTwo = [positions[thirdVertexOffset] - positions[a], positions[thirdVertexOffset + 1] - positions[a + 1], positions[thirdVertexOffset + 2] - positions[a + 2]];
   const x = edgeOne[1] * edgeTwo[2] - edgeOne[2] * edgeTwo[1];
   const y = edgeOne[2] * edgeTwo[0] - edgeOne[0] * edgeTwo[2];
   const z = edgeOne[0] * edgeTwo[1] - edgeOne[1] * edgeTwo[0];

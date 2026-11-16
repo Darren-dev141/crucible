@@ -77,3 +77,8 @@ test('the add-on python tests run only when a file under packages/blender-addon/
   const checks = planChecks(['packages/blender-addon/cook_blender/blender_conversions.py', 'changes/1.md']);
   assert.equal(checkNamed(checks, 'add-on python tests').skipped, null);
 });
+
+test('the names check runs for a changed source file and is skipped for docs', () => {
+  assert.equal(checkNamed(planChecks(['src/camera.js']), 'names').skipped, null);
+  assert.match(checkNamed(planChecks(['docs/guide.md']), 'names').skipped, /no scanned source/);
+});

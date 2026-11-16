@@ -351,24 +351,24 @@ function rasterizeTopSurface(positions, indices, bounds, size, columns, rows, he
   for (let offset = 0; offset < indices.length; offset += 3) {
     const a = indices[offset] * 3;
     const b = indices[offset + 1] * 3;
-    const c = indices[offset + 2] * 3;
+    const thirdVertexOffset = indices[offset + 2] * 3;
     const ax = positions[a];
     const az = positions[a + 2];
-    const determinant = (positions[b + 2] - positions[c + 2]) * (ax - positions[c]) + (positions[c] - positions[b]) * (az - positions[c + 2]);
+    const determinant = (positions[b + 2] - positions[thirdVertexOffset + 2]) * (ax - positions[thirdVertexOffset]) + (positions[thirdVertexOffset] - positions[b]) * (az - positions[thirdVertexOffset + 2]);
     if (Math.abs(determinant) < 1e-12) continue;
-    const minimumColumn = Math.max(0, Math.floor((Math.min(ax, positions[b], positions[c]) - bounds.minimumX) / size - 0.5));
-    const maximumColumn = Math.min(columns - 1, Math.ceil((Math.max(ax, positions[b], positions[c]) - bounds.minimumX) / size));
-    const minimumRow = Math.max(0, Math.floor((Math.min(az, positions[b + 2], positions[c + 2]) - bounds.minimumZ) / size - 0.5));
-    const maximumRow = Math.min(rows - 1, Math.ceil((Math.max(az, positions[b + 2], positions[c + 2]) - bounds.minimumZ) / size));
+    const minimumColumn = Math.max(0, Math.floor((Math.min(ax, positions[b], positions[thirdVertexOffset]) - bounds.minimumX) / size - 0.5));
+    const maximumColumn = Math.min(columns - 1, Math.ceil((Math.max(ax, positions[b], positions[thirdVertexOffset]) - bounds.minimumX) / size));
+    const minimumRow = Math.max(0, Math.floor((Math.min(az, positions[b + 2], positions[thirdVertexOffset + 2]) - bounds.minimumZ) / size - 0.5));
+    const maximumRow = Math.min(rows - 1, Math.ceil((Math.max(az, positions[b + 2], positions[thirdVertexOffset + 2]) - bounds.minimumZ) / size));
     for (let row = minimumRow; row <= maximumRow; row++) {
       for (let column = minimumColumn; column <= maximumColumn; column++) {
         const x = bounds.minimumX + (column + 0.5) * size;
         const z = bounds.minimumZ + (row + 0.5) * size;
-        const weightA = ((positions[b + 2] - positions[c + 2]) * (x - positions[c]) + (positions[c] - positions[b]) * (z - positions[c + 2])) / determinant;
-        const weightB = ((positions[c + 2] - az) * (x - positions[c]) + (ax - positions[c]) * (z - positions[c + 2])) / determinant;
+        const weightA = ((positions[b + 2] - positions[thirdVertexOffset + 2]) * (x - positions[thirdVertexOffset]) + (positions[thirdVertexOffset] - positions[b]) * (z - positions[thirdVertexOffset + 2])) / determinant;
+        const weightB = ((positions[thirdVertexOffset + 2] - az) * (x - positions[thirdVertexOffset]) + (ax - positions[thirdVertexOffset]) * (z - positions[thirdVertexOffset + 2])) / determinant;
         const weightC = 1 - weightA - weightB;
         if (weightA < -EDGE_TOLERANCE || weightB < -EDGE_TOLERANCE || weightC < -EDGE_TOLERANCE) continue;
-        const height = weightA * positions[a + 1] + weightB * positions[b + 1] + weightC * positions[c + 1];
+        const height = weightA * positions[a + 1] + weightB * positions[b + 1] + weightC * positions[thirdVertexOffset + 1];
         const cell = row * columns + column;
         if (height > heights[cell]) heights[cell] = height;
       }

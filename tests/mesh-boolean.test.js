@@ -12,14 +12,14 @@ await loadMeshBooleans();
 
 function signedVolume(mesh) {
   let volume = 0;
-  const p = mesh.positions;
+  const positions = mesh.positions;
   for (let face = 0; face < mesh.faceCount; face++) {
     const start = mesh.faceOffsets[face];
     const a = mesh.cornerVertices[start] * 3;
     for (let corner = start + 1; corner + 1 < mesh.faceOffsets[face + 1]; corner++) {
       const b = mesh.cornerVertices[corner] * 3;
-      const c = mesh.cornerVertices[corner + 1] * 3;
-      volume += (p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1]) + p[a + 1] * (p[b + 2] * p[c] - p[b] * p[c + 2]) + p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c])) / 6;
+      const thirdVertexOffset = mesh.cornerVertices[corner + 1] * 3;
+      volume += (positions[a] * (positions[b + 1] * positions[thirdVertexOffset + 2] - positions[b + 2] * positions[thirdVertexOffset + 1]) + positions[a + 1] * (positions[b + 2] * positions[thirdVertexOffset] - positions[b] * positions[thirdVertexOffset + 2]) + positions[a + 2] * (positions[b] * positions[thirdVertexOffset + 1] - positions[b + 1] * positions[thirdVertexOffset])) / 6;
     }
   }
   return volume;

@@ -47,7 +47,7 @@ def main() -> None:
         panel(load_picture(bench_directory / "receding-reference.f32", width, height), f"reference, {metrics['receding']['referenceSamples']} spp, mips off"),
     ]
     gap = 4
-    sheet = Image.new("RGB", (sum(p.width for p in panels) + gap * (len(panels) - 1), panels[0].height), (255, 255, 255))
+    sheet = Image.new("RGB", (sum(panel.width for panel in panels) + gap * (len(panels) - 1), panels[0].height), (255, 255, 255))
     cursor = 0
     for each in panels:
         sheet.paste(each, (cursor, 0))

@@ -344,17 +344,17 @@ export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile: reque
     const controlCA = curveControl(vertex, cornerC, cornerA);
     const grid = new Map();
     const pointAt = (a, b) => {
-      const c = segments - a - b;
+      const thirdSegments = segments - a - b;
       const key = `${a},${b}`;
       if (grid.has(key)) return grid.get(key);
       let point;
-      if (c === 0) point = first[b];
-      else if (a === 0) point = second[c];
+      if (thirdSegments === 0) point = first[b];
+      else if (a === 0) point = second[thirdSegments];
       else if (b === 0) point = third[a];
       else {
         const u = a / segments;
         const v = b / segments;
-        const w = c / segments;
+        const w = thirdSegments / segments;
         let position = scale(positionA, u * u);
         position = add(position, scale(positionB, v * v));
         position = add(position, scale(positionC, w * w));

@@ -74,16 +74,16 @@ function matricesEqual(first, second) {
 
 /** The inverse of a column major matrix whose last row is 0 0 0 1 (rotation, scale and translation), or null when it is singular. */
 export function invertAffine(matrix) {
-  const [a, d, g, , b, e, h, , c, f, i, , x, y, z] = matrix;
-  const cofactorA = e * i - f * h;
-  const cofactorB = f * g - d * i;
-  const cofactorC = d * h - e * g;
-  const determinant = a * cofactorA + b * cofactorB + c * cofactorC;
+  const [r0c0, r1c0, r2c0, , r0c1, r1c1, r2c1, , r0c2, r1c2, r2c2, , x, y, z] = matrix;
+  const cofactorA = r1c1 * r2c2 - r1c2 * r2c1;
+  const cofactorB = r1c2 * r2c0 - r1c0 * r2c2;
+  const cofactorC = r1c0 * r2c1 - r1c1 * r2c0;
+  const determinant = r0c0 * cofactorA + r0c1 * cofactorB + r0c2 * cofactorC;
   if (!(Math.abs(determinant) > 1e-12)) return null;
   const inverse3 = [
-    cofactorA, c * h - b * i, b * f - c * e,
-    cofactorB, a * i - c * g, c * d - a * f,
-    cofactorC, b * g - a * h, a * e - b * d,
+    cofactorA, r0c2 * r2c1 - r0c1 * r2c2, r0c1 * r1c2 - r0c2 * r1c1,
+    cofactorB, r0c0 * r2c2 - r0c2 * r2c0, r0c2 * r1c0 - r0c0 * r1c2,
+    cofactorC, r0c1 * r2c0 - r0c0 * r2c1, r0c0 * r1c1 - r0c1 * r1c0,
   ].map(value => value / determinant);
   const translation = [0, 1, 2].map(row => -(inverse3[row * 3] * x + inverse3[row * 3 + 1] * y + inverse3[row * 3 + 2] * z));
   return [

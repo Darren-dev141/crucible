@@ -111,20 +111,20 @@ export function skinnedGeometry(part) {
 
 /** Normal matrix (cofactors of the upper 3x3, signed so that mirrored parts keep outward normals), row major. */
 function normalMatrix(matrix) {
-  const [a, b, c, , d, e, f, , g, h, i] = matrix;
+  const [r0c0, r1c0, r2c0, , r0c1, r1c1, r2c1, , r0c2, r1c2, r2c2] = matrix;
   const cofactors = [
-    e * i - f * h, f * g - d * i, d * h - e * g,
-    c * h - b * i, a * i - c * g, b * g - a * h,
-    b * f - c * e, c * d - a * f, a * e - b * d,
+    r1c1 * r2c2 - r2c1 * r1c2, r2c1 * r0c2 - r0c1 * r2c2, r0c1 * r1c2 - r1c1 * r0c2,
+    r2c0 * r1c2 - r1c0 * r2c2, r0c0 * r2c2 - r2c0 * r0c2, r1c0 * r0c2 - r0c0 * r1c2,
+    r1c0 * r2c1 - r2c0 * r1c1, r2c0 * r0c1 - r0c0 * r2c1, r0c0 * r1c1 - r1c0 * r0c1,
   ];
-  const sign = a * cofactors[0] + b * cofactors[1] + c * cofactors[2] < 0 ? -1 : 1;
+  const sign = r0c0 * cofactors[0] + r1c0 * cofactors[1] + r2c0 * cofactors[2] < 0 ? -1 : 1;
   return cofactors.map(value => value * sign);
 }
 
 /** True when the matrix mirrors (negative determinant of its upper 3x3), which turns every triangle inside out. */
 function mirrorsGeometry(matrix) {
-  const [a, b, c, , d, e, f, , g, h, i] = matrix;
-  return a * (e * i - f * h) + b * (f * g - d * i) + c * (d * h - e * g) < 0;
+  const [r0c0, r1c0, r2c0, , r0c1, r1c1, r2c1, , r0c2, r1c2, r2c2] = matrix;
+  return r0c0 * (r1c1 * r2c2 - r2c1 * r1c2) + r1c0 * (r2c1 * r0c2 - r0c1 * r2c2) + r2c0 * (r0c1 * r1c2 - r1c1 * r0c2) < 0;
 }
 
 function srgbToLinearTable() {

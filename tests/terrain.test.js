@@ -101,9 +101,9 @@ test('triangles face up and normals are unit length and smooth', () => {
   const terrain = createTerrain(SMALL);
   const { positions, normals, indices } = terrain.parts[0].geometry;
   for (let triangle = 0; triangle < indices.length; triangle += 3) {
-    const [a, b, c] = [0, 1, 2].map(offset => indices[triangle + offset] * 3);
-    const edgeOne = [positions[b] - positions[a], positions[b + 2] - positions[a + 2]];
-    const edgeTwo = [positions[c] - positions[a], positions[c + 2] - positions[a + 2]];
+    const [firstOffset, secondOffset, thirdOffset] = [0, 1, 2].map(offset => indices[triangle + offset] * 3);
+    const edgeOne = [positions[secondOffset] - positions[firstOffset], positions[secondOffset + 2] - positions[firstOffset + 2]];
+    const edgeTwo = [positions[thirdOffset] - positions[firstOffset], positions[thirdOffset + 2] - positions[firstOffset + 2]];
     assert.ok(edgeOne[1] * edgeTwo[0] - edgeOne[0] * edgeTwo[1] > 0);
   }
   for (let vertex = 0; vertex < normals.length; vertex += 3) {

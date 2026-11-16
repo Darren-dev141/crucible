@@ -51,7 +51,7 @@ test('a room with a bake, a room with its roof off and a lone solid get no close
 
 test('the ray test counts only inner faces: a room is closed, a solid around the centre is not', () => {
   const matrices = parts => new Map(parts.map(part => [part.name, new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])]));
-  const triangle = (a, b, c) => ({ positions: new Float32Array([...a, ...b, ...c]), indices: new Uint32Array([0, 1, 2]) });
+  const triangle = (firstCorner, secondCorner, thirdCorner) => ({ positions: new Float32Array([...firstCorner, ...secondCorner, ...thirdCorner]), indices: new Uint32Array([0, 1, 2]) });
   // Two large triangles on opposite sides of the centre, wound to face it or to face away from it.
   const facingCentre = [
     { name: 'near', geometry: triangle([-9, -9, -5], [9, -9, -5], [0, 9, -5]) },

@@ -105,27 +105,27 @@ export function findLockedVertices(indices, vertexCount) {
 }
 
 // A quadric is the symmetric 4x4 matrix of a plane sum, stored as ten numbers: aa ab ac ad bb bc bd cc cd dd.
-function addPlane(quadrics, vertex, nx, ny, nz, d) {
+function addPlane(quadrics, vertex, nx, ny, nz, planeOffset) {
   const base = vertex * 10;
   quadrics[base] += nx * nx;
   quadrics[base + 1] += nx * ny;
   quadrics[base + 2] += nx * nz;
-  quadrics[base + 3] += nx * d;
+  quadrics[base + 3] += nx * planeOffset;
   quadrics[base + 4] += ny * ny;
   quadrics[base + 5] += ny * nz;
-  quadrics[base + 6] += ny * d;
+  quadrics[base + 6] += ny * planeOffset;
   quadrics[base + 7] += nz * nz;
-  quadrics[base + 8] += nz * d;
-  quadrics[base + 9] += d * d;
+  quadrics[base + 8] += nz * planeOffset;
+  quadrics[base + 9] += planeOffset * planeOffset;
 }
 
 function quadricError(quadrics, first, second, x, y, z) {
   const a = first * 10;
   const b = second * 10;
-  const q = index => quadrics[a + index] + quadrics[b + index];
-  const value = q(0) * x * x + 2 * q(1) * x * y + 2 * q(2) * x * z + 2 * q(3) * x
-    + q(4) * y * y + 2 * q(5) * y * z + 2 * q(6) * y
-    + q(7) * z * z + 2 * q(8) * z + q(9);
+  const summedQuadricTerm = index => quadrics[a + index] + quadrics[b + index];
+  const value = summedQuadricTerm(0) * x * x + 2 * summedQuadricTerm(1) * x * y + 2 * summedQuadricTerm(2) * x * z + 2 * summedQuadricTerm(3) * x
+    + summedQuadricTerm(4) * y * y + 2 * summedQuadricTerm(5) * y * z + 2 * summedQuadricTerm(6) * y
+    + summedQuadricTerm(7) * z * z + 2 * summedQuadricTerm(8) * z + summedQuadricTerm(9);
   return Math.max(0, value);
 }
 
@@ -147,8 +147,8 @@ function buildQuadrics(positions, indices, vertexCount) {
     nx /= doubleArea;
     ny /= doubleArea;
     nz /= doubleArea;
-    const d = -(nx * positions[first * 3] + ny * positions[first * 3 + 1] + nz * positions[first * 3 + 2]);
-    for (const vertex of [first, second, third]) addPlane(quadrics, vertex, nx, ny, nz, d);
+    const planeDistance = -(nx * positions[first * 3] + ny * positions[first * 3 + 1] + nz * positions[first * 3 + 2]);
+    for (const vertex of [first, second, third]) addPlane(quadrics, vertex, nx, ny, nz, planeDistance);
   }
   return quadrics;
 }
@@ -194,8 +194,8 @@ class Collapser {
   }
 
   pushCollapse(removed, kept) {
-    const p = this.positions;
-    const cost = quadricError(this.quadrics, removed, kept, p[kept * 3], p[kept * 3 + 1], p[kept * 3 + 2]);
+    const positions = this.positions;
+    const cost = quadricError(this.quadrics, removed, kept, positions[kept * 3], positions[kept * 3 + 1], positions[kept * 3 + 2]);
     this.heap.push({ cost, removed, kept, removedVersion: this.versions[removed], keptVersion: this.versions[kept] });
   }
 

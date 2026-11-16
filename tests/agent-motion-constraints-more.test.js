@@ -186,7 +186,7 @@ test('maintain_volume, damped_track, pivot, follow_path, clamp_to, shrinkwrap an
     },
   });
   armScene.sampleMotion(1);
-  assertClose(translationOf(armScene.parts.find(p => p.name === 'owner').matrix), [3, 1, 0], 'armature weighted blend');
+  assertClose(translationOf(armScene.parts.find(part => part.name === 'owner').matrix), [3, 1, 0], 'armature weighted blend');
 
   // floor useRotation and transformation mix
   const tiltedFloor = { id: 'target', translation: [0, 0, 0], rotation: Array.from(quaternionFromEuler(new Float64Array(4), 0, 0, -45 * DEGREES)) };
