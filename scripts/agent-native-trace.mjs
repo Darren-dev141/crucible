@@ -9,7 +9,7 @@ import { estimateRelativeNoise } from '../src/path-tracer-denoise.js';
 import { requireExportFitsCapacity } from './native-capacity.mjs';
 import { mapLookToCookPost } from './native-post-look.mjs';
 import { encodeOpaquePng } from './native-png.mjs';
-import { NATIVE_JOB_MAXIMUM_INSTANCES, NATIVE_JOB_MAXIMUM_TRIANGLES } from './native-bake-page.js';
+import { NATIVE_JOB_MAXIMUM_INSTANCES, NATIVE_JOB_MAXIMUM_TRIANGLES, chunkedTriangleBound } from './native-bake-page.js';
 
 // The name sits in a variable so the bundler leaves the import alone; the package resolves from the user's node_modules.
 const NATIVE_PACKAGE = '@codepawlhq/cook';
@@ -147,7 +147,8 @@ export async function collectExportChunks(manifest, readChunk, { capacity } = {}
  * readNativeCapacity) makes a scene the adapter cannot hold fail before its tables are read.
  */
 export async function fetchNativeExport(page, input, { capacity } = {}) {
-  const manifest = await page.evaluate(request => window.__agentPreview.exportNativeScene(request), { ...input, chunked: true });
+  const maximumTriangles = chunkedTriangleBound(capacity?.maxUniqueTriangles);
+  const manifest = await page.evaluate(request => window.__agentPreview.exportNativeScene(request), { ...input, chunked: true, maximumTriangles });
   try {
     return await collectExportChunks(manifest, (name, offset) => page.evaluate(request => window.__agentPreview.readNativeExportChunk(request), { name, offset }), { capacity });
   } finally {

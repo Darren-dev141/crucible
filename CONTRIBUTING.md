@@ -23,9 +23,18 @@ The tests are in `tests/` and the guides are in `docs/`.
 3. Fork the repository (`gh repo fork codepawl/crucible --clone`) and create a branch from `main` named `<issue>-<short-slug>`, such as `412-mesh-bevel`.
 4. Write the change and its tests in the same commit, and update the guide in `docs/` that describes the feature.
 5. Add a change note (see [Change notes](#change-notes)). Do not edit `CHANGELOG.md`: two pull requests that edit it conflict on GitHub.
-6. Run `npm run preflight`, then push and open a pull request. The template asks what changed and how you checked it.
+6. Run `npm run preflight`, then open the pull request with `node scripts/open-pr.mjs` (see [Open the pull request](#open-the-pull-request)). The template asks what changed and how you checked it.
 
 Name the pull request `<imperative sentence> (#<issue>)`, such as `Add mesh bevel to scene_edit_mesh (#412)`. Keep one change in each pull request.
+
+### Open the pull request
+One command opens a pull request that passes the `PR metadata` check on its first run. Write the description to a file first (what changed, `Closes #N`, `## How I checked it`, `## Evidence`):
+
+```sh
+node scripts/open-pr.mjs --title "Add mesh bevel to scene_edit_mesh (#412)" --body-file artifacts/pr-body.md --labels enhancement,goal:capable --milestone "0 Measure" --evidence artifacts/before.png artifacts/after.png
+```
+
+It runs the metadata checks locally on the description and the files changed against `origin/main` (pictures passed with `--evidence` count as evidence) and stops with every finding and its fix. It refuses an empty description or `-`. Then it pushes the branch if needed, runs one `gh pr create`, pushes the evidence with `push-evidence.mjs`, adds the pictures under `## Evidence` and reads the stored description back to check it. `--base <branch>` changes the base, and `--dry-run` prints the commands and the final description without writing anything on GitHub.
 
 ### Link the issue
 
@@ -91,6 +100,16 @@ Every pull request runs `npm audit`, `npm run size`, `npm run tool-cost`, `npm t
 `npm run tool-cost` does the same for what the MCP tools cost an agent. If a tool schema grows by more than 64 bytes, a typical result by more than 128 bytes, or the schema total by more than 128 bytes, first move rare detail into `scene_capabilities` or a shared schema. If the growth is worth it, add a line to `changes/<issue>.size.md`, such as `- tool:scene_create: <why it is worth the bytes>`, `- tool-total: <why>` or `- result:scene_capabilities: <why>`. Never edit `bench/tool-cost-budgets.json` in a pull request. `bench/tool-cost-ceilings.json` holds fixed absolute ceilings (the schema total, each tool and the default `scene_capabilities` answer) that fail the check whatever the growth. Put field detail in a `scene_capabilities` topic and keep only the common fields in the tool schema. `bench/tool-cost/README.md` has the details.
 
 Branch protection on `main` requires the `test` check to pass before a merge. `GitGuardian Security Checks` is an external check that must also pass.
+
+Main is tested after every push to it, so a branch does not need the newest `main` to merge. Merge `main` into your branch only when `git merge-tree` reports a conflict, or when `main` changed a file your branch also changes:
+
+```sh
+git fetch origin
+git merge-tree --write-tree origin/main HEAD >/dev/null || echo "conflict: merge origin/main"
+comm -12 <(git diff --name-only HEAD...origin/main | sort) <(git diff --name-only origin/main...HEAD | sort)   # files both sides changed
+```
+
+`merge-tree` exits 1 on a conflict, and the last command prints nothing when the two sets of files are apart. If either shows something, run `git merge origin/main`, fix it and push. Otherwise push without merging.
 
 These checks need a GPU or a person's eyes, so they do not run on a pull request. The author runs each one that applies:
 
