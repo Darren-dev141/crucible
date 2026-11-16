@@ -27,8 +27,8 @@ async function startServer(port) {
 }
 
 function constantGrid(channels) {
-  const voxels = 4 * 4 * 4;
-  return Array.from(encodeVolumeGrid({ resolution: [4, 4, 4], channels: Object.fromEntries(Object.entries(channels).map(([name, value]) => [name, new Float32Array(voxels).fill(value)])) }));
+  const voxels = 32 * 32 * 32; // fine enough that the half voxel ramp at each face (#1752) stays under the comparison tolerance
+  return Array.from(encodeVolumeGrid({ resolution: [32, 32, 32], channels: Object.fromEntries(Object.entries(channels).map(([name, value]) => [name, new Float32Array(voxels).fill(value)])) }));
 }
 
 // Draws each scenario over a grey wall at z = 0 seen from z = 5, with the grids registered by name.

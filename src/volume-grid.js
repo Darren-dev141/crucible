@@ -17,6 +17,10 @@ const MAGIC = [0x36, 0x37, 0x56, 0x47];
 // cap, so a 3000 K flame is 16 times as bright as a 1500 K ember. The rasterizer's fog-shader.js repeats it, so keep the two in step.
 export const BLACKBODY_REFERENCE_KELVIN = 1500;
 export const BLACKBODY_MAXIMUM_GAIN = 50;
+/** Empty voxels the rasterizer's texture adds on every face of a grid, so the field ramps to 0 across the outer half voxel as an OpenVDB grid does (#1752). */
+export const GRID_BORDER_VOXELS = 1;
+/** Whether the temperature channel is read with a cubic B-spline (#1752); density and flame stay trilinear. */
+export const GRID_TEMPERATURE_CUBIC = true;
 const BLACKBODY_MINIMUM_KELVIN = 1000;
 
 const floatBuffer = new Float32Array(1);
@@ -188,20 +192,15 @@ export function volumeGridFloats(grid) {
 }
 
 /**
- * Writes the density, temperature and flame at a point of the unit cube into `out`, trilinear with texel centres at (i + 0.5) / n, clamped at the
- * edges: what a linear filtered, clamped 3D texture returns. A channel the grid lacks reads 0, and `flame` reads the density when there is no flame channel.
+ * Writes the density, temperature and flame at a point of the unit cube into `out`, with texel centres at (i + 0.5) / n and 0 beyond the grid's faces, as an
+ * OpenVDB grid reads (the rasterizer's texture has a border of empty voxels, GRID_BORDER_VOXELS, for the same ramp). Density and flame are trilinear; the
+ * temperature is a cubic B-spline when GRID_TEMPERATURE_CUBIC is on, because the blackbody raises it to the fourth power and a trilinear field has a crease at
+ * every voxel face that the fourth power turns into a bright line (#1752). A channel the grid lacks reads 0, and `flame` reads the density when there is no flame channel.
  */
 export function sampleVolumeGrid(floats, resolution, u, v, w, out) {
-  const coordinate = [u * resolution[0] - 0.5, v * resolution[1] - 0.5, w * resolution[2] - 0.5];
-  const base = [0, 0, 0];
-  const fraction = [0, 0, 0];
-  for (let axis = 0; axis < 3; axis++) {
-    const clamped = Math.min(Math.max(coordinate[axis], 0), resolution[axis] - 1);
-    base[axis] = Math.min(Math.floor(clamped), resolution[axis] - 2 < 0 ? 0 : resolution[axis] - 2);
-    fraction[axis] = resolution[axis] === 1 ? 0 : clamped - base[axis];
-  }
-  const strideY = resolution[0];
-  const strideZ = resolution[0] * resolution[1];
+  const cell = [u * resolution[0] - 0.5, v * resolution[1] - 0.5, w * resolution[2] - 0.5];
+  const base = cell.map(Math.floor);
+  const fraction = cell.map((value, axis) => value - base[axis]);
   const channelNames = ['density', 'temperature', 'flame'];
   for (let channel = 0; channel < 3; channel++) {
     const data = floats[channelNames[channel]] ?? (channel === 2 ? floats.density : null);
@@ -209,21 +208,49 @@ export function sampleVolumeGrid(floats, resolution, u, v, w, out) {
       out[channel] = 0;
       continue;
     }
-    let total = 0;
-    for (let corner = 0; corner < 8; corner++) {
-      const stepX = corner & 1;
-      const stepY = (corner >> 1) & 1;
-      const stepZ = (corner >> 2) & 1;
-      const weight = (stepX ? fraction[0] : 1 - fraction[0]) * (stepY ? fraction[1] : 1 - fraction[1]) * (stepZ ? fraction[2] : 1 - fraction[2]);
-      if (weight === 0) continue;
-      const x = Math.min(base[0] + stepX, resolution[0] - 1);
-      const y = Math.min(base[1] + stepY, resolution[1] - 1);
-      const z = Math.min(base[2] + stepZ, resolution[2] - 1);
-      total += weight * data[x + y * strideY + z * strideZ];
-    }
-    out[channel] = total;
+    out[channel] = channel === 1 && GRID_TEMPERATURE_CUBIC ? sampleCubic(data, resolution, base, fraction) : sampleLinear(data, resolution, base, fraction);
   }
   return out;
+}
+
+function voxelAt(data, resolution, x, y, z) {
+  if (x < 0 || y < 0 || z < 0 || x >= resolution[0] || y >= resolution[1] || z >= resolution[2]) return 0;
+  return data[x + resolution[0] * (y + resolution[1] * z)];
+}
+
+function sampleLinear(data, resolution, base, fraction) {
+  let total = 0;
+  for (let corner = 0; corner < 8; corner++) {
+    const stepX = corner & 1;
+    const stepY = (corner >> 1) & 1;
+    const stepZ = (corner >> 2) & 1;
+    const weight = (stepX ? fraction[0] : 1 - fraction[0]) * (stepY ? fraction[1] : 1 - fraction[1]) * (stepZ ? fraction[2] : 1 - fraction[2]);
+    if (weight !== 0) total += weight * voxelAt(data, resolution, base[0] + stepX, base[1] + stepY, base[2] + stepZ);
+  }
+  return total;
+}
+
+/** The four cubic B-spline weights for the voxels base - 1 to base + 2 at `fraction` past `base`. They sum to 1. */
+export function cubicBSplineWeights(fraction) {
+  const squared = fraction * fraction;
+  const cubed = squared * fraction;
+  return [(1 - fraction) ** 3 / 6, (3 * cubed - 6 * squared + 4) / 6, (-3 * cubed + 3 * squared + 3 * fraction + 1) / 6, cubed / 6];
+}
+
+function sampleCubic(data, resolution, base, fraction) {
+  const weightsX = cubicBSplineWeights(fraction[0]);
+  const weightsY = cubicBSplineWeights(fraction[1]);
+  const weightsZ = cubicBSplineWeights(fraction[2]);
+  let total = 0;
+  for (let offsetZ = 0; offsetZ < 4; offsetZ++) {
+    for (let offsetY = 0; offsetY < 4; offsetY++) {
+      const weightYZ = weightsY[offsetY] * weightsZ[offsetZ];
+      for (let offsetX = 0; offsetX < 4; offsetX++) {
+        total += weightsX[offsetX] * weightYZ * voxelAt(data, resolution, base[0] + offsetX - 1, base[1] + offsetY - 1, base[2] + offsetZ - 1);
+      }
+    }
+  }
+  return total;
 }
 
 /** Writes the linear RGB radiance of a blackbody at `kelvin` into `out` (zero below 0 K). See BLACKBODY_REFERENCE_KELVIN. */

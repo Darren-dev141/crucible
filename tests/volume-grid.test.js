@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { encodeVolumeGrid, decodeVolumeGrid, registerVolumeGrid, setVolumeGridLoader, findVolumeGrid, volumeGridFloats, sampleVolumeGrid, blackbodyRadiance, halfToFloat, floatToHalf, VOLUME_GRID_MAX_AXIS, VOLUME_GRID_MAX_BYTES } from '../src/volume-grid.js';
+import { encodeVolumeGrid, decodeVolumeGrid, registerVolumeGrid, setVolumeGridLoader, findVolumeGrid, volumeGridFloats, sampleVolumeGrid, cubicBSplineWeights, GRID_BORDER_VOXELS, GRID_TEMPERATURE_CUBIC, blackbodyRadiance, halfToFloat, floatToHalf, VOLUME_GRID_MAX_AXIS, VOLUME_GRID_MAX_BYTES } from '../src/volume-grid.js';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, localVolumeProfile } from '../src/local-volumes.js';
 import { bindLocalVolumeParts } from '../src/local-volume-parts.js';
 import { createLocalVolumeCrossing } from '../src/path-tracer-volume.js';
@@ -46,7 +46,7 @@ test('a grid file that is wrong or too big is refused with what to pass instead'
   assert.throws(() => encodeVolumeGrid({ resolution: [2, 2, 2], channels: { flame: new Float32Array(8) } }), /needs a "density" channel/);
 });
 
-test('sampling is trilinear between texel centres and clamps at the edges', () => {
+test('density and flame are trilinear between texel centres and ramp to 0 across the outer half voxel', () => {
   const resolution = [2, 1, 1];
   const grid = decodeVolumeGrid(encodeVolumeGrid({ resolution, channels: { density: Float32Array.of(0, 1) } }));
   const out = [0, 0, 0];
@@ -54,8 +54,39 @@ test('sampling is trilinear between texel centres and clamps at the edges', () =
   assert.equal(sampleVolumeGrid(floats, resolution, 0.25, 0.5, 0.5, out)[0], 0);
   assert.equal(sampleVolumeGrid(floats, resolution, 0.5, 0.5, 0.5, out)[0], 0.5);
   assert.equal(sampleVolumeGrid(floats, resolution, 0.75, 0.5, 0.5, out)[0], 1);
-  assert.equal(sampleVolumeGrid(floats, resolution, 1, 0.5, 0.5, out)[0], 1);
-  assert.equal(out[2], out[0], 'without a flame channel the flame reads the density');
+  assert.equal(sampleVolumeGrid(floats, resolution, 1, 0.5, 0.5, out)[0], 0.5, 'the face reads half of the last voxel, as OpenVDB does (#1752)');
+  assert.equal(sampleVolumeGrid(floats, resolution, 1, 0.5, 0.5, out)[2], 0.5, 'without a flame channel the flame reads the density');
+  assert.equal(GRID_BORDER_VOXELS, 1, 'the rasterizer texture pads one empty voxel to match');
+});
+
+test('cubic B-spline weights sum to 1 and are smooth where trilinear weights have a corner', () => {
+  for (const fraction of [0, 0.1, 0.5, 0.9, 0.999]) {
+    const weights = cubicBSplineWeights(fraction);
+    assert.ok(Math.abs(weights.reduce((sum, weight) => sum + weight, 0) - 1) < 1e-12, `weights at ${fraction}`);
+  }
+  assert.deepEqual(cubicBSplineWeights(0).map(weight => Number(weight.toFixed(6))), [0.166667, 0.666667, 0.166667, 0]);
+  const atOne = cubicBSplineWeights(1);
+  const atZero = cubicBSplineWeights(0);
+  for (let index = 0; index < 3; index++) assert.ok(Math.abs(atOne[index + 1] - atZero[index]) < 1e-12, 'the weights at the end of one cell are those at the start of the next, shifted by a voxel');
+});
+
+test('a single hot voxel reads as a smooth blob in the temperature and stays a trilinear tent in the density (#1752)', () => {
+  const resolution = [9, 9, 9];
+  const channels = { density: new Float32Array(729), temperature: new Float32Array(729) };
+  const centre = 4 + 9 * (4 + 9 * 4);
+  channels.density[centre] = 1;
+  channels.temperature[centre] = 1;
+  const floats = volumeGridFloats(decodeVolumeGrid(encodeVolumeGrid({ resolution, channels })));
+  const out = [0, 0, 0];
+  const at = voxelX => sampleVolumeGrid(floats, resolution, voxelX / 9, 4.5 / 9, 4.5 / 9, out);
+  assert.ok(GRID_TEMPERATURE_CUBIC);
+  assert.ok(Math.abs(at(4.5)[1] - 8 / 27) < 1e-9, 'the cubic B-spline of one voxel peaks at (2/3)^3 in 3D');
+  assert.equal(at(4.5)[0], 1, 'the density stays trilinear and keeps its peak');
+  assert.ok(at(6.0)[1] > 0 && at(6.0)[0] === 0, 'the temperature reaches 1.5 voxels out where the trilinear density does not');
+  assert.equal(at(8)[1], 0, 'beyond 2 voxels the temperature is 0');
+  const slope = voxelX => (at(voxelX + 0.01)[1] - at(voxelX - 0.01)[1]) / 0.02;
+  assert.ok(Math.abs(slope(5.5) - slope(5.5 + 1e-6)) < 1e-3, 'no crease at a voxel centre');
+  assert.ok(Math.abs(slope(5.0) - slope(5.0 + 1e-6)) < 1e-3, 'no crease at a voxel face');
 });
 
 test('blackbody radiance is dark when cold, red then white as it heats, and brighter with the fourth power', () => {
@@ -131,17 +162,26 @@ async function centerRadiance(parts, localVolumes) {
 }
 
 test('the path tracer attenuates by the grid density and adds the flame and the blackbody glow', async () => {
-  const resolution = [2, 2, 2];
+  const resolution = [4, 128, 4]; // 128 voxels deep, and 4 wide so the middle sees four voxels each way, so the half voxel ramp at the faces (#1752) is under the tolerance
   registerVolumeGrid('slab-density', decodeVolumeGrid(encodeVolumeGrid({ resolution, channels: uniformGrid(resolution, { density: 1 }) })));
   registerVolumeGrid('slab-flame', decodeVolumeGrid(encodeVolumeGrid({ resolution, channels: uniformGrid(resolution, { density: 0, flame: 1, temperature: 3000 }) })));
-  const slab = { shape: 'grid', center: [0, 1.5, 0], size: [20, 1, 20], steps: 16 };
+  const slab = { shape: 'grid', center: [0, 1.5, 0], size: [20, 1, 20], steps: 128 };
   const [dimmed] = await centerRadiance(ground(1), [{ ...slab, grid: 'slab-density', density: 1 }]);
   assert.ok(Math.abs(dimmed - Math.exp(-1)) < 2e-3, `transmitted ${dimmed}`);
   const [flameRed, flameGreen] = await centerRadiance(ground(0), [{ ...slab, grid: 'slab-flame', emission: [0.5, 0.25, 0], emissionStrength: 2 }]);
   assert.ok(Math.abs(flameRed - 1) < 2e-3, `red ${flameRed}`);
   assert.ok(Math.abs(flameGreen - 0.5) < 2e-3, `green ${flameGreen}`);
   const [glowRed] = await centerRadiance(ground(0), [{ ...slab, grid: 'slab-flame', emissionStrength: 1, blackbodyIntensity: 1, temperatureScale: 0.5 }]);
-  const expected = blackbodyRadiance(1500, [0, 0, 0])[0];
+  // The temperature is a cubic B-spline that ramps to 0 across the faces (#1752), so the glow is the integral of the blackbody down the slab, not one value.
+  const floats = volumeGridFloats(findVolumeGrid('slab-flame'));
+  const cell = [0, 0, 0];
+  const radiance = [0, 0, 0];
+  let expected = 0;
+  const samples = 4096;
+  for (let sample = 0; sample < samples; sample++) {
+    sampleVolumeGrid(floats, resolution, 0.5, (sample + 0.5) / samples, 0.5, cell);
+    expected += blackbodyRadiance(cell[1] * 0.5, radiance)[0] / samples;
+  }
   assert.ok(Math.abs(glowRed - expected) < 2e-3 * expected, `blackbody red ${glowRed}, expected ${expected}`);
 });
 

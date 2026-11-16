@@ -58,3 +58,17 @@ test('the film imports the fog code, so its fog scene draws without further setu
   `);
   assert.equal(output[0], 'true');
 });
+
+test('the grid volume sampler pads the texture with an empty border and reads the temperature as a cubic B-spline (#1752)', () => {
+  const output = runModule(`
+    await import('./src/fog-shader.js');
+    const { createPostFragment } = await import('./src/post.js');
+    const { GRID_BORDER_VOXELS } = await import('./src/volume-grid.js');
+    const fragment = createPostFragment(['local']);
+    console.log(fragment.includes('float localGridCubicTemperature(vec3 texel, vec3 paddedSize)'));
+    console.log(fragment.includes('vec3(textureSize(localGridTexture, 0))'));
+    console.log(fragment.includes('unit * (paddedSize - ' + 2 * GRID_BORDER_VOXELS + '.0) + ' + GRID_BORDER_VOXELS + '.0'));
+    console.log(fragment.includes('cell.y = localGridCubicTemperature(texel, paddedSize)'));
+  `);
+  assert.deepEqual(output, ['true', 'true', 'true', 'true']);
+});
