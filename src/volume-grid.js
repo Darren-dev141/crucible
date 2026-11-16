@@ -190,6 +190,11 @@ export function registerVolumeGrid(name, source) {
   registry.set(name, source instanceof Uint8Array || source instanceof ArrayBuffer ? decodeVolumeGrid(source, `grid "${name}"`) : source);
 }
 
+/** True when a grid is registered under `name` in this process (a grid the loader would fetch is not counted until it is first used). */
+export function isVolumeGridRegistered(name) {
+  return registry.has(name);
+}
+
 /** Sets the function that fetches grid bytes for a name no one registered (the MCP server reads files); it returns bytes or null. */
 export function setVolumeGridLoader(load) {
   loader = load;

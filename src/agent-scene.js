@@ -2200,6 +2200,12 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           if (fracturedId !== undefined) removedNodes.add(fracturedId);
           continue;
         }
+        if (operation.type === 'add-explosion') {
+          const sourceGeometry = geometryId => generateOperationGeometry(candidate, geometryId, limits);
+          agentSceneModule('explosion').addExplosion(candidate, operation, { sourceGeometry, fractureNode: fracture => agentSceneModule('fracture').fractureNode(candidate, fracture, sourceGeometry) });
+          if (typeof operation.debris?.node === 'string') removedNodes.add(operation.debris.node);
+          continue;
+        }
         if (operation.type === 'settle') {
           agentSceneModule('settle').applySettle(candidate, operation);
           continue;

@@ -10,7 +10,7 @@ import { bakingContext, boundedArray, finiteNumber, knownKeys, rootNodeWithGeome
 
 const PARTICLES_FIELDS = ['gravity', 'wind', 'fields', 'systems'];
 const SYSTEM_TYPES = ['emitter', 'hair', 'sparks'];
-const EMITTER_SYSTEM_FIELDS = ['type', 'node', 'seed', 'count', 'rate', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'size', 'scale', 'drag', 'floor', 'bounce', 'friction', 'colliders', 'spin', 'color', 'alpha', 'instances', 'orient'];
+const EMITTER_SYSTEM_FIELDS = ['type', 'node', 'seed', 'count', 'rate', 'delay', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'size', 'scale', 'drag', 'floor', 'bounce', 'friction', 'colliders', 'spin', 'color', 'alpha', 'instances', 'orient'];
 const SPARK_SYSTEM_FIELDS = ['type', 'preset', 'node', 'seed', 'count', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'position', 'size', 'drag', 'floor', 'bounce', 'temperature', 'intensity', 'shutter'];
 const SPARK_PRESETS = Object.freeze({
   // A blast: a few hundred sparks thrown in every direction from a small ball, fast, light enough for drag to pull them in, living 0.5 to 2 s.
@@ -186,6 +186,7 @@ function normalizeEmitterSystem(input, context, path) {
     throw invalidField(`${path}.scale`, system.scale, `one of ${SCALE_MODES.join(', ')}`);
   }
   if (input.rate !== undefined) system.rate = finiteNumber(input.rate, `${path}.rate`, 0.01, PARTICLE_LIMITS.maxParticlesPerSystem * 100);
+  if (input.delay !== undefined) system.delay = finiteNumber(input.delay, `${path}.delay`, 0, 3600);
   if (input.bounce !== undefined) system.bounce = finiteNumber(input.bounce, `${path}.bounce`, 0, 1);
   if (input.friction !== undefined) system.friction = finiteNumber(input.friction, `${path}.friction`, 0, 1);
   if (input.spin !== undefined) system.spin = rangeOf(input.spin, `${path}.spin`, -100000, 100000);
