@@ -1,5 +1,5 @@
 import { registerShaderFeatureCode } from './shader-registry.js';
-import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS } from './local-volumes.js';
+import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS } from './local-volumes.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
@@ -309,23 +309,23 @@ float localVolumeProfile(int index, vec3 position, bool withNoise) {
   return profile;
 }
 // The optical depth of a volume between a point inside it and its far side along a direction, from midpoint taps of its profile.
-vec3 localVolumeDepth(int index, vec3 position, vec3 direction, int taps) {
+vec3 localVolumeDepth(int index, vec3 position, vec3 direction, int taps, bool withNoise) {
   float exitDistance = max(localVolumeInterval(index, position, direction).y, 0.0);
   float profileSum = 0.0;
-  for (int tap = 0; tap < 3; tap++) {
+  for (int tap = 0; tap < ${LOCAL_VOLUME_DETAIL_SHADOW_TAPS}; tap++) {
     if (tap >= taps) break;
-    profileSum += min(localVolumeProfile(index, position + direction * (exitDistance * (float(tap) + 0.5) / float(taps)), false) * ${LOCAL_VOLUME_LIGHT_DEPTH_SATURATION.toFixed(3)}, 1.0);
+    profileSum += min(localVolumeProfile(index, position + direction * (exitDistance * (float(tap) + 0.5) / float(taps)), withNoise) * ${LOCAL_VOLUME_LIGHT_DEPTH_SATURATION.toFixed(3)}, 1.0);
   }
   return localVolumeAbsorption[index].rgb * (profileSum * exitDistance / float(taps));
 }
 // The sky light a point receives through the volume's own depth: the mean over the up and four side directions of what one tap leaves.
 // Without it the sky term is flat, so a thick smoke glows as evenly deep inside as at its edge and hides the key light's side.
 vec3 localVolumeSkyLight(int index, vec3 position) {
-  vec3 open = exp(-localVolumeDepth(index, position, vec3(0.0, 1.0, 0.0), 1));
-  open += exp(-localVolumeDepth(index, position, vec3(1.0, 0.0, 0.0), 1));
-  open += exp(-localVolumeDepth(index, position, vec3(-1.0, 0.0, 0.0), 1));
-  open += exp(-localVolumeDepth(index, position, vec3(0.0, 0.0, 1.0), 1));
-  open += exp(-localVolumeDepth(index, position, vec3(0.0, 0.0, -1.0), 1));
+  vec3 open = exp(-localVolumeDepth(index, position, vec3(0.0, 1.0, 0.0), 1, false));
+  open += exp(-localVolumeDepth(index, position, vec3(1.0, 0.0, 0.0), 1, false));
+  open += exp(-localVolumeDepth(index, position, vec3(-1.0, 0.0, 0.0), 1, false));
+  open += exp(-localVolumeDepth(index, position, vec3(0.0, 0.0, 1.0), 1, false));
+  open += exp(-localVolumeDepth(index, position, vec3(0.0, 0.0, -1.0), 1, false));
   return localSkyAmbient * (open * ${(0.2 * LOCAL_VOLUME_SKY_GAIN).toFixed(3)});
 }
 // The light a scattering volume receives at a point: the sky term and the key light through the shadow map, each through the volume's own depth.
@@ -335,7 +335,8 @@ vec3 localVolumeInScatter(int index, vec3 position, vec3 direction) {
   vec3 sunLight = vec3(0.0);
   if (visibility > 0.001) {
     vec3 lightDirection = normalize(vec3(towardSun.x, towardSun.y * ${LOCAL_VOLUME_SUN_FLATTEN.toFixed(3)}, towardSun.z));
-    vec3 lightDepth = localVolumeDepth(index, position, lightDirection, 3) * ${LOCAL_VOLUME_SHADOW_STRENGTH.toFixed(3)};
+    bool detailShadow = localVolumeGrid[index].y > 0.5 && localVolumeGrid[index].x < 0.5;
+    vec3 lightDepth = localVolumeDepth(index, position, lightDirection, detailShadow ? ${LOCAL_VOLUME_DETAIL_SHADOW_TAPS} : 3, detailShadow) * ${LOCAL_VOLUME_SHADOW_STRENGTH.toFixed(3)};
     sunLight = volumeLightColor * (henyeyGreenstein(dot(direction, towardSun), localVolumeGrid[index].w) * visibility * ${LOCAL_VOLUME_KEY_GAIN.toFixed(3)}) * exp(-lightDepth);
   }
   return localVolumeSkyLight(index, position) + sunLight;
