@@ -2,31 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import './support/load-agent-scene-modules.mjs';
 import { createAgentScene } from '../src/agent-scene.js';
-import { normalizeMaterialRetro, retroDrawState } from '../src/material-retro.js';
+import { execFileSync } from 'node:child_process';
+import { normalizeMaterialRetro } from '../src/retro-shader.js';
+import { agentSceneModulesNeeded } from '../src/agent-scene-modules.js';
 import { createFragmentShader, createVertexShader, SHADER_FEATURES } from '../src/shaders.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
 
 const RIGID_FEATURES = SHADER_FEATURES.filter(feature => !['crowd', 'skin', 'morph'].includes(feature));
-
-// Keeps the lines a preprocessor would keep when only the listed macros are defined (valueless #ifdef, #else, #endif).
-function keptSource(source, defined) {
-  const kept = [];
-  const stack = [];
-  for (const line of source.split('\n')) {
-    const directive = line.trim().match(/^#(ifdef|ifndef|else|endif)\b\s*(\w+)?/);
-    if (directive?.[1] === 'ifdef' || directive?.[1] === 'ifndef') {
-      const isDefined = source.includes(`#define ${directive[2]}`) && defined.includes(directive[2]);
-      stack.push(directive[1] === 'ifdef' ? isDefined : !isDefined);
-    } else if (directive?.[1] === 'else') {
-      stack[stack.length - 1] = !stack[stack.length - 1];
-    } else if (directive?.[1] === 'endif') {
-      stack.pop();
-    } else if (stack.every(Boolean)) {
-      kept.push(line);
-    }
-  }
-  return kept.join('\n');
-}
 
 function recipeWithMaterial(material) {
   return {
@@ -70,36 +52,31 @@ test('a recipe material and a set-material edit take retro, and a bad value is r
   assert.throws(() => plain.apply([{ type: 'set-material', id: 'finish', retro: { vertexSnap: [0, 0] } }], { expectedRevision: 1 }), /retro\.vertexSnap/);
 });
 
-test('draw state is zero for a plain material and splits batches that look different', () => {
-  assert.deepEqual(retroDrawState({}), [0, 0, 0]);
-  assert.deepEqual(retroDrawState({ retro: normalizeMaterialRetro({ vertexSnap: [160, 120] }) }), [160, 120, 0]);
-  assert.deepEqual(retroDrawState({ retro: normalizeMaterialRetro({ affineUV: true }) }), [0, 0, 1]);
+test('the retro code loads on demand: the recipe marker finds it, and a renderer without it says which import to add', () => {
+  assert.deepEqual(agentSceneModulesNeeded(recipeWithMaterial({ retro: { affineUV: true } })), ['retroShader']);
+  assert.deepEqual(agentSceneModulesNeeded(recipeWithMaterial({ roughness: 0.4 })), []);
+  const script = `
+    const { createVertexShader, createFragmentShader } = await import('./src/shaders.js');
+    try { createVertexShader(['retro']); console.log('no error'); } catch (error) { console.log(error.message); }
+    console.log(createVertexShader([]).includes('retro'), createFragmentShader([]).includes('affineUV'));
+  `;
+  const output = execFileSync(process.execPath, ['--input-type=module', '-e', script], { cwd: new URL('..', import.meta.url), encoding: 'utf8' }).trim().split('\n');
+  assert.match(output[0], /retro feature needs its shader code: add import '@codepawlhq\/crucible\/addons\/retro-shader'/);
+  assert.equal(output[1], 'false false');
 });
 
-test('without retro features the shaders compile to the plain source', () => {
-  const vertex = createVertexShader(RIGID_FEATURES);
-  const fragment = createFragmentShader(RIGID_FEATURES);
-  for (const source of [keptSource(vertex, []), keptSource(fragment, [])]) {
-    assert.doesNotMatch(source, /retro|affineUV|affineWeight/);
-  }
-  assert.match(keptSource(fragment, []), /in vec2 textureUV, lightmapUV;/);
-  assert.doesNotMatch(vertex, /#define RETRO_/);
-  assert.doesNotMatch(fragment, /#define RETRO_/);
+test('plain shaders carry no retro code', () => {
+  assert.doesNotMatch(createVertexShader(RIGID_FEATURES), /retro|affine/i);
+  assert.doesNotMatch(createFragmentShader(RIGID_FEATURES), /retro|affine/i);
 });
 
-test('retro features add the snap and the affine interpolation to the vertex and fragment shaders', () => {
-  const snapped = createVertexShader([...RIGID_FEATURES, 'retroSnap']);
-  assert.match(snapped, /#define RETRO_SNAP\n/);
-  assert.doesNotMatch(snapped, /#define RETRO_AFFINE\n/);
-  assert.match(keptSource(snapped, ['RETRO_SNAP']), /uniform vec2 retroSnap;[\s\S]*round\(gl_Position\.xy/);
-  const affineFeatures = [...RIGID_FEATURES, 'retroAffine'];
-  const vertex = keptSource(createVertexShader(affineFeatures), ['RETRO_AFFINE']);
-  assert.match(vertex, /out vec3 affineUV;/);
+test('the retro feature adds the snap and the affine interpolation to the vertex and fragment shaders', () => {
+  const vertex = createVertexShader([...RIGID_FEATURES, 'retro']);
+  assert.match(vertex, /uniform vec3 retro;[\s\S]*out vec3 affineUV;/);
+  assert.match(vertex, /round\(gl_Position\.xy \/ gl_Position\.w \* halfCells\)/);
   assert.match(vertex, /affineUV = vec3\(uv \* affineWeight, affineWeight\)/);
-  const fragment = keptSource(createFragmentShader(affineFeatures), ['RETRO_AFFINE']);
-  assert.match(fragment, /in vec3 affineUV;/);
-  assert.match(fragment, /#define textureUV \(affineUV\.xy \/ affineUV\.z\)/);
-  assert.ok(fragment.indexOf('in vec2 textureUV, lightmapUV;') < fragment.indexOf('#define textureUV'), 'the macro follows the declaration');
+  const fragment = createFragmentShader([...RIGID_FEATURES, 'retro']);
+  assert.ok(fragment.indexOf('in vec2 textureUV, lightmapUV;') < fragment.indexOf('#define textureUV (affineUV.xy / affineUV.z)'), 'the macro follows the declaration');
 });
 
 test('the capabilities name the retro field and its raster-only limit', () => {

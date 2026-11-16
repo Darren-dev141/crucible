@@ -149,7 +149,8 @@ glTF import maps `alphaMode` MASK and BLEND, `alphaCutoff`, `doubleSided` and `b
 
 - Set either or both. Anything else, or an empty object, throws with what to pass.
 - Raster only. The path tracer ignores it, and shadow maps are drawn from the unsnapped mesh.
-- A material without `retro` compiles to the same shader as before. The snap grid and the affine switch are batch state like `doubleSided`: parts that differ never share a draw call, and `updateParts` rejects changes after upload.
+- The code is the lazy `retro-shader` addon (`@codepawlhq/crucible/addons/retro-shader`; a recipe loads it on its own). A renderer that draws a retro part without it throws an error that names the import. A material without `retro` compiles to the same shader as before.
+- The snap grid and the affine switch are batch state like `doubleSided`: parts with different `retro` objects never share a draw call. Set `retro` before the first render; the batch reads the first part's material, so rebuild the renderer to change it.
 
 ## Moss layer
 

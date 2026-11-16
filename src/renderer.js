@@ -12,7 +12,6 @@ import { fittedNearPlane, sceneBoundsOfParts } from './near-plane-fit.js';
 import { installReversedDepth, prepareCameraRelativeProgram } from './reversed-depth.js';
 import { resolveEffects } from './effects.js';
 import { frameDiagnostics } from './frame-diagnostics.js';
-import { retroDrawState } from './material-retro.js';
 import { depthLayerOf, flushOrderOf, RANKS_PER_LAYER } from './depth-layer.js';
 import { createLightingState, updateLightingState } from './lighting.js';
 import { RenderTargetLedger } from './render-target-ledger.js';
@@ -74,7 +73,7 @@ function postUniformLocations(context, program) {
 
 const MAP_SHADER_FEATURES = ['baseMap', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap'];
 // Part or material fields that name their shader feature and switch it on when set.
-const PRESENT_SHADER_FEATURES = ['skin', 'crowd', 'morph', 'lightMap', 'waterReflection'];
+const PRESENT_SHADER_FEATURES = ['skin', 'crowd', 'morph', 'lightMap', 'waterReflection', 'retro'];
 // Material fields that name their shader feature and switch it on above zero.
 const POSITIVE_SHADER_FEATURES = ['moss', 'anisotropy', 'iridescence', 'toon', 'boxMapScale', 'emissionFresnel'];
 // Tags whose look the main fragment shader draws with code that other tags never reach.
@@ -136,8 +135,6 @@ function shaderFeaturesOfParts(parts) {
     if ((material.alphaMode ?? 'opaque') !== 'opaque') features.add('alphaMode');
     if (material.subsurface?.weight > 0) features.add('subsurface');
     if (material.wear) features.add('surfaceWear');
-    if (material.retro?.vertexSnap) features.add('retroSnap');
-    if (material.retro?.affineUV) features.add('retroAffine');
     if (material.snippet) features.add(material.snippet.feature);
     if (materialLayerValue(material, 'clearcoat') > 0) features.add('clearcoat');
     if (materialLayerValue(material, 'sheenColor').some(channel => channel !== 0)) features.add('sheen');
@@ -519,7 +516,7 @@ function createPartGrouper(batching) {
     }
     let materialTail = materialKeyTails.get(part.material);
     if (!materialTail) {
-      materialTail = [renderPass(part.material), ...materialAlphaState(part.material), part.material.aovMap ?? null, part.material.transmissionMap ?? null, ...(part.material.aov ?? ZERO_VECTOR), ...retroDrawState(part.material)];
+      materialTail = [renderPass(part.material), ...materialAlphaState(part.material), part.material.aovMap ?? null, part.material.transmissionMap ?? null, ...(part.material.aov ?? ZERO_VECTOR), part.material.retro];
       materialKeyTails.set(part.material, materialTail);
     }
     const values = [batching ? part.geometry : part, ...materialValues, part.skin ?? null, part.material.snippet, part.crowd ?? null, part.morph ?? null, castsShadow(part), receivesShadow(part), compositeModeOf(part), part.shadowOnly === true, depthLayerOf(part), flushOrderOf(part), part.lods ?? null, part.shadowLods ?? null, isMirroredMatrix(part.matrix), ...materialTail];
@@ -1050,7 +1047,7 @@ export class CrucibleRenderer {
 
   finishMainProgram(pendingProgram) {
     this.program = finishProgram(this.context, pendingProgram);
-    this.uniforms = Object.fromEntries(['materialDielectric', 'materialEmissionFresnel', 'materialCoat', 'materialSheen', 'materialAnisotropy', 'materialIridescence', 'lightLinkMask', 'boxMapScale', 'boxMapAxis', 'lightMap', 'lightMapScale', 'hasLightMap', 'viewProjection', 'flushBias', 'clipPerMetre', 'lightProjection', 'eye', 'armorColor', 'armorSurface', 'exposure', 'inspection', 'shadowMap', 'shadowBiasPerSlope', ...MAP_UNIFORMS, ...MAP_FLAGS, ...SKIN_UNIFORMS, ...MORPH_UNIFORMS, 'normalScale', 'occlusionStrength', 'materialMoss', 'wearEnabled', 'wearMetal', 'wearDirt', 'wearShape', 'wearDirtShape', ...SPLAT_UNIFORMS, 'hdrEnabled', 'time', 'wind', 'worldMode', 'daylight', 'fogColor', 'lightDirection', 'fogDensity', 'waterRipple', 'rippleTime', 'explosionProgress', 'explosionCenter', 'assemblyAmount', 'renderPassMode', 'renderPassDepthRange', 'renderPassObjectBase', 'baseColor', 'surface', 'instanceEmission', 'instanceOpacity', 'boxNormalMatrix', 'shadowBlind', 'compositeMode', 'tintShadowMap', 'tintBlind', 'retroSnap', 'retroAffine', ...ALPHA_UNIFORMS].map((name) => [name, this.context.getUniformLocation(this.program, name)]));
+    this.uniforms = Object.fromEntries(['materialDielectric', 'materialEmissionFresnel', 'materialCoat', 'materialSheen', 'materialAnisotropy', 'materialIridescence', 'lightLinkMask', 'boxMapScale', 'boxMapAxis', 'lightMap', 'lightMapScale', 'hasLightMap', 'viewProjection', 'flushBias', 'clipPerMetre', 'lightProjection', 'eye', 'armorColor', 'armorSurface', 'exposure', 'inspection', 'shadowMap', 'shadowBiasPerSlope', ...MAP_UNIFORMS, ...MAP_FLAGS, ...SKIN_UNIFORMS, ...MORPH_UNIFORMS, 'normalScale', 'occlusionStrength', 'materialMoss', 'wearEnabled', 'wearMetal', 'wearDirt', 'wearShape', 'wearDirtShape', ...SPLAT_UNIFORMS, 'hdrEnabled', 'time', 'wind', 'worldMode', 'daylight', 'fogColor', 'lightDirection', 'fogDensity', 'waterRipple', 'rippleTime', 'explosionProgress', 'explosionCenter', 'assemblyAmount', 'renderPassMode', 'renderPassDepthRange', 'renderPassObjectBase', 'baseColor', 'surface', 'instanceEmission', 'instanceOpacity', 'boxNormalMatrix', 'shadowBlind', 'compositeMode', 'tintShadowMap', 'tintBlind', ...ALPHA_UNIFORMS].map((name) => [name, this.context.getUniformLocation(this.program, name)]));
     for (const name of LIGHT_UNIFORMS) {
       this.uniforms[name] = this.context.getUniformLocation(this.program, name);
     }
@@ -1191,12 +1188,6 @@ export class CrucibleRenderer {
       context.deleteVertexArray(vertexArray);
       throw error;
     }
-  }
-
-  /** Sets the retro look uniforms of a batch: a snap grid (0 for none) and the affine UV switch. */
-  bindRetro([snapWidth, snapHeight, affineUV] = [0, 0, 0]) {
-    this.context.uniform2f(this.uniforms.retroSnap, snapWidth, snapHeight);
-    this.context.uniform1f(this.uniforms.retroAffine, affineUV);
   }
 
   /** Sets the surface wear uniforms of a batch; a material without wear turns the term off. */
@@ -1406,7 +1397,7 @@ export class CrucibleRenderer {
     const [alphaMode, alphaCutoff, opacity, doubleSided] = materialAlphaState(parts[0].material);
     const layerState = materialLayerState(parts[0].material);
     const culling = this.createCullingState(parts);
-    const batch = { ...culling, alphaMode, alphaCutoff, opacity, doubleSided, mirrored: isMirroredMatrix(parts[0].matrix), layerState, wear: parts[0].material.wear ?? null, retro: retroDrawState(parts[0].material), parts: [...parts], vertexArray, instanceBuffer, instanceData, textures, mapState, splat, lightMapTexture, texture: textures[0], map, skin, skinTexture, influenceTexture, crowd, crowdTexture, morph, morphTexture, morphWeights, indexCount: flushOrder?.indices.length ?? geometry.indices.length, instanceCount: parts.length, floor: parts[0].material.tag === 'floor', castShadow: castsShadow(parts[0]), tintedShadow: castsTintedShadow(parts[0]), tintBlind: Boolean(splat) || Object.keys(parts[0].material.layerMaps ?? {}).length >= 3, receivesShadow: receivesShadow(parts[0]), compositeMode: compositeModeOf(parts[0]), depthLayer: depthLayerOf(parts[0]), flushOrder, flushIndexBuffer, pass: partPass(parts[0]) };
+    const batch = { ...culling, alphaMode, alphaCutoff, opacity, doubleSided, mirrored: isMirroredMatrix(parts[0].matrix), layerState, wear: parts[0].material.wear ?? null, parts: [...parts], vertexArray, instanceBuffer, instanceData, textures, mapState, splat, lightMapTexture, texture: textures[0], map, skin, skinTexture, influenceTexture, crowd, crowdTexture, morph, morphTexture, morphWeights, indexCount: flushOrder?.indices.length ?? geometry.indices.length, instanceCount: parts.length, floor: parts[0].material.tag === 'floor', castShadow: castsShadow(parts[0]), tintedShadow: castsTintedShadow(parts[0]), tintBlind: Boolean(splat) || Object.keys(parts[0].material.layerMaps ?? {}).length >= 3, receivesShadow: receivesShadow(parts[0]), compositeMode: compositeModeOf(parts[0]), depthLayer: depthLayerOf(parts[0]), flushOrder, flushIndexBuffer, pass: partPass(parts[0]) };
     if (parts[0].lods) culling.levelGeometries.forEach((geometryOfLevel, level) => this.levelDraw(batch, level));
     culling.shadowLevels?.levelGeometries.forEach((geometryOfLevel, level) => this.levelDraw(batch, level, batch.shadowLevels));
     parts.forEach((part, index) => this.partLocations.set(part, { batch, index, geometry: part.geometry, map, mapState, layerState, skin, jointMatrices: skin?.jointMatrices, skinIndices: geometry.skinIndices, skinWeights: geometry.skinWeights, morph, morphWeights: morph?.weights, morphTargets: geometry.morphTargets, normalMatrix: mat3.create(), committedMatrix: batch.instanceData.subarray(index * INSTANCE_STRIDE, index * INSTANCE_STRIDE + 16) }));
@@ -1446,7 +1437,6 @@ export class CrucibleRenderer {
         batch.floor === (first.material.tag === 'floor') && batchPass(batch) === partPass(first) &&
         [batch.alphaMode, batch.alphaCutoff, batch.opacity, batch.doubleSided].every((value, index) => value === alphaState[index]) &&
         batch.mapState.every((value, index) => value === mapState[index]) &&
-        retroDrawState(first.material).every((value, index) => value === (batch.retro?.[index] ?? 0)) &&
         batch.layerState.every((value, index) => value === materialLayerState(first.material)[index]);
       if (sameParts && sameState) {
         retained.add(batch);
@@ -1616,8 +1606,7 @@ export class CrucibleRenderer {
       if (!materialUnchanged) {
         const alphaState = materialAlphaState(part.material);
         const batchAlphaState = [location.batch.alphaMode, location.batch.alphaCutoff, location.batch.opacity, location.batch.doubleSided];
-        if (retroDrawState(part.material).some((value, index) => value !== (location.batch.retro?.[index] ?? 0))) throw new Error(`Retro look changes require a new renderer: ${part.name}`);
-        if (alphaState.some((value, index) => value !== batchAlphaState[index])) throw new Error(`Alpha mode, cutoff, double-sided and mask opacity changes require a new renderer (blend and add opacity may change): ${part.name}`);
+        if (alphaState.some((value, index) => value !== batchAlphaState[index])) throw new Error(`Alpha mode, cutoff, double-sided, retro and mask opacity changes require a new renderer (blend and add opacity may change): ${part.name}`);
       }
       if (part.geometry !== location.geometry) throw new Error(`Geometry changes require a new renderer: ${part.name}`);
       if (isMirroredMatrix(part.matrix) !== Boolean(location.batch.mirrored)) mirrorChanged = true;
@@ -2676,7 +2665,6 @@ export class CrucibleRenderer {
       this.context.uniform1f(this.uniforms.occlusionStrength, batch.mapState[7]);
       this.context.uniform4f(this.uniforms.materialMoss, batch.mapState[8], batch.mapState[9], batch.mapState[10], batch.mapState[11]);
       this.bindSurfaceWear(batch.wear);
-      this.bindRetro(batch.retro);
       const layers = batch.layerState;
       this.context.uniform3f(this.uniforms.materialDielectric, layers[0], layers[1], layers[2]);
       this.context.uniform2f(this.uniforms.materialCoat, layers[3], layers[4]);

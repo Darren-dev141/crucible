@@ -57,6 +57,7 @@ function windShader(features) {
 }
 
 function vertexShaderSource(definitions, features) {
+  const retro = new Set(features).has('retro') ? requireFeatureCode('retro') : {};
   return `#version 300 es
 ${definitions}
 precision highp float;
@@ -99,14 +100,7 @@ out vec2 vertexWear;
 out vec4 shadowPosition;
 #endif
 out vec2 textureUV, lightmapUV;
-#ifdef RETRO_SNAP
-uniform vec2 retroSnap;
-#endif
-#ifdef RETRO_AFFINE
-uniform float retroAffine;
-out vec3 affineUV;
-#endif
-out vec3 boxPosition, boxNormal;
+${retro.head ?? ''}out vec3 boxPosition, boxNormal;
 ${skinningShader(features)}
 ${morphingShader(features)}
 ${windShader(features)}
@@ -166,19 +160,7 @@ void main() {
     vec4 lifted = gl_Position - (flushBias.x + flushBias.y * gl_Position.w) * clipPerMetre;
     gl_Position.z = (lifted.z / lifted.w + flushBias.z) * gl_Position.w;
   }
-#ifdef RETRO_SNAP
-  // Retro look: round the screen position to a retroSnap grid; a zero grid leaves the batch alone.
-  if (retroSnap.x > 0.0 && gl_Position.w > 0.0) {
-    vec2 halfCells = retroSnap * 0.5;
-    gl_Position.xy = round(gl_Position.xy / gl_Position.w * halfCells) / halfCells * gl_Position.w;
-  }
-#endif
-#ifdef RETRO_AFFINE
-  // Passing uv * w beside w makes the perspective-correct interpolation cancel, so the fragment divides to a plain affine uv.
-  float affineWeight = retroAffine > 0.5 ? gl_Position.w : 1.0;
-  affineUV = vec3(uv * affineWeight, affineWeight);
-#endif
-}`;
+${retro.tail ?? ''}}`;
 }
 
 // Built when a renderer starts, so the crowd addon can install its skinning code first.
@@ -371,12 +353,7 @@ vec4 shadowPosition;
 in vec4 shadowPosition;
 #endif
 in vec2 textureUV, lightmapUV;
-#ifdef RETRO_AFFINE
-// Later code reads the affine coordinate under the old name; the declaration above stays for the code that patches it.
-in vec3 affineUV;
-#define textureUV (affineUV.xy / affineUV.z)
-#endif
-uniform sampler2D lightMap;
+${featureCode("uv")}uniform sampler2D lightMap;
 uniform float lightMapScale;
 uniform float hasLightMap;
 uniform vec3 eye;
@@ -1009,8 +986,6 @@ export const ENVIRONMENT_FEATURES =Object.freeze(['environmentMap', 'studioLight
 
 // Features that only the vertex shader reads: a part with a skeleton or morph targets.
 const VERTEX_ONLY_FEATURES = Object.freeze(['skin', 'morph', 'crowd', 'vertexColors', 'instanced']);
-// Material retro look (material-retro.js): switched on by a part that uses it, so not in SHADER_FEATURES and the default shaders stay as they were.
-const RETRO_FEATURES = Object.freeze(['retroSnap', 'retroAffine']);
 
 function environmentCondition(enabled) {
   const hasMap = enabled.has('environmentMap');
@@ -1059,7 +1034,7 @@ export function liquidPassDrawer() {
 function hasSeparateCode(feature) {
   if (feature in MODULE_FEATURES) return true;
   if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE || feature === FRAGMENT_SHADOW_POSITION_FEATURE) return false;
-  return !ENVIRONMENT_FEATURES.includes(feature) && !VERTEX_ONLY_FEATURES.includes(feature) && !RETRO_FEATURES.includes(feature);
+  return !ENVIRONMENT_FEATURES.includes(feature) && !VERTEX_ONLY_FEATURES.includes(feature);
 }
 
 function featureCodeSplicer(features) {
@@ -1079,7 +1054,7 @@ export const SHADER_FEATURES = Object.freeze([...Object.keys(SHADER_FEATURE_COND
 // choice between them whether or not the uniform picks it, so a renderer without those parts compiles them out.
 // The varyings that both shaders carry: per-vertex colours, and the per-instance values that a draw of one instance sets as uniforms.
 function interpolantDefines(enabled) {
-  return [['vertexColors', 'VERTEX_COLORS'], ['surfaceWear', 'SURFACE_WEAR'], ['instanced', 'INSTANCED'], [FRAGMENT_SHADOW_POSITION_FEATURE, 'SHADOW_IN_FRAGMENT'], ['retroSnap', 'RETRO_SNAP'], ['retroAffine', 'RETRO_AFFINE']].filter(([feature]) => enabled.has(feature)).map(([, macro]) => `#define ${macro}`);
+  return [['vertexColors', 'VERTEX_COLORS'], ['surfaceWear', 'SURFACE_WEAR'], ['instanced', 'INSTANCED'], [FRAGMENT_SHADOW_POSITION_FEATURE, 'SHADOW_IN_FRAGMENT']].filter(([feature]) => enabled.has(feature)).map(([, macro]) => `#define ${macro}`);
 }
 
 function vertexDefinitions(enabled) {

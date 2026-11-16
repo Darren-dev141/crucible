@@ -9,7 +9,6 @@ import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, 
 import { postStepSupport } from './shader-registry.js';
 import { agentSceneModule, agentSceneModuleLoaded } from './agent-scene-modules.js';
 import { CURVE_TEXT_LIMITS, AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, MAX_MATERIAL_PATTERNS, RECIPE_ALPHA_MODES } from './agent-scene-capabilities.js';
-import { normalizeMaterialRetro } from './material-retro.js';
 import { normalizeMaterialWear, geometryWithSurfaceMasks } from './material-wear.js';
 import { ALL_LIGHTS_MASK, MATERIAL_LAYER_FIELDS, validateMaterialLayers } from './material-layers.js';
 import { recipeDiagnostics, closedRoomDiagnostic } from './agent-diagnostics.js';
@@ -338,7 +337,7 @@ function materialFrom(value) {
   }
   copyMaterialLayers(value, result);
   if (value.wear) result.wear = normalizeMaterialWear(value.wear);
-  if (value.retro !== undefined && value.retro !== null) result.retro = normalizeMaterialRetro(value.retro);
+  if (value.retro !== undefined && value.retro !== null) result.retro = agentSceneModule('retroShader').normalizeMaterialRetro(value.retro);
   if (agentSceneModuleLoaded('worldMaterials')) {
     agentSceneModule('worldMaterials').copyWaterFields(value, result, vector);
   }
