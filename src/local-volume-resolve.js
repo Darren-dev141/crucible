@@ -8,16 +8,16 @@ import { finiteRange, vectorField } from './volumetric.js';
 export const MAX_LOCAL_VOLUMES = 8;
 export const LOCAL_VOLUME_SHAPES = Object.freeze(['box', 'sphere', 'mesh', 'grid']);
 export const LOCAL_VOLUME_FIT = Object.freeze(['bounds', 'mesh']);
-export const LOCAL_VOLUME_FIELDS = Object.freeze(['shape', 'part', 'fit', 'center', 'size', 'radius', 'density', 'falloff', 'absorption', 'emission', 'emissionStrength', 'scatter', 'blur', 'noiseAmount', 'noiseScale', 'steps', 'grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy', 'emissionLight']);
+export const LOCAL_VOLUME_FIELDS = Object.freeze(['shape', 'part', 'fit', 'center', 'size', 'radius', 'density', 'falloff', 'absorption', 'emission', 'emissionStrength', 'scatter', 'blur', 'noiseAmount', 'noiseScale', 'steps', 'grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy', 'lightsScene']);
 // The fields only a grid volume takes (#1045), and the steps its denser march may take (the shader's grid loop is bounded by the same number).
 export const LOCAL_VOLUME_GRID_FIELDS = Object.freeze(['grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy']);
 export const LOCAL_VOLUME_MAXIMUM_STEPS = 32;
 export const ONE_GRID_VOLUME_MESSAGE = 'At most one volume in a scene takes shape "grid" for now; merge the grids into one file';
 const LISTED_PART_NAMES = 12;
 
-/** Throws unless the value is true or false. */
-function booleanField(value, label) {
-  if (typeof value !== 'boolean') throw new TypeError(`${label} must be true or false`);
+function resolveLightsScene(value, label) {
+  if (value === undefined) return false;
+  if (typeof value !== 'boolean') throw new TypeError(`${label}.lightsScene must be true or false; true adds a point light at the emission so the volume lights the scene`);
   return value;
 }
 
@@ -36,8 +36,8 @@ function resolveLocalVolume(input, label, resolveGrid) {
     absorption: vectorField(input.absorption ?? [1, 1, 1], 0, 1, `${label}.absorption`),
     emission: vectorField(input.emission ?? [0, 0, 0], 0, 1, `${label}.emission`),
     emissionStrength: finiteRange(input.emissionStrength ?? 1, 0, 1000, `${label}.emissionStrength`),
-    emissionLight: booleanField(input.emissionLight ?? true, `${label}.emissionLight`),
     scatter: finiteRange(input.scatter ?? 0, 0, 1, `${label}.scatter`),
+    lightsScene: resolveLightsScene(input.lightsScene, label),
     blur: finiteRange(input.blur ?? 1, 0, 1, `${label}.blur`),
     noiseAmount: finiteRange(input.noiseAmount ?? 0, 0, 1, `${label}.noiseAmount`),
     noiseScale: finiteRange(input.noiseScale ?? 1, 0.001, 100, `${label}.noiseScale`),

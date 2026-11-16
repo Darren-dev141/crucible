@@ -2280,14 +2280,6 @@ export class CrucibleRenderer {
     return requireFeatureCode('volumeFog').support.prepareLocalVolumes(this, input, frame, volumeTime) > 0;
   }
 
-  // The environment with a point light for each emitting local volume (see src/local-volume-lights.js). A scene with no volume that
-  // emits gets its own environment back, and the code that makes the lights is not loaded.
-  withVolumeEmissionLights(environment, volumeTime) {
-    const emitsAnything = Array.isArray(environment.localVolumes) && environment.localVolumes.some(volume => volume?.emission?.some(channel => channel > 0));
-    if (!emitsAnything) return environment;
-    return requireFeatureCode('volumeFog').support.withVolumeEmissionLights(environment, this.sceneParts, volumeTime);
-  }
-
   // The post steps this frame uses. A step that is off costs nothing in a program that has it compiled out.
   postStepsOf(frame, effects, volume, occluded, fogSky, localVolumes) {
     const steps = [];
@@ -2723,6 +2715,10 @@ export class CrucibleRenderer {
     const effects = resolveEffects(frame.effects);
     const environment = { lightDirection: [-3, 6, 4], fogColor: [0.35, 0.43, 0.43], fogDensity: 0.006, daylight: 1, explosionCenter: [0, 0, 0], ...this.environment, ...frame.environment };
     environment.fogDensity ??= this.fittedFogDensity ?? 0.006;
+    if (environment.localVolumes?.some?.(localVolume => localVolume?.lightsScene === true)) {
+      // Fire lights the set: the emitting volumes add point lights before the lighting state is written (#1046).
+      environment.pointLights = requireFeatureCode('volumeFog').support.withVolumeFireLights(this, environment, environment.volumeTime ?? frame.time ?? 0).pointLights;
+    }
     const volume = resolveVolumeFog(environment.volumeFog);
     if (this.fogFieldOverride) volume.field = this.fogFieldOverride;
     if (volume.density > 0) {
@@ -2733,7 +2729,7 @@ export class CrucibleRenderer {
       const lightLength = direction?.length === 3 ? Math.hypot(...direction) : NaN;
       if (!Number.isFinite(lightLength) || lightLength < 1e-6 || !Array.from(direction).every(component => typeof component === 'number' && Math.abs(component) <= 1e6)) throw new RangeError('Volume light direction must have a finite nonzero length and bounded components');
     }
-    updateLightingState(this.lighting, this.withVolumeEmissionLights(environment, environment.volumeTime ?? frame.time ?? 0), { world: this.world });
+    updateLightingState(this.lighting, environment, { world: this.world });
     this.syncViewTransform(environment);
     // The shadow view follows the sun, so a moved sun redraws the map.
     const lightChanged = String(this.activeLightDirection) !== String(environment.lightDirection);

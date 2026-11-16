@@ -12,6 +12,8 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'scripts/summarize-addon-tests.mjs'
+      - 'scripts/agent-memory-guard.mjs'
+      - 'scripts/check-first-native-job.mjs'
       - '.github/workflows/cook-addon.yml'
   push:
     branches: [main]
@@ -47,7 +49,7 @@ jobs:
       - name: Install lavapipe and report what it supports
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq mesa-vulkan-drivers vulkan-tools
+          sudo apt-get install -y -qq mesa-vulkan-drivers vulkan-tools ffmpeg
           {
             echo '### Vulkan adapter'
             echo '```'
@@ -56,6 +58,19 @@ jobs:
             vulkaninfo 2>&1 | grep -E 'VK_KHR_(ray_query|acceleration_structure)' | sort -u || echo 'no VK_KHR_ray_query or VK_KHR_acceleration_structure'
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
+      # A fresh runner has an empty Mesa shader cache, so the first native job compiles the kernel cold on lavapipe. That job
+      # once failed the memory guard (#1186); this step runs it first, with the cache off, and fails the job if it does not
+      # complete on the native backend.
+      - name: First native render job on a fresh runner completes under the memory guard
+        env:
+          MESA_SHADER_CACHE_DISABLE: 'true'
+          PROBE_FRAMES: '12'
+          PROBE_MAX_SECONDS: '600'
+          PROBE_RUNTIME_BACKEND: cpu
+        run: |
+          npm run build
+          node scripts/build-mcp.mjs
+          node scripts/check-first-native-job.mjs . 960x540
       - name: Run the addon tests
         run: |
           start=$(date +%s)

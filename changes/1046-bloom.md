@@ -1,1 +1,1 @@
-- An emitting local volume now adds a point light at its centre, so a fireball lights the ground and props around it, and its glow feeds bloom; `emissionLight: false` turns the light off per volume (#1046).
+- Bloom now sees the glow of emitting local volumes, so a fireball blooms (#1046).

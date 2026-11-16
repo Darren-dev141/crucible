@@ -55,6 +55,18 @@ export function packLocalVolumes(volumes, buffers) {
 }
 
 /**
+ * True when any packed volume adds light to the frame: a glow colour with strength, or a grid's blackbody light. The renderer asks
+ * this to decide whether bloom needs the volumes in its input. Pass the buffers of packLocalVolumes.
+ */
+export function packedVolumesEmit(buffers) {
+  for (let index = 0; index < buffers.count; index++) {
+    const glow = buffers.emission[index * 4] + buffers.emission[index * 4 + 1] + buffers.emission[index * 4 + 2];
+    if (glow > 0 || buffers.grid[index * 4 + 2] > 0) return true;
+  }
+  return false;
+}
+
+/**
  * How much the key light of a scattering volume is scaled over the single-scatter estimate. A smoke thick enough to show form scatters the sun many times
  * and reads about as bright as a surface in the same sun, which one isotropic scatter (1 / 4 pi of the key colour) leaves far too dark; the gain keeps the
  * sunlit side clearly above the shaded side. The rasterizer and the CPU path tracer both apply it.
