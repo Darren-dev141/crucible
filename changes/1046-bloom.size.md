@@ -1,0 +1,5 @@
+- entry:fog-shader: bloom now picks up the glow of emitting volumes (an agent-facing look capability); the cost is the bloom source pass in the lazy fog code and one call site
+- scene:agent-scene+lazy: bloom now picks up the glow of emitting volumes (an agent-facing look capability); the cost is the bloom source pass in the lazy fog code and one call site
+- goal:lit-box: bloom now picks up the glow of emitting volumes (an agent-facing look capability); the cost is the bloom source pass in the lazy fog code and one call site
+- goal:gltf-box: bloom now picks up the glow of emitting volumes (an agent-facing look capability); the cost is the bloom source pass in the lazy fog code and one call site
+- goal:agent-scene: bloom now picks up the glow of emitting volumes (an agent-facing look capability); the cost is the bloom source pass in the lazy fog code and one call site
