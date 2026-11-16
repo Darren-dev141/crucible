@@ -1,6 +1,6 @@
 import { MAX_LOCAL_VOLUMES, LOCAL_VOLUME_MAXIMUM_STEPS, ONE_GRID_VOLUME_MESSAGE, resolveLocalVolumesWith } from './local-volume-resolve.js';
 import { localVolumeNoise } from './local-volume-noise.js';
-import { sampleVolumeGrid, volumeGridFloats } from './volume-grid.js';
+import { sampleVolumeGrid, bakedGridEmission, volumeGridFloats } from './volume-grid.js';
 import { LOCAL_VOLUME_RAMP_STOPS, rampSourceCode, resolveEmissionRamp } from './local-volume-ramp.js';
 import { bakeEmissionRamp } from './local-volume-ramp-bake.js';
 import { resolveGridVolume, LOCAL_VOLUME_GRID_MAXIMUM_STEPS } from './local-volume-grid.js';
@@ -167,16 +167,20 @@ export function warpedFadePosition(position, noiseAmount, noise) {
 
 const gridScratch = new Float64Array(3);
 
-/** Writes the density, temperature and flame of a grid volume at a world point into `out` (all 0 outside its box) and returns it. */
-export function localVolumeGridSample(volume, x, y, z, out) {
+/**
+ * Writes the density, temperature and flame of a grid volume at a world point into `out` (all 0 outside its box) and returns it. With `withBlackbody`, `out` has
+ * six entries and out[3] to out[5] get the baked blackbody radiance there, before the blackbody intensity and emission strength (see sampleVolumeGrid).
+ */
+export function localVolumeGridSample(volume, x, y, z, out, withBlackbody = false) {
   const unitX = (x - volume.center[0]) / volume.size[0] + 0.5;
   const unitY = (y - volume.center[1]) / volume.size[1] + 0.5;
   const unitZ = (z - volume.center[2]) / volume.size[2] + 0.5;
   if (unitX < 0 || unitX > 1 || unitY < 0 || unitY > 1 || unitZ < 0 || unitZ > 1) {
-    out[0] = out[1] = out[2] = 0;
+    out.fill(0);
     return out;
   }
-  return sampleVolumeGrid(volumeGridFloats(volume.gridData), volume.gridData.resolution, unitX, unitY, unitZ, out);
+  const baked = withBlackbody ? bakedGridEmission(volume.gridData, volume.temperatureScale) : null;
+  return sampleVolumeGrid(volumeGridFloats(volume.gridData), volume.gridData.resolution, unitX, unitY, unitZ, out, baked);
 }
 
 /** The density factor of a volume at a point: 1 at the core, fading over the outer `falloff` share, times the noise factor (up to 2) when `noiseAmount` is above 0, as the post shader does. With noise the fade edge is also pushed in and out (LOCAL_VOLUME_EDGE_WARP). */

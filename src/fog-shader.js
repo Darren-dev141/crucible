@@ -6,7 +6,7 @@ import { LOCAL_VOLUME_RAMP_STOPS } from './local-volume-ramp.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
-import { BLACKBODY_REFERENCE_KELVIN, BLACKBODY_MAXIMUM_GAIN, GRID_BORDER_VOXELS, GRID_TEMPERATURE_CUBIC } from './volume-grid.js';
+import { GRID_BORDER_VOXELS, bakedGridEmission, floatToHalf } from './volume-grid.js';
 import { drawMeshVolumes } from './mesh-volume-pass.js';
 import { FogFieldTexture, createFogLightBuffers, packFogLights, volumeShadowAmbient, DEFAULT_FLOW_STRENGTH, DEFAULT_FLOW_PERIOD, resolveFogDetail, fogUsesDetail } from './fog-field.js';
 
@@ -203,14 +203,38 @@ function bindLocalVolumes(renderer, post, frame, environment) {
   context.activeTexture(context.TEXTURE8);
   context.bindTexture(context.TEXTURE_3D, localGridTexture(renderer, buffers.gridVolume?.gridData ?? null));
   context.uniform1i(locate('localGridTexture'), 8);
+  context.activeTexture(context.TEXTURE9);
+  context.bindTexture(context.TEXTURE_3D, localGridEmissionTexture(renderer, buffers.gridVolume));
+  context.uniform1i(locate('localGridEmissionTexture'), 9);
 }
 
-// The 3D texture of a grid volume: RGBA16F, r density, g temperature, b flame (the density when the grid has no flame channel), linear and clamped, uploaded
-// once per grid. A frame with no grid volume gets a 1 x 1 x 1 texture, so the sampler is always valid.
+// The two 3D textures of a grid volume, RGBA16F, linear and clamped, uploaded once per grid (and per temperature scale for the emission): `localGridTexture` holds
+// r density, g temperature, b flame (the density when the grid has no flame channel) and `localGridEmissionTexture` the blackbody radiance of each voxel's
+// temperature, baked on the CPU (bakedGridEmission) so the march reads it with one linear tap and the interpolation happens after the blackbody, as Cycles does
+// (#1752). Both carry GRID_BORDER_VOXELS empty voxels on every face. A frame with no grid volume gets 1 x 1 x 1 textures, so the samplers are always valid.
 function localGridTexture(renderer, grid) {
+  return uploadGridTexture(renderer, 'localGridTextureCache', grid, null, (texels, voxel, texel) => {
+    const { density, temperature, flame } = grid.channels;
+    texels[texel] = density[voxel];
+    texels[texel + 1] = temperature ? temperature[voxel] : 0;
+    texels[texel + 2] = (flame ?? density)[voxel];
+  });
+}
+
+function localGridEmissionTexture(renderer, volume) {
+  const grid = volume?.gridData ?? null;
+  const baked = grid ? bakedGridEmission(grid, volume.temperatureScale) : null;
+  return uploadGridTexture(renderer, 'localGridEmissionCache', grid, volume?.temperatureScale ?? 0, (texels, voxel, texel) => {
+    texels[texel] = floatToHalf(baked.red[voxel]);
+    texels[texel + 1] = floatToHalf(baked.green[voxel]);
+    texels[texel + 2] = floatToHalf(baked.blue[voxel]);
+  });
+}
+
+function uploadGridTexture(renderer, cacheName, grid, scale, writeVoxel) {
   const context = renderer.context;
-  const cached = renderer.localGridTextureCache;
-  if (cached && cached.grid === grid) return cached.texture;
+  const cached = renderer[cacheName];
+  if (cached && cached.grid === grid && cached.scale === scale) return cached.texture;
   const resolution = grid ? grid.resolution : [1, 1, 1];
   // The next frame of a sequence has the resolution of the one before: overwrite its texture instead of making a new one.
   const reuse = cached && cached.resolution.join('x') === resolution.join('x');
@@ -225,15 +249,12 @@ function localGridTexture(renderer, grid) {
   const padded = resolution.map(count => count + 2 * GRID_BORDER_VOXELS);
   const texels = new Uint16Array(padded[0] * padded[1] * padded[2] * 4);
   if (grid) {
-    const { density, temperature, flame } = grid.channels;
     for (let z = 0; z < resolution[2]; z++) {
       for (let y = 0; y < resolution[1]; y++) {
         for (let x = 0; x < resolution[0]; x++) {
           const voxel = x + resolution[0] * (y + resolution[1] * z);
           const texel = ((x + GRID_BORDER_VOXELS) + padded[0] * ((y + GRID_BORDER_VOXELS) + padded[1] * (z + GRID_BORDER_VOXELS))) * 4;
-          texels[texel] = density[voxel];
-          texels[texel + 1] = temperature ? temperature[voxel] : 0;
-          texels[texel + 2] = (flame ?? density)[voxel];
+          writeVoxel(texels, voxel, texel);
         }
       }
     }
@@ -244,7 +265,7 @@ function localGridTexture(renderer, grid) {
   } else {
     context.texImage3D(context.TEXTURE_3D, 0, context.RGBA16F, padded[0], padded[1], padded[2], 0, context.RGBA, context.HALF_FLOAT, texels);
   }
-  renderer.localGridTextureCache = { grid, texture, resolution };
+  renderer[cacheName] = { grid, scale, texture, resolution };
   return texture;
 }
 
@@ -289,6 +310,7 @@ uniform vec4 localVolumeGrid[8];
 uniform vec4 localVolumeRampSetup[8];
 uniform vec4 localVolumeRamp[${MAX_LOCAL_VOLUMES * LOCAL_VOLUME_RAMP_STOPS}];
 uniform highp sampler3D localGridTexture;
+uniform highp sampler3D localGridEmissionTexture;
 `;
 
 // Each volume is marched on its own between its entry and exit (cut at the first surface) and composited nearest first: the colour
@@ -352,49 +374,17 @@ float localVolumeWarpedFade(float position, float noiseAmount, float noise) {
 }
 // A grid volume (#1045) reads its box as a 3D texture: x density, y temperature, z flame. localVolumeGrid holds, per volume, x 1 for a grid, y the temperature
 // scale, z the blackbody intensity times the emission strength and w the anisotropy. volume-grid.js (blackbodyRadiance) repeats the blackbody.
-// Cubic B-spline of the temperature channel through eight linear taps, in padded texel units (a texel centre is at i + 0.5). volume-grid.js repeats the weights.
-float localGridCubicTemperature(vec3 texel, vec3 paddedSize) {
-  vec3 cell = texel - 0.5;
-  vec3 base = floor(cell);
-  vec3 t = cell - base;
-  vec3 t2 = t * t;
-  vec3 t3 = t2 * t;
-  vec3 w0 = (1.0 - t) * (1.0 - t) * (1.0 - t) / 6.0;
-  vec3 w1 = (3.0 * t3 - 6.0 * t2 + 4.0) / 6.0;
-  vec3 w2 = (-3.0 * t3 + 3.0 * t2 + 3.0 * t + 1.0) / 6.0;
-  vec3 w3 = t3 / 6.0;
-  vec3 g0 = w0 + w1;
-  vec3 g1 = w2 + w3;
-  vec3 h0 = base - 0.5 + w1 / g0;
-  vec3 h1 = base + 1.5 + w3 / g1;
-  float x0 = textureLod(localGridTexture, vec3(h0.x, h0.y, h0.z) / paddedSize, 0.0).g;
-  float x1 = textureLod(localGridTexture, vec3(h1.x, h0.y, h0.z) / paddedSize, 0.0).g;
-  float x2 = textureLod(localGridTexture, vec3(h0.x, h1.y, h0.z) / paddedSize, 0.0).g;
-  float x3 = textureLod(localGridTexture, vec3(h1.x, h1.y, h0.z) / paddedSize, 0.0).g;
-  float x4 = textureLod(localGridTexture, vec3(h0.x, h0.y, h1.z) / paddedSize, 0.0).g;
-  float x5 = textureLod(localGridTexture, vec3(h1.x, h0.y, h1.z) / paddedSize, 0.0).g;
-  float x6 = textureLod(localGridTexture, vec3(h0.x, h1.y, h1.z) / paddedSize, 0.0).g;
-  float x7 = textureLod(localGridTexture, vec3(h1.x, h1.y, h1.z) / paddedSize, 0.0).g;
-  float lowZ = g0.y * (g0.x * x0 + g1.x * x1) + g1.y * (g0.x * x2 + g1.x * x3);
-  float highZ = g0.y * (g0.x * x4 + g1.x * x5) + g1.y * (g0.x * x6 + g1.x * x7);
-  return g0.z * lowZ + g1.z * highZ;
-}
+// A grid cell at a world point: x density, y temperature, z flame, all linear taps of the padded texture (a texel centre is at i + 0.5).
 vec3 localGridSample(int index, vec3 position) {
   vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
   vec3 paddedSize = vec3(textureSize(localGridTexture, 0));
-  vec3 texel = unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0;
-  vec3 cell = textureLod(localGridTexture, texel / paddedSize, 0.0).rgb;
-  if (${GRID_TEMPERATURE_CUBIC ? 'true' : 'false'}) cell.y = localGridCubicTemperature(texel, paddedSize);
-  return cell;
+  return textureLod(localGridTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
 }
-vec3 localGridBlackbody(float kelvin) {
-  if (kelvin <= 0.0) return vec3(0.0);
-  float hundreds = max(kelvin, 1000.0) / 100.0;
-  float red = hundreds <= 66.0 ? 255.0 : 329.698727446 * pow(hundreds - 60.0, -0.1332047592);
-  float green = hundreds <= 66.0 ? 99.4708025861 * log(hundreds) - 161.1195681661 : 288.1221695283 * pow(hundreds - 60.0, -0.0755148492);
-  float blue = hundreds >= 66.0 ? 255.0 : (hundreds <= 19.0 ? 0.0 : 138.5177312231 * log(hundreds - 10.0) - 305.0447927307);
-  float gain = min(pow(kelvin / ${BLACKBODY_REFERENCE_KELVIN.toFixed(1)}, 4.0), ${BLACKBODY_MAXIMUM_GAIN.toFixed(1)});
-  return pow(clamp(vec3(red, green, blue), 0.0, 255.0) / 255.0, vec3(2.2)) * gain;
+// The baked blackbody radiance at a world point (volume-grid.js bakedGridEmission), before the blackbody intensity and the emission strength.
+vec3 localGridBlackbody(int index, vec3 position) {
+  vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
+  vec3 paddedSize = vec3(textureSize(localGridEmissionTexture, 0));
+  return textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
 }
 // The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
 // code (0 none, 1 density, 2 temperature, 3 flame), y the stop count and z, w the source range; the stops are baked in local-volume-ramp.js with the exposure and
@@ -603,7 +593,7 @@ vec3 localVolumes(vec3 background) {
         vec3 position = origin + direction * (entry + (float(step) + gridJitter) * gridStepSize);
         vec3 cell = localGridSample(nearest, position);
         vec3 extinction = localVolumeAbsorption[nearest].rgb * (cell.x * gridStepSize);
-        radiance += transmittance * (localVolumeEmission[nearest].rgb * cell.z + localGridBlackbody(cell.y * localVolumeGrid[nearest].y) * localVolumeGrid[nearest].z) * gridStepSize;
+        radiance += transmittance * (localVolumeEmission[nearest].rgb * cell.z + localGridBlackbody(nearest, position) * localVolumeGrid[nearest].z) * gridStepSize;
         if (localVolumeRampSetup[nearest].y > 0.5) radiance += transmittance * localVolumeRampLight(nearest, localVolumeRampSetup[nearest].x < 1.5 ? cell.x : (localVolumeRampSetup[nearest].x < 2.5 ? cell.y : cell.z)) * gridStepSize;
         if (gridScatter > 0.0 && cell.x > 0.0) radiance += transmittance * (gridScatter * (1.0 - exp(-extinction))) * localVolumeInScatter(nearest, position, direction);
         transmittance *= exp(-extinction);

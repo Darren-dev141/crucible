@@ -19,8 +19,6 @@ export const BLACKBODY_REFERENCE_KELVIN = 1500;
 export const BLACKBODY_MAXIMUM_GAIN = 50;
 /** Empty voxels the rasterizer's texture adds on every face of a grid, so the field ramps to 0 across the outer half voxel as an OpenVDB grid does (#1752). */
 export const GRID_BORDER_VOXELS = 1;
-/** Whether the temperature channel is read with a cubic B-spline (#1752); density and flame stay trilinear. */
-export const GRID_TEMPERATURE_CUBIC = true;
 const BLACKBODY_MINIMUM_KELVIN = 1000;
 
 const floatBuffer = new Float32Array(1);
@@ -192,65 +190,88 @@ export function volumeGridFloats(grid) {
 }
 
 /**
- * Writes the density, temperature and flame at a point of the unit cube into `out`, with texel centres at (i + 0.5) / n and 0 beyond the grid's faces, as an
- * OpenVDB grid reads (the rasterizer's texture has a border of empty voxels, GRID_BORDER_VOXELS, for the same ramp). Density and flame are trilinear; the
- * temperature is a cubic B-spline when GRID_TEMPERATURE_CUBIC is on, because the blackbody raises it to the fourth power and a trilinear field has a crease at
- * every voxel face that the fourth power turns into a bright line (#1752). A channel the grid lacks reads 0, and `flame` reads the density when there is no flame channel.
+ * Writes the density, temperature and flame at a point of the unit cube into `out`, trilinear with texel centres at (i + 0.5) / n and 0 beyond the grid's faces,
+ * as an OpenVDB grid reads (the rasterizer's textures have a border of empty voxels, GRID_BORDER_VOXELS, for the same ramp). A channel the grid lacks reads 0,
+ * and `flame` reads the density when there is no flame channel. With `baked` (bakedGridEmission) the blackbody radiance at the point goes to out[3] to out[5],
+ * interpolated after the blackbody, so the field is what Cycles' one linear tap averages to and the fourth power of the blackbody never amplifies the crease of
+ * an interpolated temperature (#1752). `out` then needs six entries.
  */
-export function sampleVolumeGrid(floats, resolution, u, v, w, out) {
-  const cell = [u * resolution[0] - 0.5, v * resolution[1] - 0.5, w * resolution[2] - 0.5];
-  const base = cell.map(Math.floor);
-  const fraction = cell.map((value, axis) => value - base[axis]);
-  const channelNames = ['density', 'temperature', 'flame'];
-  for (let channel = 0; channel < 3; channel++) {
-    const data = floats[channelNames[channel]] ?? (channel === 2 ? floats.density : null);
-    if (!data) {
-      out[channel] = 0;
-      continue;
-    }
-    out[channel] = channel === 1 && GRID_TEMPERATURE_CUBIC ? sampleCubic(data, resolution, base, fraction) : sampleLinear(data, resolution, base, fraction);
+export function sampleVolumeGrid(floats, resolution, u, v, w, out, baked = null) {
+  gatherCorners(resolution, u, v, w);
+  out[0] = mixCorners(floats.density);
+  out[1] = mixCorners(floats.temperature);
+  out[2] = mixCorners(floats.flame ?? floats.density);
+  if (baked) {
+    out[3] = mixCorners(baked.red);
+    out[4] = mixCorners(baked.green);
+    out[5] = mixCorners(baked.blue);
   }
   return out;
 }
 
-function voxelAt(data, resolution, x, y, z) {
-  if (x < 0 || y < 0 || z < 0 || x >= resolution[0] || y >= resolution[1] || z >= resolution[2]) return 0;
-  return data[x + resolution[0] * (y + resolution[1] * z)];
-}
+const cornerVoxel = new Int32Array(8);
+const cornerWeight = new Float64Array(8);
 
-function sampleLinear(data, resolution, base, fraction) {
-  let total = 0;
+// The eight voxels around a point and their trilinear weights; a voxel beyond the grid, or with weight 0, is -1 and reads 0.
+function gatherCorners(resolution, u, v, w) {
+  const x = u * resolution[0] - 0.5;
+  const y = v * resolution[1] - 0.5;
+  const z = w * resolution[2] - 0.5;
+  const baseX = Math.floor(x);
+  const baseY = Math.floor(y);
+  const baseZ = Math.floor(z);
+  const fractionX = x - baseX;
+  const fractionY = y - baseY;
+  const fractionZ = z - baseZ;
   for (let corner = 0; corner < 8; corner++) {
     const stepX = corner & 1;
     const stepY = (corner >> 1) & 1;
     const stepZ = (corner >> 2) & 1;
-    const weight = (stepX ? fraction[0] : 1 - fraction[0]) * (stepY ? fraction[1] : 1 - fraction[1]) * (stepZ ? fraction[2] : 1 - fraction[2]);
-    if (weight !== 0) total += weight * voxelAt(data, resolution, base[0] + stepX, base[1] + stepY, base[2] + stepZ);
+    const voxelX = baseX + stepX;
+    const voxelY = baseY + stepY;
+    const voxelZ = baseZ + stepZ;
+    const weight = (stepX ? fractionX : 1 - fractionX) * (stepY ? fractionY : 1 - fractionY) * (stepZ ? fractionZ : 1 - fractionZ);
+    const inside = voxelX >= 0 && voxelY >= 0 && voxelZ >= 0 && voxelX < resolution[0] && voxelY < resolution[1] && voxelZ < resolution[2];
+    cornerVoxel[corner] = inside && weight !== 0 ? voxelX + resolution[0] * (voxelY + resolution[1] * voxelZ) : -1;
+    cornerWeight[corner] = weight;
+  }
+}
+
+function mixCorners(data) {
+  if (!data) return 0;
+  let total = 0;
+  for (let corner = 0; corner < 8; corner++) {
+    const voxel = cornerVoxel[corner];
+    if (voxel >= 0) total += cornerWeight[corner] * data[voxel];
   }
   return total;
 }
 
-/** The four cubic B-spline weights for the voxels base - 1 to base + 2 at `fraction` past `base`. They sum to 1. */
-export function cubicBSplineWeights(fraction) {
-  const squared = fraction * fraction;
-  const cubed = squared * fraction;
-  return [(1 - fraction) ** 3 / 6, (3 * cubed - 6 * squared + 4) / 6, (-3 * cubed + 3 * squared + 3 * fraction + 1) / 6, cubed / 6];
-}
+const bakedEmissionByGrid = new WeakMap();
 
-function sampleCubic(data, resolution, base, fraction) {
-  const weightsX = cubicBSplineWeights(fraction[0]);
-  const weightsY = cubicBSplineWeights(fraction[1]);
-  const weightsZ = cubicBSplineWeights(fraction[2]);
-  let total = 0;
-  for (let offsetZ = 0; offsetZ < 4; offsetZ++) {
-    for (let offsetY = 0; offsetY < 4; offsetY++) {
-      const weightYZ = weightsY[offsetY] * weightsZ[offsetZ];
-      for (let offsetX = 0; offsetX < 4; offsetX++) {
-        total += weightsX[offsetX] * weightYZ * voxelAt(data, resolution, base[0] + offsetX - 1, base[1] + offsetY - 1, base[2] + offsetZ - 1);
-      }
+/**
+ * The blackbody radiance of every voxel's temperature times `temperatureScale`, as three Float32Arrays (`red`, `green`, `blue`) with the grid's voxel order,
+ * decoded once per grid and scale. Each value is at most BLACKBODY_MAXIMUM_GAIN, far under the half float limit of 65504, so the rasterizer uploads it as is. The
+ * blackbody intensity and emission strength stay uniforms. A grid without a temperature channel bakes to all zeros.
+ */
+export function bakedGridEmission(grid, temperatureScale) {
+  const cached = bakedEmissionByGrid.get(grid);
+  if (cached?.temperatureScale === temperatureScale) return cached;
+  const temperature = volumeGridFloats(grid).temperature;
+  const voxels = grid.resolution[0] * grid.resolution[1] * grid.resolution[2];
+  const baked = { temperatureScale, red: new Float32Array(voxels), green: new Float32Array(voxels), blue: new Float32Array(voxels) };
+  const radiance = [0, 0, 0];
+  if (temperature) {
+    for (let voxel = 0; voxel < voxels; voxel++) {
+      if (!(temperature[voxel] > 0)) continue;
+      blackbodyRadiance(temperature[voxel] * temperatureScale, radiance);
+      baked.red[voxel] = radiance[0];
+      baked.green[voxel] = radiance[1];
+      baked.blue[voxel] = radiance[2];
     }
   }
-  return total;
+  bakedEmissionByGrid.set(grid, baked);
+  return baked;
 }
 
 /** Writes the linear RGB radiance of a blackbody at `kelvin` into `out` (zero below 0 K). See BLACKBODY_REFERENCE_KELVIN. */
