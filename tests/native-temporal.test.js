@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   TEMPORAL_DEFAULTS, chooseNativeTemporal, createTemporalAccumulator, onlyCameraDiffers, readCameraView, temporalFrameSeed,
 } from '../scripts/agent-native-temporal.mjs';
+import { readFileSync } from 'node:fs';
+import { cookFile, cookModule, cookTest } from './support/cook.js';
 
 const WIDTH = 32;
 const HEIGHT = 20;
@@ -17,7 +19,7 @@ const FILM_EXPOSURE_BYTE = 288;
 
 // A FORMAT-v2 kernel parameter block for a camera at `position` that looks down the negative z axis.
 function paramsForCamera(position, { seed = 1, lensShift = [0, 0], orthographic = false, exposure = 1 } = {}) {
-  const block = new Uint8Array(320);
+  const block = new Uint8Array(336);
   const view = new DataView(block.buffer);
   view.setUint32(SEED_BYTE, seed, true);
   view.setUint32(KERNEL_FLAGS_BYTE, 1 | (orthographic ? 8 : 0), true);
@@ -213,7 +215,7 @@ test('wrong input is refused with what to pass instead', () => {
   const accumulator = createTemporalAccumulator({ width: WIDTH, height: HEIGHT });
   const frame = wallFrame([0, 0, 0]);
   assert.throws(() => accumulator.accumulate({ ...frame, color: new Float32Array(4), kernelParams: paramsForCamera([0, 0, 0]) }), /`color` must be a Float32Array of 1920 floats \(3 per pixel\)/);
-  assert.throws(() => accumulator.accumulate({ ...frame, kernelParams: new Uint8Array(16) }), /`kernelParams` must be the 320 byte FORMAT-v2 block/);
+  assert.throws(() => accumulator.accumulate({ ...frame, kernelParams: new Uint8Array(16) }), /`kernelParams` must be the 336 byte FORMAT-v2 block/);
 });
 
 test('each frame of a blended job gets its own seed, and the switch reads the environment', () => {
@@ -223,4 +225,27 @@ test('each frame of a blended job gets its own seed, and the switch reads the en
   assert.equal(temporalFrameSeed(4294967295, 2), 1);
   assert.equal(chooseNativeTemporal({}), true);
   assert.equal(chooseNativeTemporal({ JS67_NATIVE_TEMPORAL: 'off' }), false);
+});
+
+test('a change of the anamorphic aperture ratio alone is a camera change', () => {
+  const first = paramsForCamera([0, 0, 0]);
+  const second = paramsForCamera([0, 0, 0]);
+  new DataView(second.buffer).setFloat32(320, 2, true);
+  assert.equal(onlyCameraDiffers(first, second), true);
+  const reserved = paramsForCamera([0, 0, 0]);
+  reserved[330] = 1;
+  assert.equal(onlyCameraDiffers(first, reserved), false);
+});
+
+// The blocks above are built by hand, so this pins the size and layout to the blocks Cook really packs (#1729).
+cookTest('a kernel parameter block packed by Cook passes the camera reader and the blend', async () => {
+  const { decodePackFile } = await cookModule('pack-file');
+  const { kernelParams } = decodePackFile(readFileSync(cookFile('fixtures/room.cookpack')));
+  const camera = readCameraView(kernelParams);
+  assert.ok(camera.forward.some(value => value !== 0), 'the room camera looks somewhere');
+  const accumulator = createTemporalAccumulator({ width: WIDTH, height: HEIGHT });
+  const frame = wallFrame([0, 0, 0]);
+  const shown = accumulator.accumulate({ ...frame, kernelParams });
+  assert.equal(shown.color.length, PIXEL_COUNT * 3);
+  assert.notEqual(shown.restarted, null, "the first frame starts the history");
 });
