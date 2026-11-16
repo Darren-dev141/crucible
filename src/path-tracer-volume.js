@@ -1,5 +1,5 @@
 import { resolveVolumeFog } from './volumetric.js';
-import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN } from './local-volumes.js';
+import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_SURFACE_SHADOW_TAPS } from './local-volumes.js';
 import { countOpenEdges } from './local-volume-parts.js';
 import { blackbodyRadiance } from './volume-grid.js';
 import { buildTriangleBvh } from './triangle-bvh.js';
@@ -309,5 +309,35 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
         }
       }
     }
+  };
+}
+
+/**
+ * Builds the function that dims the sun's direct light at a surface by the local volumes that cast shadows (#1047), or returns null when none does.
+ * It writes `exp(-depth)` per channel into `out`, where depth sums, over the box and sphere volumes with `castShadow` true, the optical depth between
+ * the point and the sun from midpoint taps of the saturated profile with its noise. The rasterizer's `localVolumeSurfaceShadow` repeats it
+ * (its post pass scales the surface colour by mix(1, exp(-depth), sun visibility): the sky and fill light reach the frame after it and stay as they were).
+ */
+export function createLocalVolumeSurfaceShadow(volumes) {
+  const casters = volumes.filter(volume => volume.castShadow === true && !volume.mesh && !volume.gridData && volume.shape !== 'grid' && volume.shape !== 'mesh');
+  if (casters.length === 0) return null;
+  const span = new Float64Array(2);
+  return function writeSurfaceShadow(x, y, z, directionX, directionY, directionZ, out) {
+    out[0] = 0;
+    out[1] = 0;
+    out[2] = 0;
+    for (const volume of casters) {
+      if (!localVolumeInterval(volume, x, y, z, directionX, directionY, directionZ, Infinity, span)) continue;
+      const entry = Math.max(span[0], 0);
+      const length = span[1] - entry;
+      if (length <= 0) continue;
+      let profileSum = 0;
+      for (let tap = 0; tap < LOCAL_VOLUME_SURFACE_SHADOW_TAPS; tap++) {
+        const distance = entry + length * (tap + 0.5) / LOCAL_VOLUME_SURFACE_SHADOW_TAPS;
+        profileSum += Math.min(localVolumeProfile(volume, x + directionX * distance, y + directionY * distance, z + directionZ * distance, true) * LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, 1);
+      }
+      for (let channel = 0; channel < 3; channel++) out[channel] += volume.absorption[channel] * volume.density * profileSum * length / LOCAL_VOLUME_SURFACE_SHADOW_TAPS;
+    }
+    for (let channel = 0; channel < 3; channel++) out[channel] = Math.exp(-out[channel] * LOCAL_VOLUME_SHADOW_STRENGTH);
   };
 }
