@@ -305,7 +305,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   async function assertPlacedAssetsFitBeforeReading(value, motionSourceIds = [], sceneValue = undefined) {
     const catalogIds = catalogIdsOf(value);
     if (sceneValue) for (const id of catalogIdsOf(sceneValue)) catalogIds.add(id);
-    let total = volumeGridFileBytes(value);
+    // With a scene, its grid files count too, once per name even when the edit names the same file.
+    let total = volumeGridFileBytes(sceneValue ? [value, sceneValue] : value);
     if (catalogIds.size || motionSourceIds.length) {
       const readyCatalog = await catalog();
       for (const id of [...catalogIds, ...motionSourceIds]) total += await readyCatalog.size(id);
@@ -318,6 +319,15 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (!catalogIdsOf(editedValue).size) return;
     const { recipe } = await invoke('exportRecipe', { sessionId });
     await assertPlacedAssetsFitBeforeReading(editedValue, [], recipe);
+  }
+
+  /**
+   * Refuses a render job or review of a scene whose unique assets pass the combined limit, before the scene page is suspended. The job would fail
+   * while loading them, and the recovery that reloads the scene would then crash the page (#1848). An asset snapshot is one catalog file, already capped per file.
+   */
+  async function assertSceneFitsBeforeJob(recipe) {
+    if (recipe?.format === 'crucible.asset') return;
+    await assertPlacedAssetsFitBeforeReading({}, [], recipe);
   }
 
   /** Bytes of the catalog assets a recipe or edit list places, base64 by asset id, for the page that decodes them. */
@@ -709,6 +719,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     signal.addEventListener('abort', abort, { once: true });
     try {
       signal.throwIfAborted();
+      await assertSceneFitsBeforeJob(snapshot.recipe);
       await enqueue(async () => {
         await invoke('suspend', { sessionId }, PAGE_HANDOFF_TIMEOUT_MS);
         suspended = true;
@@ -1271,6 +1282,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         await requirePreviewRenderer();
         requireSession(settings.sessionId);
         const snapshot = await invoke('snapshot', settings);
+        await assertSceneFitsBeforeJob(snapshot.recipe);
         const branchRecipes = new Map();
         for (const name of settings.branchNames) {
           branchRecipes.set(name, await invoke('branchRecipe', { sessionId: settings.sessionId, name }));
