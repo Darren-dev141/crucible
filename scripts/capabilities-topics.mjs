@@ -142,7 +142,11 @@ export function answerCapabilities(capabilities, topic, outlineSources) {
     throw new Error(`Unknown topic ${topic}.${didYouMean} Topics: ${allNames.join(', ')}.`);
   }
   const answeredTopic = [name, branchName].filter(Boolean).join('.');
-  if (source) return { topic: answeredTopic, ...(notes === undefined ? {} : { notes }), fields: outlineAnswer(name, branchName, source) };
+  if (source) {
+    const uvNotes = branchName?.startsWith('uv_') ? sceneTopics(capabilities.scene).get('meshUv') : undefined;
+    // A uv branch carries the meshUv notes, so one call answers which edit to use and what to do next.
+    return { topic: answeredTopic, ...(notes === undefined ? {} : { notes }), ...(uvNotes === undefined ? {} : { uvNotes }), fields: outlineAnswer(name, branchName, source) };
+  }
   // A dotted name picks one entry of a plain topic: examples.scene_apply.
   const entry = notes !== null && typeof notes === 'object' && branchName !== undefined && Object.hasOwn(notes, branchName);
   if (entry) return { topic: answeredTopic, value: notes[branchName] };

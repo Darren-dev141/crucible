@@ -168,7 +168,9 @@ A bench row: model half a bench, mirror it, array the result:
 ], "stack": [{ "op": "mirror" }, { "op": "array", "count": 3, "offset": [0, 0, -1.4], "relativeOffset": [0, 0, 0] }] }
 ```
 
-UVs for a textured part: finish the shape, then `uv_unwrap` as the last edit (or the last stack node, after mirror or
+UVs for a box-like part (crate body, frame, panel, lid, slab): add `{ "op": "uv_project", "mode": "cube" }` as the last edit.
+Every face keeps even texel density, with no seams to choose and nothing to check; use `cylinder` for tubes and `sphere` for balls.
+For organic or irregular shapes, finish the shape, then `uv_unwrap` as the last edit (or the last stack node, after mirror or
 array). Seams default to edges sharper than 60 degrees; closed smooth shapes are split into charts on their own.
 Check the result: `flipped` must be 0, and `areaDistortion` above about 0.15 means texture will visibly stretch, so
 add seams with `boundaryOf` around the part that stretches.
