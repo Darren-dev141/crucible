@@ -117,4 +117,10 @@ test('the explosion-blast task passes with its reference and rejects a missing, 
   const farBlast = structuredClone(REFERENCES['explosion-blast']);
   farBlast.environment.localVolumes[0].center = [3.5, 2, 0];
   assert.deepEqual(await failed(farBlast, { scene_look: 1 }), ['blast between the pillars']);
+  const movedPillar = structuredClone(REFERENCES['explosion-blast']);
+  movedPillar.nodes.find(node => node.id === 'pillar-2').translation = [1, 1.5, -2.5];
+  assert.deepEqual(await failed(movedPillar, { scene_look: 1 }), ['floor and pillars untouched']);
+  const noFloor = structuredClone(REFERENCES['explosion-blast']);
+  noFloor.nodes = noFloor.nodes.filter(node => node.id !== 'floor');
+  assert.deepEqual(await failed(noFloor, { scene_look: 1 }), ['floor and pillars untouched']);
 });
