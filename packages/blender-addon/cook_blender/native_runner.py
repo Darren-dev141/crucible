@@ -1,5 +1,6 @@
 """Finds the Cook native tracer and runs it as a subprocess. No bpy: usable and testable in plain Python."""
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -17,9 +18,12 @@ class CookSetupError(RuntimeError):
     """The tracer cannot be started; the message says what to set."""
 
 
-def resolve_native_directory(preference_value, environment=None):
+def resolve_native_directory(preference_value, environment=None, expand_path=None):
+    """`expand_path` turns Blender's `//` blend-relative paths into absolute ones (bpy.path.abspath); it defaults to no change."""
     environment = os.environ if environment is None else environment
     candidate = (preference_value or "").strip() or environment.get(NATIVE_DIRECTORY_VARIABLE, "").strip()
+    if candidate and expand_path is not None:
+        candidate = expand_path(candidate)
     if not candidate:
         raise CookSetupError(
             f"Cook does not know where the native tracer is. Set 'Native tracer folder' in Preferences > Add-ons > Cook, "
@@ -58,8 +62,8 @@ def lens_arguments(lens_entry):
 
 def environment_cap_argument(environment_cap):
     """0 means no cap on the environment image; a positive number caps each texel at that radiance."""
-    if environment_cap < 0:
-        raise ValueError(f"The environment cap must be 0 (no cap) or a positive radiance, got {environment_cap}.")
+    if not math.isfinite(environment_cap) or environment_cap < 0:
+        raise ValueError(f"The environment cap must be 0 (no cap) or a positive, finite radiance, got {environment_cap}.")
     return "none" if environment_cap == 0 else str(environment_cap)
 
 
