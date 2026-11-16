@@ -3,8 +3,9 @@ import { mkdir, open, readFile, writeFile, rename, link, unlink, rmdir, readdir,
 import { randomUUID, createHash } from 'node:crypto';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 
-import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, VIDEO_ENCODERS, AUDIO_FILE_PATTERN, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS } from '../src/agent-scene-capabilities.js';
+import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, VIDEO_ENCODERS, AUDIO_FILE_PATTERN, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS } from '../src/agent-scene-capabilities.js';
 import { parseQuality } from './agent-render-quality.mjs';
+import { estimateFrameBytes } from '../src/budget.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { normalizeFilmTimeline, filmTimelineDuration, videoFrameCount } from '../src/film-timeline.js';
 import { OIDN_DEFAULT_SAMPLES, PATH_TRACER_DENOISERS, PATH_TRACER_JOB_LIMITS } from '../src/path-tracer-capabilities.js';
@@ -110,9 +111,15 @@ export function normalizeJobSettings(input, clips, recipe) {
 function settingsFrom(input, clips, recipe) {
   objectKeys(input, ['kind', 'width', 'height', 'fps', 'duration', 'animation', 'motion', 'rendererTime', 'passes', 'renderer', 'timeline', 'audio', 'encoder', 'transparent', 'format', 'multilayer', 'region', 'quality'], 'settings');
   if (!['image', 'stills', 'video'].includes(input.kind)) throw new TypeError('kind must be image, stills or video.');
-  const width = boundedNumber(input.width, 64, MAXIMUM_JOB_SIDE, 'width', true);
-  const height = boundedNumber(input.height, 64, MAXIMUM_JOB_SIDE, 'height', true);
-  if (width * height > MAXIMUM_JOB_PIXELS) throw new RangeError('width x height must not exceed 1920x1080 pixels.');
+  const largeFrame = input.kind === 'image';
+  const maximumSide = largeFrame ? MAXIMUM_JOB_SIDE : MAXIMUM_SEQUENCE_JOB_SIDE;
+  const maximumPixels = largeFrame ? MAXIMUM_JOB_PIXELS : MAXIMUM_SEQUENCE_JOB_PIXELS;
+  const width = boundedNumber(input.width, 64, maximumSide, 'width', true);
+  const height = boundedNumber(input.height, 64, maximumSide, 'height', true);
+  if (width * height > maximumPixels) {
+    const limit = largeFrame ? '3840x2160' : '1920x1080 (only an image job goes up to 3840x2160)';
+    throw new RangeError(`width x height must not exceed ${limit} pixels.`);
+  }
   if (input.kind === 'video' && (width % 2 || height % 2)) throw new RangeError('Video dimensions must be even.');
   const fps = boundedNumber(input.fps ?? 24, 1, MAXIMUM_JOB_FPS, 'fps', true);
   const timelineStart = timelineStartFrom(input, recipe);
@@ -288,9 +295,35 @@ function artifactMimeType(settings) {
   return settings.format === 'exr' ? 'image/x-exr' : 'image/png';
 }
 
+/**
+ * A frame larger than 1920x1080 is never silently shrunk: when the memory budget reduced it, the error names the --memory
+ * the size needs (frame targets at the size asked for, plus the geometry and textures the budget already held), or says the
+ * size cannot fit under the ceiling. Returns undefined when the frame was rendered at the size asked for, or a 1080p-class size.
+ */
+export function oversizeFrameBudgetError({ requested, rendered, plan, memoryMiB, maximumMemoryMiB }) {
+  const exceedsStandardFrame = requested.width > MAXIMUM_SEQUENCE_JOB_SIDE || requested.height > MAXIMUM_SEQUENCE_JOB_SIDE
+    || requested.width * requested.height > MAXIMUM_SEQUENCE_JOB_PIXELS;
+  if (!exceedsStandardFrame || (rendered.width >= requested.width && rendered.height >= requested.height)) return undefined;
+  const frameOptions = { hdr: plan.hdr, depth: plan.depth, bloom: plan.bloom ?? true };
+  const renderedFrameBytes = estimateFrameBytes(rendered.width, rendered.height, plan.samples, 2048, frameOptions);
+  const heldBytes = Math.max(0, plan.estimatedBytes - renderedFrameBytes);
+  const neededMiB = Math.ceil((heldBytes + estimateFrameBytes(requested.width, requested.height, plan.samples, 2048, frameOptions)) / 1024 ** 2);
+  const sizes = `${requested.width}x${requested.height} was reduced to ${rendered.width}x${rendered.height} by --memory ${memoryMiB}`;
+  if (neededMiB > maximumMemoryMiB) {
+    return new RangeError(`${sizes}. That size needs about ${neededMiB} MiB, over the ${maximumMemoryMiB} MiB ceiling. Ask for a smaller size or shrink the scene's textures.`);
+  }
+  return new RangeError(`${sizes}. That size needs about ${neededMiB} MiB. Fix: start the server with --memory ${neededMiB} or more.`);
+}
+
+/** The frame byte limit grows with the pixels beyond 1920x1080, so a 3840x2160 PNG may be up to four times the 1080p limit. */
+export function frameByteLimitFor(width, height, baseBytes) {
+  return baseBytes * Math.max(1, Math.ceil((width * height) / MAXIMUM_SEQUENCE_JOB_PIXELS));
+}
+
 function artifactByteLimit(settings, limits) {
   if (settings.kind === 'video') return limits.maxOutputBytes;
-  return settings.format === undefined ? limits.maxFrameBytes : limits.maxFrameBytes * HIGH_PRECISION_FRAME_FACTOR;
+  const frameBytes = frameByteLimitFor(settings.width, settings.height, limits.maxFrameBytes);
+  return settings.format === undefined ? frameBytes : frameBytes * HIGH_PRECISION_FRAME_FACTOR;
 }
 
 function allowedFile(name) {

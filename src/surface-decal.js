@@ -6,20 +6,20 @@ const CLIP_AXES = [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]];
 /** Rigid projector matrix for XYZ Euler angles in radians, as a column-major Float64Array. */
 export function createProjectorMatrix(position, rotation) {
   const [angleX, angleY, angleZ] = rotation;
-  const a = Math.cos(angleX);
-  const b = Math.sin(angleX);
-  const c = Math.cos(angleY);
-  const d = Math.sin(angleY);
-  const e = Math.cos(angleZ);
-  const f = Math.sin(angleZ);
-  const ae = a * e;
-  const af = a * f;
-  const be = b * e;
-  const bf = b * f;
+  const cosX = Math.cos(angleX);
+  const sinX = Math.sin(angleX);
+  const cosY = Math.cos(angleY);
+  const sinY = Math.sin(angleY);
+  const cosZ = Math.cos(angleZ);
+  const sinZ = Math.sin(angleZ);
+  const cosXcosZ = cosX * cosZ;
+  const cosXsinZ = cosX * sinZ;
+  const sinXcosZ = sinX * cosZ;
+  const sinXsinZ = sinX * sinZ;
   return Float64Array.of(
-    c * e, af + be * d, bf - ae * d, 0,
-    -c * f, ae - bf * d, be + af * d, 0,
-    d, -b * c, a * c, 0,
+    cosY * cosZ, cosXsinZ + sinXcosZ * sinY, sinXsinZ - cosXcosZ * sinY, 0,
+    -cosY * sinZ, cosXcosZ - sinXsinZ * sinY, sinXcosZ + cosXsinZ * sinY, 0,
+    sinY, -sinX * cosY, cosX * cosY, 0,
     position[0], position[1], position[2], 1,
   );
 }

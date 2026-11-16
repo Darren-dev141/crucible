@@ -134,15 +134,15 @@ const NOISE_LACUNARITY = 2;
 function hashLatticeCorner(cellX, cellY) {
   let a = (HASH_START + cellX) >>> 0;
   let b = (HASH_START + cellY) >>> 0;
-  let c = HASH_START;
-  c = (c ^ b) - rotateLeft(b, 14);
-  a = ((a ^ c) >>> 0) - rotateLeft(c, 11);
+  let thirdState = HASH_START;
+  thirdState = (thirdState ^ b) - rotateLeft(b, 14);
+  a = ((a ^ thirdState) >>> 0) - rotateLeft(thirdState, 11);
   b = ((b ^ a) >>> 0) - rotateLeft(a, 25);
-  c = ((c ^ b) >>> 0) - rotateLeft(b, 16);
-  a = ((a ^ c) >>> 0) - rotateLeft(c, 4);
+  thirdState = ((thirdState ^ b) >>> 0) - rotateLeft(b, 16);
+  a = ((a ^ thirdState) >>> 0) - rotateLeft(thirdState, 4);
   b = ((b ^ a) >>> 0) - rotateLeft(a, 14);
-  c = ((c ^ b) >>> 0) - rotateLeft(b, 24);
-  return c >>> 0;
+  thirdState = ((thirdState ^ b) >>> 0) - rotateLeft(b, 24);
+  return thirdState >>> 0;
 }
 
 function cornerGradient(hash, offsetX, offsetY) {

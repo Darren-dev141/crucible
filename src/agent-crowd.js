@@ -1,3 +1,4 @@
+import { mat4, vec3 } from 'gl-matrix';
 import { invalidField } from './field-error.js';
 import { createCrowd } from './retarget.js';
 import { bakeCrowdPalette, createCrowdParts, createCrowdRig } from './crowd-skinning.js';
@@ -8,6 +9,28 @@ import { jsonMaterial, materialOutput, registerCrowdModule } from './agent-scene
 // placed-asset channel of agent-scene.js: generated geometries (type "asset"), materials (assetSource) and part nodes
 // (assetPart), so exports and edits already skip them. The pose of every instance is a pure function of the scene
 // time, the seed and the recipe camera, so a seek equals playing.
+
+/** The static world matrix of a recipe node: its own transform multiplied up the parent chain. */
+function staticWorldMatrix(recipeNodes, node) {
+  const world = mat4.create();
+  const local = mat4.create();
+  const visited = new Set();
+  for (let current = node; current && !visited.has(current.id); current = recipeNodes.find(candidate => candidate.id === current.parent)) {
+    visited.add(current.id);
+    mat4.fromRotationTranslationScale(local, current.rotation ?? [0, 0, 0, 1], current.translation ?? [0, 0, 0], current.scale ?? [1, 1, 1]);
+    mat4.multiply(world, local, world);
+  }
+  return world;
+}
+
+/**
+ * The camera eye in the space of the crowd instance matrices, so far distances compare like with like when the placement
+ * has a moved parent. `placementWorld` is the placement node's world matrix; `inverse` and `target` are reused buffers.
+ */
+function eyeInCrowdSpace(eye, placementWorld, inverse = mat4.create(), target = vec3.create()) {
+  if (!eye) return null;
+  return mat4.invert(inverse, placementWorld) ? vec3.transformMat4(target, eye, inverse) : eye;
+}
 
 export const CROWD_LIMITS = Object.freeze({ maxInstances: 1000, maxCachedCrowds: 4 });
 const CROWD_FIELDS = ['clip', 'count', 'seed', 'layout', 'spacing', 'columns', 'size', 'rateJitter', 'randomYaw', 'speed', 'frameRate', 'morphs', 'lods', 'farDistance', 'farRate'];
@@ -122,15 +145,22 @@ export function expandCrowd(recipe, node, asset, copy, cache, runtime, limits) {
       geometry: `${prefix}:${rigIndex}`, material: materialIds[rigIndex],
       assetPart: { placement: node.id, index: instance, matrix: Array.from(part.matrix) },
     });
-    runtime.partExtras.set(id, { crowd: part.crowd, assembly: part.assembly, ...(part.lods ? { lods: part.lods } : {}), ...(part.morph ? { morph: part.morph } : {}) });
+    runtime.partExtras.set(id, { group: node.id, crowd: part.crowd, assembly: part.assembly, ...(part.lods ? { lods: part.lods } : {}), ...(part.morph ? { morph: part.morph } : {}) });
   });
-  const eye = recipe.camera?.eye ?? null;
+  const cameraEye = recipe.camera?.eye ?? null;
+  const staticEye = eyeInCrowdSpace(cameraEye, staticWorldMatrix(recipe.nodes, node));
+  const inverseScratch = mat4.create();
+  const eyeScratch = vec3.create();
   const record = {
     node: node.id, assetId, copy, asset, partNodeIds, clip: null, drive: null, drivePose: null,
     crowd: {
-      /** The pose at a scene time, applied on commit: only frame offsets change, so nothing here can fail. */
-      stage(time) {
+      /**
+       * The pose at a scene time, applied on commit: only frame offsets change, so nothing here can fail.
+       * `placementWorld` is the placement's world matrix at that time, so far distances follow an animated parent.
+       */
+      stage(time, placementWorld = null) {
         const seconds = time * settings.speed;
+        const eye = placementWorld ? eyeInCrowdSpace(cameraEye, placementWorld, inverseScratch, eyeScratch) : staticEye;
         return {
           commit: () => built.set.setTimes(index => built.crowd.clipTime(index, seconds), eye),
           discard() {},

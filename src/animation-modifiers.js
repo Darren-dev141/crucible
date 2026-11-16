@@ -7,7 +7,7 @@
  * the track and the time, so seeking backwards and rendering give the same bytes.
  */
 
-import { registerTrackEffects } from './animation.js';
+import { registerTrackEffects, splitIntoCycles } from './animation.js';
 
 const CYCLE_MODES = ['none', 'repeat', 'offset', 'mirror'];
 const TIME_TYPES = new Set(['cycles', 'stepped']);
@@ -152,8 +152,7 @@ export function remapTime(effects, keyframes, time, offsets) {
     const mode = isBefore ? modifier.before : modifier.after;
     if (mode === 'none') continue;
     const limit = isBefore ? modifier.beforeCount : modifier.afterCount;
-    let cycle = Math.floor((remapped - firstTime) / length);
-    let local = remapped - firstTime - cycle * length;
+    let { cycle, local } = splitIntoCycles(remapped - firstTime, length);
     const passed = isBefore ? -cycle : cycle;
     if (limit > 0 && passed > limit) {
       cycle = isBefore ? -limit : limit;

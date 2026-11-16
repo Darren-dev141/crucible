@@ -1,3 +1,4 @@
+import { portalPdf, samplePortalDirection } from './path-tracer-portal.js';
 import { cameraFieldOfView, resolveThinLens } from './camera.js';
 import { fresnelSchlick } from './material-layers.js';
 import { pointLightFalloff } from './ray-query.js';
@@ -166,7 +167,10 @@ export function createCamera(camera, width, height) {
   for (let axis = 0; axis < 3; axis++) right[axis] /= rightLength;
   const above = [right[1] * forward[2] - right[2] * forward[1], right[2] * forward[0] - right[0] * forward[2], right[0] * forward[1] - right[1] * forward[0]];
   const halfHeight = Math.tan(fov * Math.PI / 360);
-  const view = { eye, forward, right, above, halfHeight, halfWidth: halfHeight * width / height };
+  const clipStart = camera.clipStart ?? 0;
+  if (typeof clipStart !== 'number' || !Number.isFinite(clipStart) || clipStart < 0 || clipStart > 1e5) throw new RangeError(`Path tracer camera clipStart must be a distance from 0 to 100000 scene units along the view axis, got ${JSON.stringify(camera.clipStart)}. Leave it out to start rays at the eye.`);
+  if (typeof camera.far === 'number' && clipStart >= camera.far) throw new RangeError(`Path tracer camera clipStart ${clipStart} is at or past the far plane ${camera.far}, so nothing would be drawn. Pass a clipStart below far, or raise far.`);
+  const view = { eye, forward, right, above, halfHeight, halfWidth: halfHeight * width / height, ...(clipStart > 0 ? { clipStart } : {}) };
   // A camera with an fStop adds its thin lens (apertureRadius, focalDistance, apertureBlades, apertureRotation). Only the
   // native "cycles" kernel draws it; every other tracer ignores the extra fields, and a pinhole view is unchanged.
   const thinLens = resolveThinLens(camera, { aspect: width / height, eye, target });
@@ -520,6 +524,8 @@ function createPathTracer(scene, options) {
   // The denoiser's features come from the first surface a camera ray meets, not from fog in front of it.
   let featuresRecorded = false;
   const { lights, environment } = scene;
+  // With portals the sky is drawn through them (#1144); a scene with none samples the whole map as before.
+  const portals = environment ? lights.portals ?? [] : [];
   if (lights.sun) buildFrame(lights.sun.direction, sunFrame);
   const sunCosineMax = Math.cos(lights.sun?.angularRadius ?? SUN_ANGULAR_RADIUS);
 
@@ -692,7 +698,9 @@ function createPathTracer(scene, options) {
   };
 
   function sampleEnvironmentLight(depth, normal) {
-    environmentSampledPdf = sampleEnvironment(environment, random.next(), random.next(), random.next(), random.next(), lightDirection);
+    environmentSampledPdf = portals.length > 0
+      ? samplePortalDirection(portals, hit.point[0], hit.point[1], hit.point[2], random.next(), random.next(), random.next(), lightDirection)
+      : sampleEnvironment(environment, random.next(), random.next(), random.next(), random.next(), lightDirection);
     if (!(environmentSampledPdf > 0)) return;
     environmentRadiance(environment, lightDirection[0], lightDirection[1], lightDirection[2], lightRadiance);
     addDirect(depth, normal, scene.farDistance, environmentWeight);
@@ -792,12 +800,12 @@ function createPathTracer(scene, options) {
     else addOneLight(depth, normal);
   }
 
-  function addEscape(depth, previousPdf, afterMirror) {
+  function addEscape(depth, previousPdf, afterMirror, originX, originY, originZ) {
     if (!environment) return;
     environmentRadiance(environment, direction[0], direction[1], direction[2], sky);
     let weight = 1;
     if (!afterMirror) {
-      const environmentSide = environmentPdf(environment, direction[0], direction[1], direction[2]) * selectionProbability;
+      const environmentSide = (portals.length > 0 ? portalPdf(portals, originX, originY, originZ, direction[0], direction[1], direction[2]) : environmentPdf(environment, direction[0], direction[1], direction[2])) * selectionProbability;
       weight = previousPdf * previousPdf / (previousPdf * previousPdf + environmentSide * environmentSide);
     }
     addRadiance(depth, throughput[0] * sky[0] * weight, throughput[1] * sky[1] * weight, throughput[2] * sky[2] * weight);
@@ -943,7 +951,7 @@ function createPathTracer(scene, options) {
         continue;
       }
       if (!found) {
-        addEscape(depth, previousPdf, afterMirror);
+        addEscape(depth, previousPdf, afterMirror, positionX, positionY, positionZ);
         break;
       }
       const material = hit.material;
@@ -1030,15 +1038,16 @@ export function toneMapToRgba8(linear, width, height, { viewTransform = 'aces', 
 }
 
 /** Names what this scene asks for that the path tracer does not draw, so a result never claims more than it traced. */
-export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { kernelMaterials = false } = {}) {
+export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { kernelMaterials = false, clipStart = 0 } = {}) {
   const notes = new Set();
+  if (clipStart > 0 && (backend === 'gpu' || kernelMaterials)) notes.add('camera.clipStart is ignored: only the CPU and WebGPU tracers start camera rays at it, so geometry between the eye and the clip start is drawn.');
   const fog = environment?.volumeFog;
   if (fog?.density > 0 && (fog.noiseAmount ?? 0.5) > 0) notes.add('volumeFog is traced as a uniform medium: noiseAmount, noiseScale and drift are ignored.');
   if (fog?.density > 0 && fog.ambient) notes.add('volumeFog.ambient is not added: the fog is lit by the traced lights and sky.');
   const hasSoftFalloff = [...(environment?.pointLights ?? []), ...(environment?.spotLights ?? [])].some(light => light.softFalloff === true);
   if (hasSoftFalloff && !kernelMaterials) notes.add('softFalloff is ignored: only the native cycles kernel draws a light as an oriented disk, the other tracers draw a sphere.');
   const hasPortal = (environment?.areaLights ?? []).some(light => light.portal === true);
-  if (hasPortal && !kernelMaterials) notes.add('Light portals (areaLights with portal: true) are ignored: only the native cycles kernel samples the environment through them, the other tracers draw no light from a portal.');
+  if (hasPortal && !kernelMaterials && backend === 'gpu') notes.add('Light portals (areaLights with portal: true) are ignored: only the native cycles kernel, the CPU tracer and the WebGPU tracer sample the environment through them, the other tracers draw no light from a portal.');
   if (!environment?.map) notes.add('There is no environment map, so the sky is black and only the lights shine.');
   if (environment?.cameraIntensity !== undefined && !kernelMaterials) notes.add('cameraIntensity is ignored: only the native cycles kernel draws the sky a camera ray sees at its own strength, the other tracers use the map intensity.');
   for (const part of parts) {
@@ -1107,7 +1116,12 @@ export function renderBand(scene, camera, options, rowStart, rowEnd, shouldStop 
         const directionY = camera.forward[1] + camera.right[1] * screenX + camera.above[1] * screenY;
         const directionZ = camera.forward[2] + camera.right[2] * screenX + camera.above[2] * screenY;
         const length = Math.hypot(directionX, directionY, directionZ);
-        tracer.trace(camera.eye[0], camera.eye[1], camera.eye[2], directionX / length, directionY / length, directionZ / length, pixel, sample);
+        // clipStart is a distance along the view axis, as Cycles' clip start: a ray from the eye starts where it has gone that far along the axis.
+        const rayDirectionX = directionX / length;
+        const rayDirectionY = directionY / length;
+        const rayDirectionZ = directionZ / length;
+        const clipDistance = camera.clipStart ? camera.clipStart / (rayDirectionX * camera.forward[0] + rayDirectionY * camera.forward[1] + rayDirectionZ * camera.forward[2]) : 0;
+        tracer.trace(camera.eye[0] + rayDirectionX * clipDistance, camera.eye[1] + rayDirectionY * clipDistance, camera.eye[2] + rayDirectionZ * clipDistance, rayDirectionX, rayDirectionY, rayDirectionZ, pixel, sample);
         const { radiance, features } = tracer;
         const sampleLuminance = luminance(radiance[0], radiance[1], radiance[2]);
         sumLuminance += sampleLuminance;
@@ -1230,7 +1244,7 @@ export async function renderPathTracedImage({ parts, environment = {}, camera },
     ? await (options.backend === 'webgpu' ? import('./path-tracer-webgpu.js') : import('./path-tracer-gpu.js'))
     : null;
   const scene = gpuModule ? await buildTraceSceneForDevice(parts, environment, gpuModule) : buildTraceScene(parts, environment);
-  if (options.backend !== 'cpu') refuseLocalVolumes(scene, `backend "${options.backend}"`);
+  if (options.backend !== 'cpu' && options.backend !== 'webgpu') refuseLocalVolumes(scene, `backend "${options.backend}"`);
   const pixelCount = width * height;
   const buffers = {
     color: new Float32Array(pixelCount * 3), albedo: new Float32Array(pixelCount * 3), normal: new Float32Array(pixelCount * 3),
@@ -1265,7 +1279,7 @@ export async function renderPathTracedImage({ parts, environment = {}, camera },
       backend: options.backend, ...(gpuName ? { gpu: gpuName, gpuCompileSeconds, gpuKernelCompiles } : {}),
       averageSamples: totalSamples(samplesTaken) / pixelCount, noiseThreshold: options.noiseThreshold,
       triangles: scene.indices.length / 3, tracedSeconds, seconds: (performance.now() - started) / 1000,
-      ignored: describeIgnoredFeatures(parts, environment, options.backend),
+      ignored: describeIgnoredFeatures(parts, environment, options.backend, { clipStart: view.clipStart }),
     },
   };
 }

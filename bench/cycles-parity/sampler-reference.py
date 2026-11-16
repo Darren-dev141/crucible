@@ -101,23 +101,23 @@ def hash_uint(key):
     def rot(x, k):
         return ((x << k) | (x >> (32 - k))) & MASK
 
-    a = b = c = (0xDEADBEEF + (1 << 2) + 13) & MASK
+    a = b = third_state = (0xDEADBEEF + (1 << 2) + 13) & MASK
     a = (a + key) & MASK
-    c ^= b
-    c = (c - rot(b, 14)) & MASK
-    a ^= c
-    a = (a - rot(c, 11)) & MASK
+    third_state ^= b
+    third_state = (third_state - rot(b, 14)) & MASK
+    a ^= third_state
+    a = (a - rot(third_state, 11)) & MASK
     b ^= a
     b = (b - rot(a, 25)) & MASK
-    c ^= b
-    c = (c - rot(b, 16)) & MASK
-    a ^= c
-    a = (a - rot(c, 4)) & MASK
+    third_state ^= b
+    third_state = (third_state - rot(b, 16)) & MASK
+    a ^= third_state
+    a = (a - rot(third_state, 4)) & MASK
     b ^= a
     b = (b - rot(a, 14)) & MASK
-    c ^= b
-    c = (c - rot(b, 24)) & MASK
-    return c
+    third_state ^= b
+    third_state = (third_state - rot(b, 24)) & MASK
+    return third_state
 
 
 def to_float32(value):

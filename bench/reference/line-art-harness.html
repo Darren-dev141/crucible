@@ -22,7 +22,7 @@ const renderer = installLineArt(installRenderPasses(baseRenderer));
 const context = renderer.context;
 
 // lineWidth 0 draws the scene without lines. Returns the frame as a PNG data URL.
-window.drawLineArtScene = function drawLineArtScene(lineWidth) {
+window.drawLineArtScene = function drawLineArtScene(lineWidth, extraLines = {}) {
   const environment = session.environment;
   const effects = session.effects;
   renderer.shadowBounds = resolveAgentShadow(session.shadow, environment.lightDirection);
@@ -30,7 +30,7 @@ window.drawLineArtScene = function drawLineArtScene(lineWidth) {
   renderer.world = environment.world;
   renderer.resize();
   renderer.updateParts(session.parts);
-  const lines = lineWidth > 0 ? resolveLineArt({ width: lineWidth }) : undefined;
+  const lines = lineWidth > 0 ? resolveLineArt({ width: lineWidth, ...extraLines }) : undefined;
   renderer.render({ ...session.camera, environment, effects, exposure: effects.exposure, time: 0, lines });
   const width = context.drawingBufferWidth;
   const height = context.drawingBufferHeight;

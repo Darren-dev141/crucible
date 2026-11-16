@@ -160,10 +160,10 @@ const cornerScratch = new Float64Array(12);
 
 /**
  * Sum over the four corners of |corner angle - 90 degrees|, or -1 when the quad is not convex
- * (a corner turns against the others). Vertices are a, b, c, d in winding order.
+ * (a corner turns against the others). Vertices are firstVertex to fourthVertex in winding order.
  */
-function quadCornerAngleError(positions, a, b, c, d) {
-  const quad = [a, b, c, d];
+function quadCornerAngleError(positions, firstVertex, secondVertex, thirdVertex, fourthVertex) {
+  const quad = [firstVertex, secondVertex, thirdVertex, fourthVertex];
   let error = 0;
   for (let index = 0; index < 4; index++) {
     const previous = quad[(index + 3) & 3] * 3;
@@ -352,6 +352,16 @@ function differentNormals(normals, first, second) {
     Math.abs(normals[first * 3 + 2] - normals[second * 3 + 2]) > NORMAL_SPLIT_TOLERANCE;
 }
 
+/** Whether the geometry carries a per-vertex array; throws when it does but its length does not fit the vertices. */
+function hasVertexAttribute(geometry, field, expectedLength) {
+  const data = geometry[field];
+  if (data === undefined || data === null) return false;
+  if (!(data instanceof Float32Array) || data.length !== expectedLength) {
+    throw new RangeError(`Geometry ${field} must be a Float32Array of ${expectedLength} values (one entry per position), not ${data?.length ?? typeof data}. Fix the array or remove ${field}.`);
+  }
+  return true;
+}
+
 /**
  * Convert renderer geometry (indexed triangles with seam-split vertices) into a polygon mesh.
  * Coincident vertices weld within `weld` (default: 1e-6 of the bounds diagonal); UVs and colours become corner
@@ -399,10 +409,10 @@ export function meshFromGeometry(geometry, { weld, quads = true, tags = 'axis' }
   }
   const edges = deriveEdges(representatives.length, faceOffsets, cornerVertices);
   const cornerAttributes = {};
-  if (geometry.uvs instanceof Float32Array && geometry.uvs.length === sourceCount * 2) {
+  if (hasVertexAttribute(geometry, 'uvs', sourceCount * 2)) {
     cornerAttributes.uv = gatherAttribute({ data: geometry.uvs, size: 2 }, cornerSource);
   }
-  if (geometry.colors instanceof Float32Array && geometry.colors.length === sourceCount * 3) {
+  if (hasVertexAttribute(geometry, 'colors', sourceCount * 3)) {
     cornerAttributes.color = gatherAttribute({ data: geometry.colors, size: 3 }, cornerSource);
   }
   const edgeAttributes = {};

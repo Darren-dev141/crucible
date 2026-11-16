@@ -29,6 +29,24 @@ body:
         - capable (it cannot do something it should)
         - light (it is too big or too slow)
         - ai (an agent trips on it)
+  - type: dropdown
+    id: impact
+    attributes:
+      label: How bad is it
+      description: Pick the closest. It sets how soon the bug is fixed.
+      options:
+        - It crashes, hangs or runs out of memory
+        - The picture or the data is wrong, with no error
+        - The error message is wrong or unclear
+        - Only with input that makes no sense (NaN, negative sizes)
+    validations:
+      required: true
+  - type: input
+    id: last-good-version
+    attributes:
+      label: Last version where it worked (optional)
+      description: If an earlier version did this right, name it. That makes it a regression, fixed before the next release.
+      placeholder: 0.19.0
   - type: textarea
     id: what-happened
     attributes:

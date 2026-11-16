@@ -80,7 +80,7 @@ class CookRenderEngine(bpy.types.RenderEngine):
         height = max(1, int(scene.render.resolution_y * scale))
         enabled_addon = bpy.context.preferences.addons.get(__package__)
         preferences = enabled_addon.preferences if enabled_addon is not None else None
-        native_directory = native_runner.resolve_native_directory(preferences.native_directory if preferences else "")
+        native_directory = native_runner.resolve_native_directory(preferences.native_directory if preferences else "", expand_path=bpy.path.abspath)
         node_executable = native_runner.resolve_node_executable(preferences.node_executable if preferences else "node")
         work_directory = tempfile.mkdtemp(prefix="cook-render-")
         try:

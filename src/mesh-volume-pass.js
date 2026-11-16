@@ -62,10 +62,10 @@ function signedVolume(positions, indices) {
   for (let corner = 0; corner < indices.length; corner += 3) {
     const a = indices[corner] * 3;
     const b = indices[corner + 1] * 3;
-    const c = indices[corner + 2] * 3;
-    total += positions[a] * (positions[b + 1] * positions[c + 2] - positions[b + 2] * positions[c + 1])
-      + positions[a + 1] * (positions[b + 2] * positions[c] - positions[b] * positions[c + 2])
-      + positions[a + 2] * (positions[b] * positions[c + 1] - positions[b + 1] * positions[c]);
+    const thirdVertexOffset = indices[corner + 2] * 3;
+    total += positions[a] * (positions[b + 1] * positions[thirdVertexOffset + 2] - positions[b + 2] * positions[thirdVertexOffset + 1])
+      + positions[a + 1] * (positions[b + 2] * positions[thirdVertexOffset] - positions[b] * positions[thirdVertexOffset + 2])
+      + positions[a + 2] * (positions[b] * positions[thirdVertexOffset + 1] - positions[b + 1] * positions[thirdVertexOffset]);
   }
   return total;
 }

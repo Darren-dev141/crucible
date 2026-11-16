@@ -6,6 +6,7 @@ import { AGENT_ASSET_LIMITS, assetBytesLimitMessage } from '../src/agent-asset-l
 import { MAXIMUM_CATALOG_ENVIRONMENT_BYTES, MAXIMUM_CATALOG_LOOK_BYTES } from '../src/look-catalog.js';
 import { imageLimitProblem } from '../src/image-header.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
+import { decompressDracoGlb, usesDraco } from './agent-draco.mjs';
 
 const MAXIMUM_ASSETS = AGENT_ASSET_LIMITS.maxAssets;
 const MAXIMUM_BYTES = AGENT_ASSET_LIMITS.maxBytes;
@@ -204,6 +205,21 @@ async function readSiblingImage(directory, glbName, uri, segments) {
  * relative path with forward slashes. A GLB whose images point at files beside it gets those images embedded, so the ID binds
  * the self-contained bytes. `enforceImageLimits: false` skips the sequence frame pixel limits, for an image that is never a frame.
  */
+// The preview page has no Draco decoder, so a compressed GLB is decoded here (#1698). A missing decoder or a mesh that
+// grows past the size limit skips the file with the reason, so the catalog lists it instead of failing as a whole.
+async function decompressedDraco(bytes, filename) {
+  let result;
+  try {
+    result = await decompressDracoGlb(bytes, { filename });
+  } catch (error) {
+    throw new SkippableCatalogFileError(`${filename}: ${error.message}`);
+  }
+  if (result.bytes.length > MAXIMUM_BYTES) {
+    throw new SkippableCatalogFileError(`${filename}: decoded from Draco the asset reaches ${result.bytes.length} bytes. ${assetBytesLimitMessage(result.bytes.length)}`);
+  }
+  return result.bytes;
+}
+
 export async function readCatalogFile(directory, filename, { enforceImageLimits = true } = {}) {
   const path = join(directory, filename);
   const original = await lstat(path);
@@ -249,6 +265,10 @@ export async function readCatalogFile(directory, filename, { enforceImageLimits 
       if (document.images?.some(image => Object.hasOwn(image, 'uri'))) {
         const readSibling = (glbName, uri, segments) => readSiblingImage(directory, glbName, uri, segments);
         bytes = await embedSiblingImages(bytes, parsed, filename, readSibling);
+        document = glbDocument(bytes).document;
+      }
+      if (usesDraco(document)) {
+        bytes = await decompressedDraco(bytes, filename);
         document = glbDocument(bytes).document;
       }
     }

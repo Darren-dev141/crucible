@@ -74,9 +74,9 @@ export function buildTube(points, closed, radius, segments, radialSegments) {
     for (let side = 1; side <= radialSegments; side++) {
       const a = (radialSegments + 1) * (ring - 1) + (side - 1);
       const b = (radialSegments + 1) * ring + (side - 1);
-      const c = (radialSegments + 1) * ring + side;
-      const d = (radialSegments + 1) * (ring - 1) + side;
-      indices.push(a, b, d, b, c, d);
+      const currentRingNextSide = (radialSegments + 1) * ring + side;
+      const previousRingNextSide = (radialSegments + 1) * (ring - 1) + side;
+      indices.push(a, b, previousRingNextSide, b, currentRingNextSide, previousRingNextSide);
     }
   }
   return { positions: Float32Array.from(positions), normals: Float32Array.from(normals), uvs: Float32Array.from(uvs), indices: Uint32Array.from(indices) };
@@ -225,13 +225,13 @@ export function buildExtrusion(contourInput, holeInputs, { depth, steps, bevel, 
       for (let layer = 0; layer < steps + segmentCount * 2; layer++) {
         const a = layers[layer][ringOffset + index];
         const b = layers[layer][ringOffset + previous];
-        const c = layers[layer + 1][ringOffset + previous];
-        const d = layers[layer + 1][ringOffset + index];
-        soup.push(...a, ...b, ...d, ...b, ...c, ...d);
+        const nextLayerPrevious = layers[layer + 1][ringOffset + previous];
+        const nextLayerCurrent = layers[layer + 1][ringOffset + index];
+        soup.push(...a, ...b, ...nextLayerCurrent, ...b, ...nextLayerPrevious, ...nextLayerCurrent);
         const horizontal = Math.abs(a[1] - b[1]) < Math.abs(a[0] - b[0]);
         const axis = horizontal ? 0 : 1;
         const wallUv = corner => [corner[axis], 1 - corner[2]];
-        uvs.push(...wallUv(a), ...wallUv(b), ...wallUv(d), ...wallUv(b), ...wallUv(c), ...wallUv(d));
+        uvs.push(...wallUv(a), ...wallUv(b), ...wallUv(nextLayerCurrent), ...wallUv(b), ...wallUv(nextLayerPrevious), ...wallUv(nextLayerCurrent));
       }
     }
     ringOffset += ring.length;

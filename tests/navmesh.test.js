@@ -84,3 +84,21 @@ test('scene_inspect path returns translation keyframes around the hole of a reci
   assert.throws(() => scene.inspect({ path: { ground: 'nowhere', from: [0, 0], to: [15, 15] } }), /path\.ground: got "nowhere"; expected the ID of a node with a drawn geometry/);
   assert.throws(() => scene.inspect({ path: { ground: 'ground', from: [-15, -15], to: [15, 15], seconds: 2, speed: 1 } }), /path\.speed: got 1; expected speed or seconds, not both/);
 });
+
+test('an obstacle footprint with min past max is refused instead of blocking nothing', () => {
+  const ground = flatGround(20);
+  assert.throws(
+    () => createNavmesh({ ...ground, obstacles: [{ min: [2, -5], max: [-2, 5] }] }),
+    /obstacle .*min.*max/i,
+  );
+});
+
+test('geometry with non-finite positions or indices past the positions is refused', () => {
+  const ground = flatGround(20);
+  const brokenPositions = Float32Array.from(ground.positions);
+  brokenPositions[0] = Number.NaN;
+  assert.throws(() => createNavmesh({ positions: brokenPositions, indices: ground.indices }), /finite/i);
+  const brokenIndices = Uint32Array.from(ground.indices);
+  brokenIndices[0] = ground.positions.length;
+  assert.throws(() => createNavmesh({ positions: ground.positions, indices: brokenIndices }), /index/i);
+});

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  chooseNativeKernel, chooseTraceBackend, createNativeTracerLocator, isNativeTimeLimitError, traceFrameNative,
+  chooseNativeKernel, chooseTraceBackend, createNativeTracerLocator, isNativeTimeLimitError, traceFrameNative, yieldToEventLoop,
 } from '../scripts/agent-native-trace.mjs';
 
 // These tests use fake engines, so they run with and without Cook installed; a COOK_DISABLE from the suite's absent-mode run
@@ -256,7 +256,7 @@ test('explicit wavelet and no filter never reach the a-trous filter', async () =
 // A sequence that returns flat frames of the given brightness, each through a session with the same camera block.
 function sequenceOfFlatFrames(levels, { withoutSessionAt = -1, changedSceneAt = -1 } = {}) {
   const pixels = 4 * 4;
-  const kernelParams = new Uint8Array(320);
+  const kernelParams = new Uint8Array(336);
   const view = new DataView(kernelParams.buffer);
   [[0, 0, 0], [0, 0, -1], [1, 0, 0], [0, 1, 0]].forEach((vector, row) => vector.forEach((value, axis) => view.setFloat32(112 + row * 16 + axis * 4, value, true)));
   let frame = 0;
@@ -308,4 +308,45 @@ test('a frame whose scene changed, or that left the session, starts the history 
   const after = await traceFrameNative(frameOptions);
   assert.equal(after.report.temporal.restarted, 'the frame before did not render through a session');
   assert.equal(after.linear[0], 1);
+});
+
+test('a film loop that only awaits promises still reaches the event loop between native frames', async () => {
+  // External ArrayBuffer finalizers run from the event loop, so each traced frame must give it one macrotask (#1211).
+  const events = [];
+  const tracer = tracerRecording([]);
+  const innerTrace = tracer.traceNative;
+  tracer.traceNative = (tables, options) => {
+    events.push('trace');
+    return innerTrace(tables, options);
+  };
+  for (let frame = 0; frame < 3; frame++) {
+    setImmediate(() => events.push('event loop'));
+    await traceFrameNative({ tracer, exported: emptyExport, width: 4, height: 4, samples: 8, denoise: 'none' });
+    events.push('frame done');
+  }
+  assert.deepEqual(events, ['trace', 'event loop', 'frame done', 'trace', 'event loop', 'frame done', 'trace', 'event loop', 'frame done']);
+});
+
+test('yieldToEventLoop resolves only after a pending setImmediate callback ran', async () => {
+  let ran = false;
+  setImmediate(() => { ran = true; });
+  await yieldToEventLoop();
+  assert.equal(ran, true);
+});
+
+// The render job grants the software adapter allowance from report.gpu right after this call (#1186), so the adapter name
+// the tracer returns must reach the report unchanged, and the guard must then see the larger limit.
+test('the adapter a native trace ran on reaches report.gpu, and a llvmpipe report widens the memory guard', async () => {
+  const { createNativeMemoryAllowance, exceedsMemoryGuard } = await import('../scripts/agent-memory-guard.mjs');
+  const lavapipe = tracerRecording([]);
+  const original = lavapipe.traceNative;
+  lavapipe.traceNative = (tables, options) => ({ ...original(tables, options), adapter: 'llvmpipe (LLVM 21.1.8, 256 bits)' });
+  const traced = await traceFrameNative({ tracer: lavapipe, exported: emptyExport, width: 4, height: 4, samples: 8, denoise: 'none' });
+  assert.equal(traced.report.gpu, 'llvmpipe (LLVM 21.1.8, 256 bits)');
+  const allowance = createNativeMemoryAllowance();
+  allowance.grantForFrame({ width: 960, height: 540 });
+  const firstJobPeakBytes = 3226 * 1024 ** 2;
+  assert.equal(exceedsMemoryGuard({ nodeBytes: firstJobPeakBytes, browserHeapBytes: 0, nativeAllowanceBytes: allowance.bytes }), true);
+  allowance.grantForAdapter(traced.report.gpu);
+  assert.equal(exceedsMemoryGuard({ nodeBytes: firstJobPeakBytes, browserHeapBytes: 0, nativeAllowanceBytes: allowance.bytes }), false);
 });

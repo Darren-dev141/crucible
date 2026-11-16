@@ -54,8 +54,8 @@ test('the ramp covers greys from black to 16 and saturated colours', () => {
 function acesFromGlsl(source) {
   const match = source.match(/clamp\(\(color \* \(([\d.]+) \* color \+ ([\d.]+)\)\) \/ \(color \* \(([\d.]+) \* color \+ ([\d.]+)\) \+ ([\d.]+)\), 0\.0, 1\.0\)/);
   assert.ok(match, 'the shader holds the ACES expression');
-  const [a, b, c, d, e] = match.slice(1).map(Number);
-  return x => Math.min(1, Math.max(0, (x * (a * x + b)) / (x * (c * x + d) + e)));
+  const [numeratorQuadratic, numeratorLinear, denominatorQuadratic, denominatorLinear, denominatorConstant] = match.slice(1).map(Number);
+  return x => Math.min(1, Math.max(0, (x * (numeratorQuadratic * x + numeratorLinear)) / (x * (denominatorQuadratic * x + denominatorLinear) + denominatorConstant)));
 }
 
 test('the rasterizer shaders and the path tracer apply the same default curve', () => {

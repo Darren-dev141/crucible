@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createTree } from '../src/vegetation.js';
 import { TREE_LEVEL_GAINS } from '../src/tree-level-gains.js';
-import { coverageMean, matchMeanVisibility, vertexCoverage } from '../src/tree-sky.js';
+import { coverageMean, createCrownSkyField, matchMeanVisibility, vertexCoverage } from '../src/tree-sky.js';
 
 // Issue #394: a lower level of detail worked out its own sky visibility from its few, large vertices, which put the
 // far levels at the floor (0.04 to 0.06) where level 0 sees 0.08 to 0.12. Under sky light they drew near black.
@@ -86,9 +86,9 @@ test('the standing clump cards of a far level face every way, so the crown is as
     let count = 0;
     for (let corner = 0; corner < indices.length; corner += 3) {
       const point = index => [positions[index * 3], positions[index * 3 + 1], positions[index * 3 + 2]];
-      const [a, b, c] = [point(indices[corner]), point(indices[corner + 1]), point(indices[corner + 2])];
-      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-      const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const [firstPoint, secondPoint, thirdPoint] = [point(indices[corner]), point(indices[corner + 1]), point(indices[corner + 2])];
+      const u = [secondPoint[0] - firstPoint[0], secondPoint[1] - firstPoint[1], secondPoint[2] - firstPoint[2]];
+      const v = [thirdPoint[0] - firstPoint[0], thirdPoint[1] - firstPoint[1], thirdPoint[2] - firstPoint[2]];
       const normal = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
       const length = Math.hypot(...normal);
       if (length === 0 || Math.abs(normal[1] / length) > 0.5) continue;
@@ -121,4 +121,15 @@ test('the fitted gains only touch levels 1 to 3 and stay in a sane range', () =>
       assert.ok(gain.sky >= 0.25 && gain.sky <= 16, `${species} level ${level} sky gain ${gain.sky}`);
     }
   }
+});
+
+test('matchMeanVisibility keeps the field finite when no leaf area weighs it', () => {
+  const visibility = new Float32Array([0.5, 0.25]);
+  const matched = matchMeanVisibility(visibility, 0, new Float32Array([0, 0]));
+  assert.deepEqual(Array.from(matched), [0.5, 0.25]);
+});
+
+test('createCrownSkyField names the fix for an empty or ragged positions array', () => {
+  assert.throws(() => createCrownSkyField(new Float32Array(0)), /at least one vertex position/);
+  assert.throws(() => createCrownSkyField(new Float32Array(4)), /multiple of 3/);
 });

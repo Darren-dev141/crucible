@@ -332,6 +332,7 @@ function traceAgentBake(parts, worldMatrices, environment, settings, generatedGe
     skyTop: environment.skyTop,
     skyBottom: environment.skyBottom,
     lightDirection: environment.lightDirection,
+    keyAffects: environment.keyAffects,
   };
   if (settings.gridFog) {
     lighting.volumeFog = environment.volumeFog;

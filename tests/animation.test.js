@@ -341,3 +341,14 @@ test('spline rotation playback matches public sampling for large finite tangent 
   const invalid = splineTrack('rotation', [1e308, 1e308, 1e308, 1e308], [0, 0, 0, 1], [0, 0, 0, 0], [0, 0, 0, 0]);
   assert.throws(() => createAnimationClip({ duration: 2, tracks: [invalid] }), /finite nonzero/);
 });
+
+test('a looping clip sampled on a cycle start at a fractional frame rate shows its first pose, not its last (#1514)', () => {
+  const clip = createAnimationClip({ duration: 0.1, loop: true, tracks: [
+    { target: 'a', property: 'translation', keyframes: [{ time: 0, value: [0, 0, 0] }, { time: 0.1, value: [1, 0, 0] }] },
+  ] });
+  for (const frame of [3, 9, 12, 21]) {
+    assert.ok(Math.abs(sampleAnimationClip(clip, frame / 30)[0].value[0]) < 1e-6, `frame ${frame} of 30 fps starts a cycle`);
+  }
+  assert.ok(sampleAnimationClip(clip, 8 / 30)[0].value[0] > 0.6, 'a frame inside the cycle still blends');
+  assert.ok(sampleAnimationClip(clip, -1e-12)[0].value[0] < 1e-6, 'a time a hair before zero starts the cycle');
+});

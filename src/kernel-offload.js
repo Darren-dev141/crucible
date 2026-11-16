@@ -85,14 +85,15 @@ function mixText(hasher, text) {
 }
 
 function mixNamedValue(hasher, key, value) {
-  mixText(hasher, `${key}=`);
+  mixText(hasher, `${key.length}:${key}=`);
   return mixValue(hasher, value);
 }
 
 /** Feeds a value into the hasher; returns false for anything that is not plain, cloneable data. */
 function mixValue(hasher, value) {
   if (value === null || value === undefined || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
-    mixText(hasher, `${typeof value}:${String(value)};`);
+    const text = String(value);
+    mixText(hasher, `${typeof value}:${text.length}:${text};`);
     return true;
   }
   if (ArrayBuffer.isView(value)) {
@@ -117,11 +118,23 @@ function mixValue(hasher, value) {
   return false;
 }
 
+// A self-referencing object overflows the stack while hashing; it is not plain data for this purpose, so it runs inline.
+function mixesAsPlainData(hasher, args) {
+  try {
+    return mixValue(hasher, args);
+  } catch (error) {
+    if (error instanceof RangeError) {
+      return false;
+    }
+    throw error;
+  }
+}
+
 /** A key that identifies a kernel call by its name and the bytes of its input, or null when the input is not plain data. */
 export function kernelKey(name, args) {
   const hasher = createHasher();
   mixText(hasher, `${name}:`);
-  if (!mixValue(hasher, args)) {
+  if (!mixesAsPlainData(hasher, args)) {
     return null;
   }
   return `${name}:${hasher.length}:${hasher.states.map(state => state.toString(16)).join('')}`;
@@ -172,10 +185,32 @@ function abortError(signal) {
   return signal.reason ?? new DOMException('The build was cancelled.', 'AbortError');
 }
 
-/** One job on one worker: resolves with the worker's answer, or rejects when the worker itself fails. */
-function requestKernel(worker, job, signal) {
+// A worker that is gone without an error event never answers; the page can only notice by waiting.
+const DEFAULT_KERNEL_TIMEOUT_MILLISECONDS = 60000;
+const MAXIMUM_KERNEL_TIMEOUT_MILLISECONDS = 3600000;
+
+function validateKernelTimeout(milliseconds) {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0 || milliseconds > MAXIMUM_KERNEL_TIMEOUT_MILLISECONDS) {
+    throw new RangeError(`kernelTimeoutMilliseconds must be a finite number above 0 and at most ${MAXIMUM_KERNEL_TIMEOUT_MILLISECONDS}, got ${milliseconds}. Omit it for ${DEFAULT_KERNEL_TIMEOUT_MILLISECONDS}.`);
+  }
+}
+
+/** One job on one worker: resolves with the worker's answer, or rejects when the worker fails or stays silent too long. */
+function requestKernel(worker, job, signal, timeoutMilliseconds) {
   return new Promise((resolve, reject) => {
-    const cleanUp = () => signal?.removeEventListener('abort', onAbort);
+    const timer = setTimeout(() => {
+      cleanUp();
+      const error = new Error(`Kernel worker gave no answer for ${job.name} within ${timeoutMilliseconds} ms.`);
+      error.timedOut = true;
+      reject(error);
+    }, timeoutMilliseconds);
+    const cleanUp = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      worker.onmessage = null;
+      worker.onerror = null;
+      worker.onmessageerror = null;
+    };
     const onAbort = () => {
       cleanUp();
       reject(abortError(signal));
@@ -188,6 +223,10 @@ function requestKernel(worker, job, signal) {
     worker.onerror = event => {
       cleanUp();
       reject(new Error(`Kernel worker failed: ${event.message}`));
+    };
+    worker.onmessageerror = () => {
+      cleanUp();
+      reject(new Error('Kernel worker answered with data the page could not read.'));
     };
     try {
       worker.postMessage({ name: job.name, args: job.args });
@@ -203,7 +242,8 @@ function requestKernel(worker, job, signal) {
  * built from identical bytes. `createWorker` replaces the browser Worker (tests, other hosts); `signal` cancels the
  * build and ends the worker. Hosts without workers just run the build.
  */
-export async function buildWithKernels(build, { createWorker = defaultWorkerFactory, signal, available = kernelWorkersAvailable(), pageKernels } = {}) {
+export async function buildWithKernels(build, { createWorker = defaultWorkerFactory, signal, available = kernelWorkersAvailable(), pageKernels, kernelTimeoutMilliseconds = DEFAULT_KERNEL_TIMEOUT_MILLISECONDS } = {}) {
+  validateKernelTimeout(kernelTimeoutMilliseconds);
   if (!available || activeSession) {
     return build();
   }
@@ -232,7 +272,7 @@ export async function buildWithKernels(build, { createWorker = defaultWorkerFact
           continue;
         }
         worker ??= createWorkerOrNull(createWorker);
-        await computeOnWorker(session, worker, error.job, signal);
+        await computeOnWorker(session, worker, error.job, signal, kernelTimeoutMilliseconds);
       } finally {
         activeSession = null;
       }
@@ -270,7 +310,7 @@ function createWorkerOrNull(createWorker) {
 
 // A worker that cannot start or dies leaves the job to the inline path, which then does the work and raises its own
 // errors, so a failure never depends on the worker.
-async function computeOnWorker(session, worker, job, signal) {
+async function computeOnWorker(session, worker, job, signal, timeoutMilliseconds) {
   if (!worker) {
     session.inlineKeys.add(job.key);
     recordFallback(job.name, `the worker could not start: ${workerStartFailure}`);
@@ -278,10 +318,15 @@ async function computeOnWorker(session, worker, job, signal) {
   }
   let answer;
   try {
-    answer = await requestKernel(worker, job, signal);
+    answer = await requestKernel(worker, job, signal, timeoutMilliseconds);
   } catch (error) {
     if (signal?.aborted) {
       throw error;
+    }
+    if (error.timedOut) {
+      // A silent worker may be gone for good: end it and finish the build inline instead of waiting once per kernel.
+      worker.terminate();
+      session.inlineAll = true;
     }
     session.inlineKeys.add(job.key);
     recordFallback(job.name, `the worker failed: ${error.message}`);

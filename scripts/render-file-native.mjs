@@ -10,6 +10,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareFileScene } from './file-scene.mjs';
+import { readNativeCapacity } from './native-capacity.mjs';
 import { collectExportChunks, traceFrameNative } from './agent-native-trace.mjs';
 import { MissingAddonError, USAGE, listIgnoredFrameEffects, parseArguments } from './render-file-native-options.mjs';
 
@@ -77,7 +78,7 @@ async function exportTablesInPage({ width, height, bounces, seed, instancing, ca
   const { manifest, tables } = splitExportForChunks(packed);
   window.__nativeExportTables = tables;
   const exported = manifest;
-  return { ...exported, ignored: describeIgnoredFeatures(parts, environment, 'cpu', { kernelMaterials: exported.wholeMaterials }), partCount: parts.length, hiddenCount: hidden.size, listedParts };
+  return { ...exported, ignored: describeIgnoredFeatures(parts, environment, 'cpu', { kernelMaterials: exported.wholeMaterials, clipStart: tracerCamera.clipStart }), partCount: parts.length, hiddenCount: hidden.size, listedParts };
 }
 
 async function loadOidnIfAvailable() {
@@ -187,9 +188,10 @@ async function main() {
     if (loadError) throw new Error(`Scene file failed to load: ${loadError}`);
     const loadSeconds = (performance.now() - loadStarted) / 1000;
     const packStarted = performance.now();
+    const capacityRead = readNativeCapacity(tracer);
     const manifest = await page.evaluate(exportTablesInPage, { width: options.width, height: options.height, bounces: options.bounces, seed: options.seed, instancing: options.instancing, camera,
       listParts: options.listParts ?? null, hideParts: options.hideParts ?? null, patchMaterials: options.patchMaterials });
-    const exported = await collectExportChunks(manifest, (name, offset) => page.evaluate(readExportChunkInPage, { name, offset }));
+    const exported = await collectExportChunks(manifest, (name, offset) => page.evaluate(readExportChunkInPage, { name, offset }), { capacity: capacityRead.capacity });
     await page.evaluate(() => { window.__nativeExportTables = null; });
     const packSeconds = (performance.now() - packStarted) / 1000;
     const denoiser = options.denoise === 'oidn' ? await loadOidnIfAvailable() : null;
@@ -203,7 +205,7 @@ async function main() {
     const report = { ...traced.report, tracerSetupSeconds: traced.report.setupSeconds, partCount: exported.partCount, hiddenCount: exported.hiddenCount,
       loadSeconds, packSeconds, setupSeconds: loadSeconds + packSeconds, samplingSeconds: traced.report.tracedSeconds,
       triangleCount: exported.triangles, instanceCount: exported.instances ?? null, lightCount: exported.counts?.lightCount ?? null,
-      peakGpuMemoryMiB: peak.peakMiB, ...(peak.note ? { peakGpuMemoryNote: peak.note } : {}),
+      ...(capacityRead.reason ? { nativeCapacityNote: capacityRead.reason } : {}), peakGpuMemoryMiB: peak.peakMiB, ...(peak.note ? { peakGpuMemoryNote: peak.note } : {}),
       ignoredFrameEffects: listIgnoredFrameEffects(description), ignored: exported.ignored, materialsReason: exported.materialsReason };
     await writeFile(`${options.outputPrefix}.json`, `${JSON.stringify(report, null, 2)}\n`);
     console.log(`FILE_NATIVE ${JSON.stringify(report)}`);

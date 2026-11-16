@@ -3,7 +3,7 @@ import { GEOMETRY_PROBLEMS } from '../src/mesh-lint.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { box, cylinder, sphere } from '../src/geometry.js';
-import { editMesh, validateTopology, meshFromGeometry, lintMesh, meshBounds, facesWithTag } from '../src/mesh.js';
+import { editMesh, validateTopology, meshFromGeometry, lintMesh, meshBounds, facesWithTag, tagCounts } from '../src/mesh.js';
 import { loadMeshBooleans, meshBoolean } from '../src/mesh-boolean.js';
 import { applyMeshEdits, transformMesh } from '../src/mesh-recipe.js';
 import { createAgentScene } from '../src/agent-scene.js';
@@ -12,14 +12,14 @@ await loadMeshBooleans();
 
 function signedVolume(mesh) {
   let volume = 0;
-  const p = mesh.positions;
+  const positions = mesh.positions;
   for (let face = 0; face < mesh.faceCount; face++) {
     const start = mesh.faceOffsets[face];
     const a = mesh.cornerVertices[start] * 3;
     for (let corner = start + 1; corner + 1 < mesh.faceOffsets[face + 1]; corner++) {
       const b = mesh.cornerVertices[corner] * 3;
-      const c = mesh.cornerVertices[corner + 1] * 3;
-      volume += (p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1]) + p[a + 1] * (p[b + 2] * p[c] - p[b] * p[c + 2]) + p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c])) / 6;
+      const thirdVertexOffset = mesh.cornerVertices[corner + 1] * 3;
+      volume += (positions[a] * (positions[b + 1] * positions[thirdVertexOffset + 2] - positions[b + 2] * positions[thirdVertexOffset + 1]) + positions[a + 1] * (positions[b + 2] * positions[thirdVertexOffset] - positions[b] * positions[thirdVertexOffset + 2]) + positions[a + 2] * (positions[b] * positions[thirdVertexOffset + 1] - positions[b + 1] * positions[thirdVertexOffset])) / 6;
     }
   }
   return volume;
@@ -131,4 +131,14 @@ test('recipe meshes run booleans with inline primitive cutters', () => {
     geometries: [{ id: 'bad', type: 'mesh', base: { type: 'box' }, edits: [{ op: 'boolean', operation: 'union', cutter: { type: 'box', id: 'x' } }] }],
     materials: [], nodes: [],
   }), /geometries\[0\]\.cutter: got \{"type":"box","id":"x"\}; expected a primitive or profile record without an id/);
+});
+
+test('a reused cutTag counts only the faces of the latest cutter', () => {
+  const shifted = offset => transformMesh(meshFromGeometry(box(0, 1)), { translation: [offset, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
+  const first = meshBoolean(meshFromGeometry(box(0, 1)), shifted(0.5), 'union', { cutTag: 'cut' });
+  const second = meshBoolean(first.mesh, shifted(-0.5), 'union', { cutTag: 'cut' });
+  assert.equal(first.cutterFaces, 5);
+  assert.equal(second.cutterFaces, 5);
+  assert.equal(second.mesh.attributes.face['boolean-cutter-faces'], undefined);
+  assert.equal(tagCounts(second.mesh).cut, 10);
 });

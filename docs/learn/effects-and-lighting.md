@@ -132,3 +132,5 @@ For an outdoor scene, set `world: true` and `ground: false` on the renderer, and
 - `lightDirection` and `daylight`: the sun direction and the amount of daylight.
 
 Frames can override the environment and supply `time`, `wind`, `waterRipple` and `rippleTime`. [HDR environment lighting](#hdr-environment-lighting) lights a scene from a photo of a real sky, and [Local lights and volume fog](#local-lights-and-volume-fog) adds light shafts.
+
+A frame whose camera carries an `fStop` (a recipe camera sets `focusDistance` next to it) gets depth of field from `effectsWithFStop(effects, camera)` (in `crucible/addons/camera-effects`): blur `1.4 / fStop` (at most 1), focused at `camera.focusDistance` metres along the view axis when the camera sets it, as the path tracer and Blender do, and at the distance from `eye` to `target` otherwise. A zero, negative or non-finite `fStop` or `focusDistance` throws a RangeError; a scene recipe camera does not carry `focusDistance` yet, so a recipe camera with an `fStop` focuses on its target.

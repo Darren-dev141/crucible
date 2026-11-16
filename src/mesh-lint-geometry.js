@@ -1,5 +1,6 @@
 import { createMeshQueryIndex, createMeshPairQuery } from './mesh-query.js';
 import { faceNormals } from './mesh-normals.js';
+import { triangulateMesh } from './mesh-render.js';
 
 /**
  * Shape checks that need a spatial index: parts that cross, solids that cross themselves, walls too thin to print or
@@ -29,12 +30,27 @@ function partFaces(facePart, partCount) {
   return faces;
 }
 
-/** Fan-triangulates the faces of one part into a compact Float32/Uint32 geometry for the query index. */
-function partGeometry(mesh, faces) {
+/**
+ * Triangle corners of the faces of each part, in face order: a quad splits along its shorter diagonal and a concave
+ * polygon is ear clipped, so the triangles stay inside the face (a fan from one corner would cross a concave one).
+ */
+function faceTriangles(mesh) {
+  const { normals } = faceNormals(mesh);
+  const { triangleCorners } = triangulateMesh(mesh, normals);
+  const firstTriangle = new Uint32Array(mesh.faceCount + 1);
+  for (let face = 0; face < mesh.faceCount; face++) {
+    firstTriangle[face + 1] = firstTriangle[face] + mesh.faceOffsets[face + 1] - mesh.faceOffsets[face] - 2;
+  }
+  return { triangleCorners, firstTriangle };
+}
+
+/** Compacts the triangles of one part into a Float32/Uint32 geometry for the query index. */
+function partGeometry(mesh, faces, { triangleCorners, firstTriangle }) {
   const compactIndex = new Map();
   const positions = [];
   const indices = [];
-  const compact = vertex => {
+  const compact = corner => {
+    const vertex = mesh.cornerVertices[corner];
     let index = compactIndex.get(vertex);
     if (index === undefined) {
       index = compactIndex.size;
@@ -44,11 +60,8 @@ function partGeometry(mesh, faces) {
     return index;
   };
   for (const face of faces) {
-    const start = mesh.faceOffsets[face];
-    const end = mesh.faceOffsets[face + 1];
-    const anchor = compact(mesh.cornerVertices[start]);
-    for (let corner = start + 1; corner + 1 < end; corner++) {
-      indices.push(anchor, compact(mesh.cornerVertices[corner]), compact(mesh.cornerVertices[corner + 1]));
+    for (let cornerSlot = firstTriangle[face] * 3; cornerSlot < firstTriangle[face + 1] * 3; cornerSlot++) {
+      indices.push(compact(triangleCorners[cornerSlot]));
     }
   }
   return { positions: Float32Array.from(positions), indices: Uint32Array.from(indices) };
@@ -230,10 +243,12 @@ export function lintMeshGeometry(mesh, { facePart, partCount, solidParts, bounds
   const contactDistance = diagonal * CONTACT_RATIO;
   const totalFaces = faces.reduce((total, partFaceList) => total + partFaceList.length, 0);
   // Budgets count faces; a quad is two triangles, so these are loose upper-bound proxies for triangles.
-  const withinBudget = totalFaces <= GEOMETRY_LINT_BUDGET.maxTotalTriangles
+  const withinFaceBudget = totalFaces <= GEOMETRY_LINT_BUDGET.maxTotalTriangles
     && faces.every(partFaceList => partFaceList.length <= GEOMETRY_LINT_BUDGET.maxTrianglesPerPart);
-  if (withinBudget) {
-    const geometries = faces.map(partFaceList => partGeometry(mesh, partFaceList));
+  // A face too large to triangulate cannot be checked; the spatial checks are named as skipped instead of thrown.
+  const triangles = withinFaceBudget ? attempt('triangulation', new Set(), () => faceTriangles(mesh), null) : null;
+  if (triangles) {
+    const geometries = faces.map(partFaceList => partGeometry(mesh, partFaceList, triangles));
     const partBounds = geometries.map(geometryBounds);
     const crossing = attempt('intersecting-parts', skipped, () => findIntersectingParts(geometries, partBounds, contactDistance, skipped), []);
     if (crossing.length) found.push(problem('intersecting-parts', crossing));

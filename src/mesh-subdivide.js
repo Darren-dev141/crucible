@@ -1,5 +1,6 @@
 import { createMeshData, deriveEdges } from './mesh-data.js';
 import { selectEdges, edgeFaces } from './mesh-bevel.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 // Catmull-Clark subdivision with semi-sharp creases, on the rules Pixar published and OpenSubdiv implements
 // (Sdc::Crease, "uniform" creasing): a crease of sharpness s acts fully sharp for s levels, and a fraction blends the
@@ -204,6 +205,39 @@ function refineCornerAttributes(level, attributes) {
   return refined;
 }
 
+// Point attributes in the order refineTopology puts the points: old points keep their value, an edge point averages the
+// edge's two ends and a face point the face's corners. Integer and boolean values take the first source instead.
+function refinePointAttributes(level, attributes) {
+  const refined = {};
+  const { vertexCount, edgeCount, faceCount, faceOffsets, cornerVertices, edgeVertices } = level;
+  for (const [name, attribute] of Object.entries(attributes)) {
+    const { data, size } = attribute;
+    const blends = data instanceof Float32Array || data instanceof Float64Array;
+    const next = new data.constructor((vertexCount + edgeCount + faceCount) * size);
+    next.set(data.subarray(0, vertexCount * size));
+    for (let edge = 0; edge < edgeCount; edge++) {
+      const first = edgeVertices[edge * 2] * size;
+      const second = edgeVertices[edge * 2 + 1] * size;
+      const target = (vertexCount + edge) * size;
+      for (let component = 0; component < size; component++) {
+        next[target + component] = blends ? (data[first + component] + data[second + component]) / 2 : data[first + component];
+      }
+    }
+    for (let face = 0; face < faceCount; face++) {
+      const start = faceOffsets[face];
+      const end = faceOffsets[face + 1];
+      const target = (vertexCount + edgeCount + face) * size;
+      for (let component = 0; component < size; component++) {
+        let sum = 0;
+        for (let corner = start; corner < end; corner++) sum += data[cornerVertices[corner] * size + component];
+        next[target + component] = blends ? sum / (end - start) : data[cornerVertices[start] * size + component];
+      }
+    }
+    refined[name] = { data: next, size };
+  }
+  return refined;
+}
+
 function refineFaceAttributes(level, attributes) {
   const refined = {};
   for (const [name, attribute] of Object.entries(attributes)) {
@@ -301,6 +335,7 @@ function refineLevel(level) {
   const edgeData = refineEdgeData({ ...level, ...cornerFaceRanges(level) }, next, level.attributes.edge);
   next.edgeSharpness = edgeData.sharpness;
   next.attributes = {
+    point: refinePointAttributes(level, level.attributes.point ?? {}),
     face: refineFaceAttributes(level, level.attributes.face),
     corner: refineCornerAttributes(level, level.attributes.corner),
     edge: edgeData.attributes,
@@ -311,9 +346,12 @@ function refineLevel(level) {
 /**
  * Subdivide `levels` times. `creaseRule` is an edge rule (see selectEdges) and `sharpness` the crease strength from 0
  * to 10 (a crease holds for that many levels). Faces keep their tags, corner attributes such as uv blend linearly,
- * and edge attributes follow each half of a split edge. Point attributes are not carried.
+ * and edge attributes follow each half of a split edge. Point attributes carry over: an edge point averages its two
+ * ends and a face point its corners (integer and boolean values take the first source).
  */
 export function subdivideMesh(mesh, { levels = 1, crease, sharpness = MAX_CREASE_SHARPNESS } = {}) {
+  requireFiniteInRange('subdivideMesh', 'levels', levels, 1, MAX_SUBDIVISION_LEVELS, true);
+  requireFiniteInRange('subdivideMesh', 'sharpness', sharpness, 0, MAX_CREASE_SHARPNESS);
   let level = {
     positions: Float64Array.from(mesh.positions),
     vertexCount: mesh.vertexCount, edgeCount: mesh.edgeCount, faceCount: mesh.faceCount, cornerCount: mesh.cornerCount,
@@ -329,6 +367,6 @@ export function subdivideMesh(mesh, { levels = 1, crease, sharpness = MAX_CREASE
     cornerVertices: level.cornerVertices,
     edgeVertices: level.edgeVertices,
     cornerEdges: level.cornerEdges,
-    attributes: { point: {}, ...level.attributes },
+    attributes: level.attributes,
   });
 }

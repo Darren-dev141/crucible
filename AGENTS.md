@@ -15,6 +15,7 @@ Crucible makes 3D easy to understand and easy to do. The agent carries the heavy
 
 - `src/` is the library, one flat folder. `src/agent-*.js` and `src/mcp*` are the MCP tool surface.
 - `bin/crucible-mcp.mjs` starts the MCP server. `packages/` holds the addon packages.
+- [FEATURES.md](FEATURES.md) maps every page, MCP tool and command by the name the code uses. `node scripts/drive.mjs list|shot <id>|console <id>` opens a page headless, so use it instead of a throwaway browser script.
 - `tests/` holds the Node tests, one `*.test.js` per area. `scripts/` holds the build, smoke and gate scripts.
 - `docs/` holds one guide per feature. `skills/` holds the agent skills that ship with the package.
 - `changes/` holds one changelog note per pull request. `artifacts/` is ignored output for screenshots and logs.

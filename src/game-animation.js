@@ -48,8 +48,11 @@ export function characterDescendants(nodes, characterId) {
   }
   const found = [];
   const queue = [characterId];
+  const visited = new Set([characterId]);
   while (queue.length > 0) {
     for (const child of childrenByParent.get(queue.shift()) ?? []) {
+      if (visited.has(child.id)) continue;
+      visited.add(child.id);
       found.push(child);
       queue.push(child.id);
     }
@@ -212,18 +215,24 @@ export function createGameAnimation(animation, nodes, characterId, { assets } = 
   };
 }
 
-function defaultDrive(animation) {
+// Only the character controller reports intentSpeed, the speed the player asks for; the vehicle reports its speed alone.
+const CONTROLLERS_WITHOUT_INTENT_SPEED = Object.freeze(['vehicle']);
+
+function defaultDrive(animation, controller) {
   const speed = animation.parameters?.speed;
   if (!speed || speed.type !== 'number') return {};
-  return { speed: animation.rootMotion ? 'intentSpeed' : 'speed' };
+  return { speed: animation.rootMotion && controller === 'character' ? 'intentSpeed' : 'speed' };
 }
 
-function checkDrive(drive, animation, path) {
-  if (drive === undefined) return defaultDrive(animation);
+function checkDrive(drive, animation, path, controller) {
+  if (drive === undefined) return defaultDrive(animation, controller);
   requireRecord(drive, `${path}.drive`, '{ "speed": "intentSpeed" }');
   const parameters = animation.parameters ?? {};
   for (const [parameter, source] of Object.entries(drive)) {
     if (!GAME_ANIMATION_DRIVES.includes(source)) fail(`${path}.drive.${parameter}`, `is ${JSON.stringify(source)}. Use one of: ${GAME_ANIMATION_DRIVES.join(', ')}.`);
+    if (source === 'intentSpeed' && CONTROLLERS_WITHOUT_INTENT_SPEED.includes(controller)) {
+      fail(`${path}.drive.${parameter}`, `is "intentSpeed", which the ${controller} controller does not report. Use "speed".`);
+    }
     const type = parameters[parameter]?.type;
     const expected = source === 'airborne' ? 'boolean' : 'number';
     if (type !== expected) fail(`${path}.drive.${parameter}`, `needs a ${expected} parameter of that name in parameters, because ${source} is a ${expected}. Declare "${parameter}": { "type": "${expected}" }.`);
@@ -236,16 +245,16 @@ function checkDrive(drive, animation, path) {
  * node of `nodes`; clips target its child nodes, never the node itself, because the controller or follower owns that one.
  * Options: `path` for messages and `driven` (false for an NPC, whose follower sets the `speed` parameter).
  */
-export function normalizeGameAnimation(animation, nodes, characterId, { path = 'animation', driven = true } = {}) {
+export function normalizeGameAnimation(animation, nodes, characterId, { path = 'animation', driven = true, controller = 'character' } = {}) {
   requireRecord(animation, path, '{ "clips": {...}, "layers": [...] }');
   rejectUnknownFields(animation, ANIMATION_FIELDS, path);
-  if (nodes.find(node => node.id === characterId)?.asset) return normalizeAssetCharacterAnimation(animation, path, driven);
+  if (nodes.find(node => node.id === characterId)?.asset) return normalizeAssetCharacterAnimation(animation, path, driven, controller);
   const descendants = characterDescendants(nodes, characterId);
   if (descendants.length === 0) fail(path, `has nothing to move: "${characterId}" has no child nodes. Give the character child nodes (a body, limbs) and point clip tracks at them.`);
   if (descendants.length > GAME_ANIMATION_LIMITS.maxCharacterNodes) fail(path, `would pose ${descendants.length} nodes; the limit is ${GAME_ANIMATION_LIMITS.maxCharacterNodes}.`);
   if (!Array.isArray(animation.layers)) fail(`${path}.layers`, 'must be a list of animation graph layers, such as [{ "name": "base", "states": [{ "name": "idle", "clip": "idle" }] }].');
   const normalized = { ...structuredClone(animation), clips: checkClips(animation.clips, new Set(descendants.map(node => node.id)), path) };
-  if (driven) normalized.drive = checkDrive(animation.drive, normalized, path);
+  if (driven) normalized.drive = checkDrive(animation.drive, normalized, path, controller);
   else if (animation.drive !== undefined) fail(`${path}.drive`, 'is not allowed on an NPC: its path follower sets the "speed" parameter. Remove drive.');
   try {
     const built = createGameAnimation(normalized, nodes, characterId);
@@ -258,10 +267,10 @@ export function normalizeGameAnimation(animation, nodes, characterId, { path = '
 
 // An asset character cannot be built here: its clips and skeleton live in files the host loads when the game starts. The
 // shape is checked now; clip indexes, bone names and the graph itself are checked by createGameAnimation with the files.
-function normalizeAssetCharacterAnimation(animation, path, driven) {
+function normalizeAssetCharacterAnimation(animation, path, driven, controller) {
   if (!Array.isArray(animation.layers)) fail(`${path}.layers`, 'must be a list of animation graph layers, such as [{ "name": "base", "states": [{ "name": "idle", "clip": "idle" }] }].');
   const normalized = { ...structuredClone(animation), clips: checkAssetClips(animation.clips, path) };
-  if (driven) normalized.drive = checkDrive(animation.drive, normalized, path);
+  if (driven) normalized.drive = checkDrive(animation.drive, normalized, path, controller);
   else if (animation.drive !== undefined) fail(`${path}.drive`, 'is not allowed on an NPC: its path follower sets the "speed" parameter. Remove drive.');
   return normalized;
 }

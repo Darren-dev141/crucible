@@ -149,13 +149,13 @@ function bruteForceOwner(world, origin, direction) {
   let best = NO_TRIANGLE;
   let bestDistance = Infinity;
   for (let triangle = 0; triangle < world.count; triangle++) {
-    const c = world.corners.subarray(triangle * 9, triangle * 9 + 9);
-    const edgeOne = [c[3] - c[0], c[4] - c[1], c[5] - c[2]];
-    const edgeTwo = [c[6] - c[0], c[7] - c[1], c[8] - c[2]];
+    const cornerCoordinates = world.corners.subarray(triangle * 9, triangle * 9 + 9);
+    const edgeOne = [cornerCoordinates[3] - cornerCoordinates[0], cornerCoordinates[4] - cornerCoordinates[1], cornerCoordinates[5] - cornerCoordinates[2]];
+    const edgeTwo = [cornerCoordinates[6] - cornerCoordinates[0], cornerCoordinates[7] - cornerCoordinates[1], cornerCoordinates[8] - cornerCoordinates[2]];
     const pivot = [direction[1] * edgeTwo[2] - direction[2] * edgeTwo[1], direction[2] * edgeTwo[0] - direction[0] * edgeTwo[2], direction[0] * edgeTwo[1] - direction[1] * edgeTwo[0]];
     const determinant = edgeOne[0] * pivot[0] + edgeOne[1] * pivot[1] + edgeOne[2] * pivot[2];
     if (determinant <= 0) continue;
-    const toOrigin = [origin[0] - c[0], origin[1] - c[1], origin[2] - c[2]];
+    const toOrigin = [origin[0] - cornerCoordinates[0], origin[1] - cornerCoordinates[1], origin[2] - cornerCoordinates[2]];
     const u = (toOrigin[0] * pivot[0] + toOrigin[1] * pivot[1] + toOrigin[2] * pivot[2]) / determinant;
     const cross = [toOrigin[1] * edgeOne[2] - toOrigin[2] * edgeOne[1], toOrigin[2] * edgeOne[0] - toOrigin[0] * edgeOne[2], toOrigin[0] * edgeOne[1] - toOrigin[1] * edgeOne[0]];
     const v = (direction[0] * cross[0] + direction[1] * cross[1] + direction[2] * cross[2]) / determinant;

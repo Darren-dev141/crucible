@@ -326,6 +326,13 @@ test('pitch variance is deterministic for the same seed', () => {
   assert.ok(pitches(7).every(pitch => pitch >= 0.8 && pitch <= 1.2));
 });
 
+test('pitch variance on the slowest allowed pitch never makes play throw and stays playable', () => {
+  const { audio } = createFixture({ seed: 3 });
+  audio.defineSound('slow', { buffer, pitch: 0.1, pitchVariance: 0.5, maximumInstances: 32 });
+  for (let index = 0; index < 32; index += 1) audio.play('slow');
+  assert.ok(audio.activeVoices().every(voice => voice.pitch >= 0.1 && voice.pitch <= 0.15));
+});
+
 test('load decodes an ArrayBuffer into a sound', async () => {
   const { audio } = createFixture();
   const sound = await audio.load('boom', new ArrayBuffer(2000), { bus: 'effects' });
@@ -448,4 +455,17 @@ test('a linear rolloff above 1 is rejected, other models keep up to 20, and gain
   assert.doesNotThrow(() => audio.defineSound('wide', { buffer, spatial: { model: 'inverse', rolloff: 5 } }));
   assert.equal(distanceGain(1000, { model: 'linear', rolloff: 1, referenceDistance: 1, maximumDistance: 50 }), 0);
   assert.equal(distanceGain(1000, { model: 'linear', rolloff: 5, referenceDistance: 1, maximumDistance: 50 }), 0);
+});
+
+test('a fractional maximumInstances or maximumVoices is refused instead of letting one more voice play', () => {
+  const { audio } = createFixture();
+  assert.throws(() => audio.defineSound('clink', { buffer, maximumInstances: 2.5 }), /maximumInstances must be a whole number from 1 to 32, got 2.5/);
+  assert.throws(() => createFixture({ maximumVoices: 1.5 }), /maximumVoices must be a whole number from 1 to 64, got 1.5/);
+});
+
+test('marker times that are not numbers are refused instead of silently dropping every cue', () => {
+  const markers = [{ time: 1, name: 'footstep' }];
+  assert.throws(() => markersCrossed(markers, 0, Number.NaN), /markers toTime must be a number/);
+  assert.throws(() => markersCrossed(markers, undefined, 2), /markers fromTime must be a number/);
+  assert.equal(markersCrossed(markers, 0, 2).length, 1);
 });

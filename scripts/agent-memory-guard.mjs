@@ -20,10 +20,24 @@ export async function sampleBrowserHeap(session, limitBytes = BROWSER_HEAP_LIMIT
 
 // The native path tracer and the OIDN denoiser run inside the Node process, so a native job holds memory the JS limit never
 // meant to cover: the traced scene tables (fixed) and the denoiser's buffers, frame planes and temporal history (per pixel).
-// These are estimates, not measurements: the Linux end-to-end run in #1186 is still to be measured and the numbers adjusted.
-export const NATIVE_FIXED_ALLOWANCE_BYTES = 256 * 1024 ** 2;
+// Sized from native + OIDN video jobs of the demo room (#1186, RTX 3060, Windows): peak RSS 1224 MiB at 960 x 540, 1360 MiB at
+// 1280 x 720 and 2149 MiB at 1920 x 1080. Taking the 960 x 540 to 1280 x 720 slope back to no pixels leaves a fixed part of
+// about 540 MiB above the 512 MiB base; with 25 percent on top the fixed allowance is 640 MiB. A software adapter gets more, below.
+export const NATIVE_FIXED_ALLOWANCE_BYTES = 640 * 1024 ** 2;
 export const NATIVE_BYTES_PER_PIXEL = 1024;
 export const NATIVE_ALLOWANCE_CAP_BYTES = 2048 * 1024 ** 2;
+
+// A software Vulkan adapter (lavapipe on a Linux runner without a GPU) keeps its device buffers and the JIT-compiled kernel
+// in the Node process, so RSS holds what a real GPU keeps in its own memory. Measured on GitHub's ubuntu runner (#1186,
+// llvmpipe, LLVM 21): one bare trace of Cook's room fixture peaks at 836 MiB with a warm shader cache and 1262 MiB cold at
+// 320 x 240, about 430 MiB for the compile at every frame size; the first native + wavelet video job of the demo room at
+// 960 x 540 on a fresh runner peaked at 3226 MiB, against a 1705 MiB limit. 2304 MiB on top leaves that job 24 percent to spare.
+export const SOFTWARE_ADAPTER_ALLOWANCE_BYTES = 2304 * 1024 ** 2;
+
+/** True for an adapter that renders on the CPU, so its device memory is counted in the process RSS. */
+export function isSoftwareAdapter(adapterName) {
+  return typeof adapterName === 'string' && /llvmpipe|lavapipe|swiftshader/i.test(adapterName);
+}
 
 /** Extra Node RSS a native tracer job may hold on top of the base limit, from its frame size, never above the cap. */
 export function nativeNodeAllowanceBytes({ width, height }) {
@@ -39,17 +53,22 @@ export function nativeNodeAllowanceBytes({ width, height }) {
  * The in-process OIDN device and the tracer tables live "for the life of the process", so the memory a native job
  * leaves behind is still in RSS when the next raster job or review starts. The allowance therefore only grows: it is
  * raised by each native frame and never dropped, not when a job falls back to another backend and not when it ends.
- * One figure for the whole process is deliberate until the Linux measurement of #1186 splits it into parts.
+ * One figure for the whole process: the frame part from the largest native frame, plus the software adapter part once a trace ran on one.
  */
 export function createNativeMemoryAllowance() {
   let grantedBytes = 0;
+  let adapterBytes = 0;
   return {
     /** Called when a frame really traces natively. */
     grantForFrame({ width, height }) {
       grantedBytes = Math.max(grantedBytes, nativeNodeAllowanceBytes({ width, height }));
     },
+    /** Called with the adapter a native trace ran on; a software adapter adds its device memory, a GPU adds nothing. */
+    grantForAdapter(adapterName) {
+      if (isSoftwareAdapter(adapterName)) adapterBytes = SOFTWARE_ADAPTER_ALLOWANCE_BYTES;
+    },
     get bytes() {
-      return grantedBytes;
+      return grantedBytes + adapterBytes;
     },
   };
 }

@@ -6,6 +6,7 @@ import { parseGltf } from '../src/gltf.js';
 import { createAgentAssetScene } from '../src/agent-asset.js';
 import { createAgentScene } from '../src/agent-scene.js';
 import { createAssetDrive } from '../src/agent-drive.js';
+import { normalizeDrive } from '../src/agent-drive-schema.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { carAsset, CAR_WHEEL_RADIUS, CAR_WHEELBASE, CAR_TRACK } from './fixtures/car-glb.js';
 
@@ -146,6 +147,16 @@ test('the brake signal is on only while the car slows, and the tail lamp glows w
   });
 });
 
+test('a wheel that gives both node and nodes is rejected instead of dropping node', () => {
+  const wheels = [{ node: 'Wheel_FL' }, { node: 'Wheel_FR', nodes: ['Tire_FR', 'Hub_FR'] }];
+  assert.throws(() => normalizeDrive({ path: CURVE, speed: 3, wheels }), error => {
+    assert.equal(error.fieldPath, 'drive.wheels[1]');
+    assert.match(error.message, /^drive\.wheels\[1\]: got "node and nodes"; expected one of node or nodes; pass node or nodes, not both/);
+    return true;
+  });
+  assert.doesNotThrow(() => normalizeDrive({ path: CURVE, speed: 3, wheels: [{ node: 'Wheel_FL' }, { nodes: ['Tire_FR', 'Hub_FR'] }] }));
+});
+
 test('a bad drive names the problem', async () => {
   await withCar(asset => {
     assert.throws(() => createAgentAssetScene(asset, assetRecipe({ path: CURVE })), /exactly one of speed/);
@@ -156,7 +167,17 @@ test('a bad drive names the problem', async () => {
   });
 });
 
-const sceneRecipe = (drive, translation = [10, 0, 0]) => ({
+test('a tail light with a non-numeric off or on emission is refused instead of driving NaN', () => {
+  for (const field of ['off', 'on']) {
+    for (const bad of ['bright', NaN, null]) {
+      const drive = { path: CURVE, lights: { tailLights: [{ material: 'tail', signal: 'brake', [field]: bad }] } };
+      assert.throws(() => normalizeDrive(drive), new RegExp(`lights\\.tailLights\\[0\\]\\.${field}: got`), `${field} ${String(bad)}`);
+    }
+  }
+  assert.doesNotThrow(() => normalizeDrive({ path: CURVE, lights: { tailLights: [{ material: 'tail', signal: 'brake', off: 0.2, on: 6 }] } }));
+});
+
+const sceneRecipe = (drive,translation = [10, 0, 0]) => ({
   format: 'crucible.scene', schemaVersion: 1,
   geometries: [{ id: 'ground', type: 'box' }],
   materials: [{ id: 'grass', color: [0.2, 0.5, 0.2] }],

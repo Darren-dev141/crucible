@@ -2,7 +2,7 @@ import { buildTraceSceneForDevice, refuseLocalVolumes } from './path-tracer-scen
 import { createCamera } from './path-tracer.js';
 import * as webGpuTracer from './path-tracer-webgpu.js';
 import { REALTIME_KERNEL_PIECES } from './path-tracer-realtime-webgpu-kernel.js';
-import { cacheCellSizes } from './path-tracer-realtime-options.js';
+import { cacheCellSizes, noteIgnoredClipStart } from './path-tracer-realtime-options.js';
 import { createWebGpuDenoiser, createWebGpuRadianceCache } from './path-tracer-realtime-webgpu-passes.js';
 import { PART_MOTION_CHANGED, PART_MOTION_FLOATS, partMotionTable } from './path-tracer-reprojection.js';
 import { MAX_TRACE_PARTS } from './path-tracer-scene.js';
@@ -148,10 +148,12 @@ export async function createWebGpuRealtimeTracer(scene, resolved, suppliedCanvas
     device.queue.submit([encoder.finish()]);
   };
 
+  const ignoredNotes = [];
   return {
     gpu: kernel.gpu,
     backend: 'webgpu',
     fallbackReason: null,
+    ignored: ignoredNotes,
     get canvas() { return canvas; },
     width: outputWidth,
     height: outputHeight,
@@ -182,6 +184,7 @@ export async function createWebGpuRealtimeTracer(scene, resolved, suppliedCanvas
     frame(camera, { wait = false } = {}) {
       if (disposed) throw new Error('This real-time tracer was disposed.');
       const nextView = createCamera(camera, outputWidth, outputHeight);
+      noteIgnoredClipStart(ignoredNotes, nextView);
       const previousView = view ?? nextView;
       writeParameters(nextView);
       view = nextView;

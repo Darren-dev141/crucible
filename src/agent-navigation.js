@@ -55,6 +55,16 @@ export function queryAgentPath(query, ground, avoidBounds) {
   };
 }
 
+function requireNodeId(value, path) {
+  if (typeof value !== 'string' || !value) throw invalidField(path, value, 'the ID of a node, such as "floor"', TypeError);
+}
+
+function requirePoint(value, label) {
+  if (!Array.isArray(value) || value.length !== 2 || !value.every(Number.isFinite)) {
+    throw invalidField(`path.${label}`, value, 'a position [x, z] in metres, such as [0, 0]');
+  }
+}
+
 /** The path option of scene_inspect: checks the query, resolves the ground and avoided node IDs through `nodeGeometry` and finds the route. */
 export function resolvePathQuery(query, nodeGeometry, boundsFor) {
   if (query === null || typeof query !== 'object' || Array.isArray(query)) throw invalidField('path', query, 'an object such as { "ground": "floor", "from": [0, 0, 0], "to": [5, 0, 5] }', TypeError);
@@ -62,6 +72,10 @@ export function resolvePathQuery(query, nodeGeometry, boundsFor) {
     if (!NAVIGATION_FIELDS.includes(key)) throw invalidField(`path.${key}`, query[key], `a known field, one of ${NAVIGATION_FIELDS.join(', ')}`, TypeError);
   }
   if (query.avoid !== undefined && (!Array.isArray(query.avoid) || query.avoid.length > 64)) throw invalidField('path.avoid', query.avoid, 'a list of at most 64 node IDs, such as ["wall"]');
+  requireNodeId(query.ground, 'path.ground');
+  query.avoid?.forEach((id, index) => requireNodeId(id, `path.avoid[${index}]`));
+  requirePoint(query.from, 'from');
+  requirePoint(query.to, 'to');
   const { geometry, worldMatrix } = nodeGeometry(query.ground, 'ground');
   const positions = new Float32Array(geometry.positions.length);
   for (let offset = 0; offset < positions.length; offset += 3) {

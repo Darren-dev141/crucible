@@ -7,13 +7,15 @@ It preserves shared geometry accessors and shared meshes when materials match.
 Available from version `0.4.0`.
 
 ```js
+import { box, exportGlb } from 'crucible';
+
 const geometry = box();
 geometry.colors = new Float32Array(geometry.positions.length).fill(0.5);
 geometry.uvs = new Float32Array(geometry.positions.length / 3 * 2);
 const part = {
   name: 'Editable surface',
   geometry,
-  matrix: mat4.create(),
+  matrix: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
   material: {
     color: [0.2, 0.4, 0.6],
     metallic: 0,
@@ -78,7 +80,7 @@ A texture bake introduces a separate asset pipeline and cannot preserve the same
 
 ## Textures
 
-`material.map`, `normalMap`, `metallicRoughnessMap`, `occlusionMap` and `emissiveMap` are renderer texture descriptors: `{ image, wrapS, wrapT, minFilter, magFilter, flipY }`.
+`material.map`, `normalMap`, `metallicRoughnessMap`, `occlusionMap` and `emissiveMap` are renderer texture descriptors: `{ image, wrapS, wrapT, minFilter, magFilter, flipY }`. The sampler fields must be glTF enums (wrap 10497, 33071 or 33648; magFilter 9728 or 9729; minFilter 9728, 9729 or 9984 to 9987) and `boxMapAxis` must be 0, 1 or 2, or the export throws.
 Each distinct image is written once, and samplers and textures are shared between channels.
 An image that `loadGltf` or `parseGltf` decoded from a JPEG, PNG or WebP file, and that was not scaled to fit `maxTexturePixels`, is written with its source bytes and MIME type, so an imported asset exports at about the size it came in at (a WebP image goes out through `EXT_texture_webp`, marked required).
 Every other image (a pattern bake, a copy, an `{ width, height, data }` image, a texture with `flipY: true`, a scaled one) is written as an embedded PNG, as RGB when it has no transparent texel.
@@ -116,6 +118,10 @@ A track with eased keyframes (`easing`) is written as LINEAR with 32 samples per
 A track on another property, or on a node that is not exported, fails with the fix.
 
 ```js
+import { exportGlb } from 'crucible';
+import { parseGltf } from 'crucible/addons/gltf';
+import { clipFromGltfAnimation } from 'crucible/addons/skeleton-pose';
+
 const asset = await parseGltf(bytes);
 const clips = asset.animations.map(clipFromGltfAnimation);
 const glb = exportGlb(asset.parts, { nodes: asset.nodes, clips });

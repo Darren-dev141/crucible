@@ -1,0 +1,1 @@
+- The WebGPU path tracer samples the sky through light portals (areaLights with portal: true) with the same density as the CPU tracer and Cook; only the WebGL tracer still ignores them (#1144).

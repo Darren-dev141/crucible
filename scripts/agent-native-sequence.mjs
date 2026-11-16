@@ -15,7 +15,8 @@ const REQUIRED_TRACER_FUNCTIONS = ['createNativeSession', 'planNativeSessionUpda
  *   `trace` takes a v1 table set or a FORMAT-v2 input and the `traceNative` options of the frame, and returns the traced
  *   planes with the route the frame took: `path` is "new-session", "reused", "updated" or "one-shot", `reason` says why a
  *   session was created or skipped, and the session's own reuse flags and update report ride along. A frame that went
- *   through a session also returns `kernelParams`, the block it was traced with.
+ *   through a session also returns `kernelParams`, the block it was traced with. A `post` option (the Cook post stage) goes only
+ *   to a session render, whose traced planes then hold `display`; a one-shot frame leaves it out and has no `display`.
  */
 export function createNativeSequence({ tracer }) {
   if (tracer === null || typeof tracer !== 'object') {
@@ -78,7 +79,7 @@ export function createNativeSequence({ tracer }) {
   }
 
   return {
-    trace(input, traceOptions) {
+    trace(input, { post, ...traceOptions }) {
       if (closed) throw new Error('createNativeSequence: this sequence is closed. Create a new one for the next job.');
       const unsupported = missingSessionSupport();
       if (unsupported) return traceOnce(input, traceOptions, unsupported);
@@ -94,7 +95,7 @@ export function createNativeSequence({ tracer }) {
         }
       }
       try {
-        const traced = session.render({ ...traceOptions, kernelParams: nextInput.kernelParams });
+        const traced = session.render({ ...traceOptions, kernelParams: nextInput.kernelParams, ...(post ? { post } : {}) });
         Object.assign(route, { pipelineReused: traced.pipelineReused, accelerationReused: traced.accelerationReused, frameIndex: traced.frameIndex });
         return { traced, route, kernelParams: nextInput.kernelParams };
       } catch (error) {

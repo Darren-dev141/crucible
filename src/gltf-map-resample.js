@@ -27,21 +27,21 @@ function materialLabel(material, index) {
   return material?.name ? `"${material.name}" (material ${index})` : `material ${index}`;
 }
 
-/** The 2 by 2 matrix [a, b, c, d] of the UV transform, row-major: uv' = matrix * uv + offset. */
+/** The 2 by 2 matrix [topLeft, topRight, bottomLeft, bottomRight] of the UV transform, row-major: uv' = matrix * uv + offset. */
 function linearPart({ rotation, scale }) {
   const cosine = Math.cos(rotation);
   const sine = Math.sin(rotation);
   return [cosine * scale[0], sine * scale[1], -sine * scale[0], cosine * scale[1]];
 }
 
-function multiply([a, b, c, d], [e, f, g, h]) {
-  return [a * e + b * g, a * f + b * h, c * e + d * g, c * f + d * h];
+function multiply([topLeft, topRight, bottomLeft, bottomRight], [otherTopLeft, otherTopRight, otherBottomLeft, otherBottomRight]) {
+  return [topLeft * otherTopLeft + topRight * otherBottomLeft, topLeft * otherTopRight + topRight * otherBottomRight, bottomLeft * otherTopLeft + bottomRight * otherBottomLeft, bottomLeft * otherTopRight + bottomRight * otherBottomRight];
 }
 
-function invert([a, b, c, d]) {
-  const determinant = a * d - b * c;
+function invert([topLeft, topRight, bottomLeft, bottomRight]) {
+  const determinant = topLeft * bottomRight - topRight * bottomLeft;
   if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-12) return null;
-  return [d / determinant, -b / determinant, -c / determinant, a / determinant];
+  return [bottomRight / determinant, -topRight / determinant, -bottomLeft / determinant, topLeft / determinant];
 }
 
 /**
@@ -55,8 +55,8 @@ function sharedToOwn(shared, own) {
   const linear = multiply(linearPart(own), inverse);
   const rounded = linear.map(Math.round);
   if (linear.some((value, index) => Math.abs(value - rounded[index]) > WHOLE_NUMBER_TOLERANCE)) return null;
-  const [a, b, c, d] = rounded;
-  const offset = [own.offset[0] - (a * shared.offset[0] + b * shared.offset[1]), own.offset[1] - (c * shared.offset[0] + d * shared.offset[1])];
+  const [topLeft, topRight, bottomLeft, bottomRight] = rounded;
+  const offset = [own.offset[0] - (topLeft * shared.offset[0] + topRight * shared.offset[1]), own.offset[1] - (bottomLeft * shared.offset[0] + bottomRight * shared.offset[1])];
   return { linear: rounded, offset };
 }
 
@@ -161,9 +161,9 @@ function sampleBilinear(source, width, height, u, v, output, outputOffset) {
 
 /** Size of the resampled image: the source texel density kept, so tiling grows it, within the growth cap and the pixel limit. */
 function resampledSize(image, { linear }, maxPixels) {
-  const [a, b, c, d] = linear;
-  let width = Math.max(1, Math.round(Math.hypot(a * image.width, c * image.height)));
-  let height = Math.max(1, Math.round(Math.hypot(b * image.width, d * image.height)));
+  const [topLeft, topRight, bottomLeft, bottomRight] = linear;
+  let width = Math.max(1, Math.round(Math.hypot(topLeft * image.width, bottomLeft * image.height)));
+  let height = Math.max(1, Math.round(Math.hypot(topRight * image.width, bottomRight * image.height)));
   const allowed = Math.min(MAX_GROWTH * image.width * image.height, maxPixels);
   const capped = width * height > allowed;
   if (capped) {
@@ -179,13 +179,13 @@ function resample(texture, placement, name, maxPixels) {
   const { image } = texture;
   const source = pixelsOf(image, name);
   const { width, height, capped } = resampledSize(image, placement, maxPixels);
-  const [a, b, c, d] = placement.linear;
+  const [topLeft, topRight, bottomLeft, bottomRight] = placement.linear;
   const data = new Uint8Array(width * height * 4);
   for (let row = 0; row < height; row++) {
     const sharedV = (row + 0.5) / height;
     for (let column = 0; column < width; column++) {
       const sharedU = (column + 0.5) / width;
-      sampleBilinear(source, image.width, image.height, a * sharedU + b * sharedV + placement.offset[0], c * sharedU + d * sharedV + placement.offset[1], data, (row * width + column) * 4);
+      sampleBilinear(source, image.width, image.height, topLeft * sharedU + topRight * sharedV + placement.offset[0], bottomLeft * sharedU + bottomRight * sharedV + placement.offset[1], data, (row * width + column) * 4);
     }
   }
   return { texture: { ...texture, image: { width, height, data } }, from: [image.width, image.height], to: [width, height], capped };

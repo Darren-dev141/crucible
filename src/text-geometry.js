@@ -129,13 +129,16 @@ export function groupRings(rings) {
   rings.forEach((ring, index) => {
     if (depths[index] % 2 === 0) outlines.push({ contour: ring, holes: [], index });
   });
+  const orphans = [];
   rings.forEach((ring, index) => {
     if (depths[index] % 2 === 0) return;
     const containing = outlines.filter(outline => insideRing(ring[0], outline.contour));
-    const owner = containing.reduce((best, outline) => (depths[outline.index] > depths[best.index] ? outline : best));
-    owner.holes.push(ring);
+    // Overlapping contours can each start inside the other and look nested in an odd number of rings with no outline
+    // around them: such a ring is drawn as its own outline instead of a hole.
+    if (containing.length === 0) orphans.push({ contour: ring, holes: [], index });
+    else containing.reduce((best, outline) => (depths[outline.index] > depths[best.index] ? outline : best)).holes.push(ring);
   });
-  return outlines;
+  return [...outlines, ...orphans];
 }
 
 function glyphMesh(record, unitsPerEm, { size, depth, curveSegments, maxVertices }) {
