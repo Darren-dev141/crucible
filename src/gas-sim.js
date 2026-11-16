@@ -163,18 +163,66 @@ function createSolver(options) {
   let cornerMinimum = 0;
   let cornerMaximum = 0;
 
-  // Trilinear sample at a position in cell units (cell i has its centre at i), clamped to the box. Leaves the eight corners' range behind.
-  function sample(values, positionX, positionY, positionZ) {
+  // Finds the cell and the fractions of a position in cell units (cell i has its centre at i), clamped to the box. interpolate and readCornerRange read what it leaves behind.
+  let cellBase = 0;
+  let fractionX = 0;
+  let fractionY = 0;
+  let fractionZ = 0;
+  function locate(positionX, positionY, positionZ) {
     const x = positionX < 0 ? 0 : positionX > maxX ? maxX : positionX;
     const y = positionY < 0 ? 0 : positionY > maxY ? maxY : positionY;
     const z = positionZ < 0 ? 0 : positionZ > maxZ ? maxZ : positionZ;
     const x0 = x >= maxX ? maxX - 1 : Math.floor(x);
     const y0 = y >= maxY ? maxY - 1 : Math.floor(y);
     const z0 = z >= maxZ ? maxZ - 1 : Math.floor(z);
-    const fx = x - x0;
-    const fy = y - y0;
-    const fz = z - z0;
-    const base = x0 + nx * y0 + nxy * z0;
+    fractionX = x - x0;
+    fractionY = y - y0;
+    fractionZ = z - z0;
+    cellBase = x0 + nx * y0 + nxy * z0;
+  }
+
+  // The located cell and fractions of every cell's traced position, kept so the seven advections of one step locate each position once.
+  const backLocation = { base: new Int32Array(count), x: new Float64Array(count), y: new Float64Array(count), z: new Float64Array(count) };
+  const forwardLocation = { base: new Int32Array(count), x: new Float64Array(count), y: new Float64Array(count), z: new Float64Array(count) };
+
+  function storeLocations(location, positionsX, positionsY, positionsZ) {
+    for (let index = 0; index < count; index++) {
+      locate(positionsX[index], positionsY[index], positionsZ[index]);
+      location.base[index] = cellBase;
+      location.x[index] = fractionX;
+      location.y[index] = fractionY;
+      location.z[index] = fractionZ;
+    }
+  }
+
+  // Trilinear value of `values` at a stored location of one cell.
+  function interpolateStored(values, location, index) {
+    cellBase = location.base[index];
+    fractionX = location.x[index];
+    fractionY = location.y[index];
+    fractionZ = location.z[index];
+    return interpolate(values);
+  }
+
+  // Trilinear value of the field at the located position.
+  function interpolate(values) {
+    const base = cellBase;
+    const c000 = values[base];
+    const c100 = values[base + 1];
+    const c010 = values[base + nx];
+    const c110 = values[base + nx + 1];
+    const c001 = values[base + nxy];
+    const c101 = values[base + nxy + 1];
+    const c011 = values[base + nxy + nx];
+    const c111 = values[base + nxy + nx + 1];
+    const low = (c000 + (c100 - c000) * fractionX) + ((c010 + (c110 - c010) * fractionX) - (c000 + (c100 - c000) * fractionX)) * fractionY;
+    const high = (c001 + (c101 - c001) * fractionX) + ((c011 + (c111 - c011) * fractionX) - (c001 + (c101 - c001) * fractionX)) * fractionY;
+    return low + (high - low) * fractionZ;
+  }
+
+  // Leaves the range of the eight corners of the located position in cornerMinimum and cornerMaximum.
+  function readCornerRange(values) {
+    const base = cellBase;
     const c000 = values[base];
     const c100 = values[base + 1];
     const c010 = values[base + nx];
@@ -185,13 +233,10 @@ function createSolver(options) {
     const c111 = values[base + nxy + nx + 1];
     cornerMinimum = Math.min(c000, c100, c010, c110, c001, c101, c011, c111);
     cornerMaximum = Math.max(c000, c100, c010, c110, c001, c101, c011, c111);
-    const low = (c000 + (c100 - c000) * fx) + ((c010 + (c110 - c010) * fx) - (c000 + (c100 - c000) * fx)) * fy;
-    const high = (c001 + (c101 - c001) * fx) + ((c011 + (c111 - c011) * fx) - (c001 + (c101 - c001) * fx)) * fy;
-    return low + (high - low) * fz;
   }
 
   // Where each cell's content came from (back, midpoint rule) and where it goes (forward), in cell units.
-  function traceVelocity(dt) {
+  function traceVelocity(dt, tracesForward) {
     const stepInCells = dt / cell;
     let index = 0;
     for (let z = 0; z < nz; z++) {
@@ -203,27 +248,31 @@ function createSolver(options) {
           const midX = x - 0.5 * stepInCells * u;
           const midY = y - 0.5 * stepInCells * v;
           const midZ = z - 0.5 * stepInCells * w;
-          backX[index] = x - stepInCells * sample(velocityX, midX, midY, midZ);
-          backY[index] = y - stepInCells * sample(velocityY, midX, midY, midZ);
-          backZ[index] = z - stepInCells * sample(velocityZ, midX, midY, midZ);
+          locate(midX, midY, midZ);
+          backX[index] = x - stepInCells * interpolate(velocityX);
+          backY[index] = y - stepInCells * interpolate(velocityY);
+          backZ[index] = z - stepInCells * interpolate(velocityZ);
           forwardX[index] = x + stepInCells * u;
           forwardY[index] = y + stepInCells * v;
           forwardZ[index] = z + stepInCells * w;
         }
       }
     }
+    storeLocations(backLocation, backX, backY, backZ);
+    if (tracesForward) storeLocations(forwardLocation, forwardX, forwardY, forwardZ);
   }
 
   // Semi-Lagrangian, or MacCormack with the corner-range limiter: forward and backward passes estimate the error and add half of it back.
   function advect(values, limited) {
-    for (let index = 0; index < count; index++) scratch[index] = sample(values, backX[index], backY[index], backZ[index]);
+    for (let index = 0; index < count; index++) scratch[index] = interpolateStored(values, backLocation, index);
     if (!limited) {
       values.set(scratch);
       return;
     }
     for (let index = 0; index < count; index++) {
-      const returned = sample(scratch, forwardX[index], forwardY[index], forwardZ[index]);
-      sample(values, backX[index], backY[index], backZ[index]);
+      const returned = interpolateStored(scratch, forwardLocation, index);
+      cellBase = backLocation.base[index];
+      readCornerRange(values);
       const corrected = scratch[index] + 0.5 * (values[index] - returned);
       second[index] = corrected < cornerMinimum ? cornerMinimum : corrected > cornerMaximum ? cornerMaximum : corrected;
     }
@@ -419,12 +468,12 @@ function createSolver(options) {
     applyBurst(dt, time);
     applyBuoyancy(dt);
     applyVorticityConfinement(dt);
-    traceVelocity(dt);
+    traceVelocity(dt, false);
     advect(velocityX, false);
     advect(velocityY, false);
     advect(velocityZ, false);
     project();
-    traceVelocity(dt);
+    traceVelocity(dt, useMacCormack);
     advectConserved(density);
     advectConserved(fuel);
     advect(temperature, useMacCormack);
