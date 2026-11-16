@@ -48,7 +48,7 @@ export function normalizeUserPasses(input) {
 /** What scene_capabilities reports under postPasses; it lives here so the scene entry does not carry the text. */
 export const USER_PASS_CAPABILITIES = Object.freeze({
   fields: 'name, fragment (defines vec4 userPass(vec2 uv)), uniforms, scale 0.05-1 (1), objects (1-16 part names)',
-  inputs: 'sceneColor, sceneDepth (sampler2D), resolution (vec2, this pass), time (s), depthAt(uv), worldPointAt(uv), worldNormalAt(uv, from depth), objectSlotAt(uv) (position of the part under uv in the pass objects list, or -1); gl_FragCoord',
+  inputs: 'sceneColor, sceneDepth (sampler2D), resolution (vec2, this pass), time (s; the motion time when the frame has one, else the renderer time), depthAt(uv), worldPointAt(uv), worldNormalAt(uv, from depth), objectSlotAt(uv) (position of the part under uv in the pass objects list, or -1); gl_FragCoord',
   uniforms: 'a number is float, [x,y(,z(,w))] is vec2-4, {type:"int",value} is int; name ^[a-z][A-Za-z0-9]{0,31}$',
   rules: 'no # lines, while, do, uniform/layout declarations, gl_ names but gl_FragCoord, or u67_ names; for loops only as for (int i = 0; i < N; i++) { } with literal bounds, 64 iterations at most, loop work under 4096',
   limits: Object.freeze({ maxPasses: SNIPPET_LIMITS.maxPasses, maxBytes: SNIPPET_LIMITS.maxBytes, maxUniforms: SNIPPET_LIMITS.maxUniforms, maxLoopIterations: SNIPPET_LIMITS.maxLoopIterations, maxLoopWork: SNIPPET_LIMITS.maxLoopWork }),
@@ -262,7 +262,7 @@ export function installUserPasses(renderer) {
     context.uniform1i(locations.sceneDepth, 1);
     context.uniformMatrix4fv(locations.u67_inverseViewProjection, false, renderer.inverseViewProjection);
     context.uniform2f(locations.resolution, width, height);
-    context.uniform1f(locations.time, frame.time ?? 0);
+    context.uniform1f(locations.time, frame.passTime ?? frame.time ?? 0);
     for (const [name, uniform] of Object.entries(pass.uniforms)) setUniformValue(context, locations[name], uniform);
     const { identifiers, slots } = pass.objects ? objectIdentifierSlots(renderer, pass.objects) : { identifiers: [], slots: [] };
     context.uniform1i(locations.u67_objectCount, identifiers.length);

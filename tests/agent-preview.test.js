@@ -219,3 +219,15 @@ test('annotateFrame returns the camera and pickMarks turns pixels into part hits
   assert.equal(onSky.partId, null);
   await assert.rejects(preview.pickMarks({ sessionId: 'marks', camera: frame.camera, width: 768, height: 512, marks: [{ x: 900, y: 1 }] }), /mark 1 x/);
 });
+
+test('a frame at a motion time gives the renderer that time as the post pass clock, and a frame without one does not', () => {
+  const { preview, renders } = previewHarness();
+  const sessionId = 'pass-clock';
+  const input = recipe();
+  input.motion = { duration: 8, tracks: [{ kind: 'node', id: 'cube', property: 'translation',
+    keyframes: [{ time: 0, value: [0, 0, 0] }, { time: 8, value: [4, 0, 0] }] }] };
+  preview.create({ recipe: input, sessionId, backend: 'cpu', memoryBudgetMiB: 192 });
+  for (const motionTime of [2, 6.5, 0]) preview.frame({ sessionId, motionTime });
+  preview.frame({ sessionId });
+  assert.deepEqual(renders.slice(1).map(frame => frame.camera.passTime), [2, 6.5, 0, undefined]);
+});

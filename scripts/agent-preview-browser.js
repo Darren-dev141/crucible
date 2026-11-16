@@ -1015,7 +1015,7 @@ window.__agentPreview = {
       ? { ...record.scene.effects, depthOfField: { ...record.scene.effects.depthOfField, ...depthOfFieldOverrides } }
       : undefined;
     const outputFramebuffer = floatOutput && !pass ? record.floatModule.outputFor(record, canvas).framebuffer : undefined;
-    const drawFrame = () => draw(record, rendererTime, shotCamera, { pass, passDepthRange, passFloat, previousCamera, outputFramebuffer, ...(objectMotion ? { objectMotion } : {}),
+    const drawFrame = () => draw(record, rendererTime, shotCamera, { pass, passDepthRange, passFloat, previousCamera, outputFramebuffer, ...(motionTime === undefined ? {} : { passTime: motionTime }), ...(objectMotion ? { objectMotion } : {}),
       ...(brightness === 1 ? {} : { exposure }), ...(shotEffects ? { effects: shotEffects } : {}) });
     const wireframe = pass === 'wireframe' ? record.wireframeModule.withWireframe(record.renderer, drawFrame) : drawFrame();
     // The first lit frame of a job is checked; a pass or a fade has no exposure to judge.
