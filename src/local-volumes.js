@@ -1,5 +1,5 @@
 import { MAX_LOCAL_VOLUMES, LOCAL_VOLUME_MAXIMUM_STEPS, ONE_GRID_VOLUME_MESSAGE, resolveLocalVolumesWith } from './local-volume-resolve.js';
-import { localVolumeNoise } from './local-volume-noise.js';
+import { localVolumeFractalNoise } from './local-volume-noise.js';
 import { sampleVolumeGrid, sampleVolumeGridVelocity, gridUnitVelocity, bakedGridEmission, volumeGridFloats } from './volume-grid.js';
 import { LOCAL_VOLUME_RAMP_STOPS, rampSourceCode, resolveEmissionRamp } from './local-volume-ramp.js';
 import { bakeEmissionRamp } from './local-volume-ramp-bake.js';
@@ -19,7 +19,7 @@ export function resolveLocalVolumes(input, label = 'localVolumes') {
 /** The uniform arrays the post shader reads, one vec4 per volume. Pass resolved volumes. */
 export function createLocalVolumeBuffers() {
   const size = MAX_LOCAL_VOLUMES * 4;
-  return { count: 0, blurred: false, meshParts: [], grid: new Float32Array(size), gridVolume: null, gridShutter: 0, kind: 'both', centers: new Float32Array(size), extents: new Float32Array(size), absorption: new Float32Array(size), emission: new Float32Array(size), steps: new Float32Array(size), axes: new Float32Array(size * 3), rampSetup: new Float32Array(size), rampColors: new Float32Array(size * LOCAL_VOLUME_RAMP_STOPS) };
+  return { count: 0, blurred: false, meshParts: [], grid: new Float32Array(size), gridVolume: null, gridShutter: 0, kind: 'both', noiseOctaves: false, centers: new Float32Array(size), extents: new Float32Array(size), absorption: new Float32Array(size), emission: new Float32Array(size), steps: new Float32Array(size), axes: new Float32Array(size * 3), rampSetup: new Float32Array(size), rampColors: new Float32Array(size * LOCAL_VOLUME_RAMP_STOPS) };
 }
 
 // The emission ramp of volume `index` (#1046): rampSetup holds x the source code (0 none), y the stop count and z, w the source range; rampColors
@@ -50,6 +50,7 @@ export function packLocalVolumes(volumes, buffers) {
   const hasGrid = volumes.some(volume => volume.shape === 'grid');
   const hasShape = volumes.some(volume => volume.shape !== 'grid' && !volume.part);
   buffers.kind = hasGrid && !hasShape ? 'grid' : (hasShape && !hasGrid ? 'shape' : 'both');
+  buffers.noiseOctaves = volumes.some(volume => volume.shape !== 'grid' && volume.noiseAmount > 0 && volume.noiseOctaves > 1);
   buffers.grid.fill(0);
   buffers.rampSetup.fill(0);
   buffers.blurred = volumes.some(volume => volume.blur > 0 && volume.density > 0);
@@ -77,8 +78,8 @@ export function packLocalVolumes(volumes, buffers) {
       buffers.grid.set([volume.castShadow === true ? 2 : 1, volume.temperatureScale, volume.blackbodyIntensity * volume.emissionStrength, volume.anisotropy], at);
     }
     const axes = volume.axes ?? IDENTITY_AXES;
-    // The free fourth component of the first axis row carries the number of scatter octaves.
-    for (let axis = 0; axis < 3; axis++) buffers.axes.set([axes[axis * 3], axes[axis * 3 + 1], axes[axis * 3 + 2], axis === 0 ? (volume.scatterOctaves ?? 1) - 1 : 0], (index * 3 + axis) * 4);
+    // The free fourth component of the first axis row carries the number of scatter octaves and that of the second the noise octaves, each beyond the first.
+    for (let axis = 0; axis < 3; axis++) buffers.axes.set([axes[axis * 3], axes[axis * 3 + 1], axes[axis * 3 + 2], axis === 0 ? (volume.scatterOctaves ?? 1) - 1 : (axis === 1 ? (volume.noiseOctaves ?? 1) - 1 : 0)], (index * 3 + axis) * 4);
   });
   return buffers;
 }
@@ -229,7 +230,7 @@ export function localVolumeProfile(volume, x, y, z, withNoise = true) {
     offsetY = alongY;
   }
   const noisy = withNoise && volume.noiseAmount > 0;
-  const noise = noisy ? localVolumeNoise(x * volume.noiseScale, y * volume.noiseScale, z * volume.noiseScale) : 0.5;
+  const noise = noisy ? localVolumeFractalNoise(x * volume.noiseScale, y * volume.noiseScale, z * volume.noiseScale, volume.noiseOctaves) : 0.5;
   let profile = 1;
   if (volume.shape === 'sphere') {
     const distance = Math.hypot(offsetX, offsetY, offsetZ) / volume.radius;

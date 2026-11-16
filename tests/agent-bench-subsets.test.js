@@ -59,6 +59,14 @@ test('suggestSubset maps paths to kinds and topics, and the shared files to the 
   }
 });
 
+test('every local volume source file maps to the localVolumes topic, so its change benches the tasks that carry it', () => {
+  const volumes = suggestSubset(['src/local-volumes.js', 'src/local-volume-noise.js', 'src/local-volume-resolve.js']);
+  assert.deepEqual(volumes.topics, ['localVolumes']);
+  assert.deepEqual(volumes.unmapped, []);
+  assert.equal(volumes.full, false);
+  assert.deepEqual(suggestSubset(['src/local-volumes-extra/x.js']).topics ?? [], []);
+});
+
 test('subsetCommand prints the full command, a subset command or no command', () => {
   assert.doesNotMatch(subsetCommand(suggestSubset(['scripts/mcp-server.mjs']), 'x').command, /--kinds|--topics/);
   assert.match(subsetCommand(suggestSubset(['src/agent-relations.js', 'src/agent-look.js']), 'x').command, /--kinds look,light --topics relations$/);

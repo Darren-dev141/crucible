@@ -245,3 +245,63 @@ test('the rasterizer and the CPU path tracer let the same light through a noisy 
     server.kill();
   }
 });
+
+// The rasterizer's fractal noise is a hand copy of localVolumeFractalNoise (#1725), so a slip in it would only show against the CPU tracer. The RMSE is taken over the
+// CPU frame's pixels (the rasterizer frame averaged 2 by 2), and the 4 octave frame may not stray from the CPU frame by more than the 1 octave one does plus a margin.
+function downsampleToCpu(raster) {
+  const ratio = SIZE / CPU_SIZE;
+  const result = new Float64Array(CPU_SIZE * CPU_SIZE);
+  for (let row = 0; row < CPU_SIZE; row++) {
+    for (let column = 0; column < CPU_SIZE; column++) {
+      let total = 0;
+      for (let y = 0; y < ratio; y++) for (let x = 0; x < ratio; x++) total += raster[(row * ratio + y) * SIZE + column * ratio + x];
+      result[row * CPU_SIZE + column] = total / (ratio * ratio);
+    }
+  }
+  return result;
+}
+
+function rootMeanSquare(first, second) {
+  let total = 0;
+  for (let index = 0; index < first.length; index++) total += (first[index] - second[index]) ** 2;
+  return Math.sqrt(total / first.length);
+}
+
+test('with noiseOctaves 4 the rasterizer still matches the CPU path tracer, and the octaves change the frame', async (context) => {
+  let chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch {
+    skipOrThrow(context, 'playwright is not installed');
+    return;
+  }
+  const port = await freePort();
+  const server = await startServer(port);
+  let browser;
+  try {
+    try {
+      browser = await launchChrome(chromium);
+    } catch (error) {
+      skipOrThrow(context, `Chrome did not start: ${error.message.split('\n')[0]}`);
+      return;
+    }
+    const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
+    await page.goto(`http://127.0.0.1:${port}/`);
+    const measured = {};
+    for (const octaves of [1, 4]) {
+      const volume = octaves > 1 ? { ...NOISY_BOX, noiseOctaves: octaves } : NOISY_BOX;
+      const frames = await rasterFrames(page, volume);
+      assert.equal(frames.glError, 0);
+      const raster = downsampleToCpu(rasterTransmittance(frames));
+      const cpu = await cpuTransmittance(volume);
+      measured[octaves] = { raster, cpu, rmse: rootMeanSquare(raster, cpu) };
+    }
+    if (process.env.LOCAL_VOLUME_OCTAVES_REPORT) console.log(JSON.stringify({ rmseOneOctave: measured[1].rmse, rmseFourOctaves: measured[4].rmse }));
+    assert.ok(rootMeanSquare(measured[1].raster, measured[4].raster) > 0.02, 'four octaves must change the rasterizer frame');
+    assert.ok(rootMeanSquare(measured[1].cpu, measured[4].cpu) > 0.02, 'four octaves must change the CPU frame');
+    assert.ok(measured[4].rmse < measured[1].rmse + 0.01, `RMSE against the CPU tracer: ${measured[4].rmse} at 4 octaves, ${measured[1].rmse} at 1`);
+  } finally {
+    await browser?.close();
+    server.kill();
+  }
+});

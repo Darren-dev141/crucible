@@ -21,6 +21,9 @@ export function assertWebGpuLocalVolumes(scene) {
     if (kind) {
       throw new RangeError(`environment.localVolumes[${index}] is a ${kind} volume, which only backend "cpu" traces; the WebGPU path tracer draws box and sphere volumes. Use backend "cpu" or make it a box or sphere.`);
     }
+    if (volume.noiseOctaves > 1) {
+      throw new RangeError(`environment.localVolumes[${index}].noiseOctaves is read by the rasterizer and backend "cpu"; the WebGPU path tracer draws one octave. Use backend "cpu" or drop noiseOctaves.`);
+    }
     if (volume.emissionRamp) {
       throw new RangeError(`environment.localVolumes[${index}].emissionRamp is read by the rasterizer and backend "cpu"; the WebGPU path tracer has no room for the ramp. Use backend "cpu" or drop the ramp.`);
     }
