@@ -428,13 +428,14 @@ Final resource references and hierarchy must be valid before publication.
 What it writes (read it back with `scene_export_recipe`, then tweak any part):
 
 - `effects.flash` and an `effects.distortion` ring at the centre, which fade by their own decay and falloff on the scene clock.
-- Hidden nodes `id-fireball`, `id-core` and `id-smoke` that shape three `environment.localVolumes`; scale and translation tracks grow and lift them.
+- Hidden nodes `id-fireball`, `id-core`, `id-smoke` and `id-smoke-cap` that shape four `environment.localVolumes`; scale and translation tracks grow and lift them. The fireball is one volume with strong noise so its edge billows, orange with a hotter core inside; the core dies first, then the fire, while the smoke column rises and the cap spreads sideways.
+- An orange point light over the centre whose intensity flares and dies on a light track, and `effects.bloom.strength` raised to at least 0.5 so the glow spills past the flames.
 - Particle systems `id-sparks`, `id-dust` and `id-rubble`, delayed to `start` (the `delay` field of a particle system).
 - A dark `id-scorch` disc decal that appears at `start`, and a camera eye shake track.
 - The motion duration becomes at least `start + 8`.
 
-It needs 3 free local volumes, 3 of the 4 particle systems, and a free flash and distortion slot, and fails naming the field otherwise.
-Gaps: a volume has no track, so the fireball fades by shrinking, not by cooling; the dust is a puff, not a flat ring; there is no fire light on the ground (#1046), no grid volume (#1045), no self-shadow (#1047) and no crater.
+It needs 4 free local volumes, 3 of the 4 particle systems, a free point light, and a free flash and distortion slot, and fails naming the field otherwise.
+Gaps: a volume has no track, so the fireball fades by shrinking, not by cooling; fire volumes that overlap draw hard box seams (volumes composite nearest entry first), so the fire is one volume; the dust is a puff, not a flat ring; there is no grid volume (#1045), no self-shadow (#1047) and no crater.
 
 Reparenting changes hierarchy while preserving each node's local transform.
 Commands can add or remove nodes and resources.

@@ -42,12 +42,14 @@ test('a blast writes plain sections, every part ID starting with the explosion I
   const { recipe } = applyBlast(blast({ start: 0.5, fuel: 'oily' }));
   assert.equal([recipe.effects.flash].flat()[0].startTime, 0.5);
   assert.equal(recipe.effects.distortion[0].shape, 'ring');
-  assert.equal(recipe.environment.localVolumes.length, 3);
-  assert.deepEqual(recipe.environment.localVolumes.map(volume => volume.part), ['blast-fireball', 'blast-core', 'blast-smoke']);
+  assert.equal(recipe.environment.localVolumes.length, 4);
+  assert.deepEqual(recipe.environment.localVolumes.map(volume => volume.part), ['blast-fireball', 'blast-core', 'blast-smoke', 'blast-smoke-cap']);
   assert.deepEqual(recipe.particles.systems.map(system => system.node), ['blast-sparks', 'blast-dust', 'blast-rubble']);
   assert.ok(recipe.particles.systems.every(system => system.delay === 0.5));
   const added = [...recipe.nodes, ...recipe.geometries, ...recipe.materials].map(entry => entry.id).filter(id => id.startsWith('blast-'));
   assert.ok(added.length >= 12);
+  assert.equal(recipe.environment.pointLights.length, 1);
+  assert.ok(recipe.motion.tracks.some(track => track.kind === 'light' && track.id === 'point:0'));
   assert.ok(recipe.nodes.some(node => node.id === 'blast-scorch' && node.decal === true));
   const shake = recipe.motion.tracks.find(track => track.kind === 'camera');
   assert.deepEqual(shake.keyframes.at(-1).value, recipe.camera.eye);

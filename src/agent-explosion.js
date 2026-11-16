@@ -23,6 +23,7 @@ const SHAKE_KEYS_PER_SECOND = 32;
 const TICKS_PER_SECOND = 60;
 const MAX_PHYSICS_SECONDS = 10;
 const MAX_LOCAL_VOLUMES = 8;
+const MAX_POINT_LIGHTS = 16;
 const MAX_PARTICLE_SYSTEMS = 4;
 const MAX_PARTICLES = 4000;
 const MAX_AIR_SOURCES = 4;
@@ -126,54 +127,78 @@ function addAirSteps(candidate, plan) {
   effects.distortion = rings;
 }
 
-function volumePlan(plan) {
+// The fire is one hidden box a local volume shapes, eaten by strong low-frequency noise so its edge billows, with a hotter core
+// inside it. Several partly overlapping fire volumes were tried and drew hard box seams: volumes are composited nearest entry
+// first, an approximation that fails where similar boxes overlap. Warm to cool: the white core dies first, the orange fire next.
+const FIRE_LOBES = [
+  { emission: [1, 0.38, 0.06], strength: 2.2, density: 4, noiseScale: 11, life: 2.8 },
+];
+
+function scaleKeys(plan, shape, peak, rise, life) {
+  const { start } = plan;
+  const tiny = [TINY, TINY, TINY];
+  return [
+    { time: 0, value: tiny }, { time: start, value: tiny },
+    { time: start + 0.3, value: shape.map(extent => round(extent * peak)), easing: 'easeOutCubic' },
+    { time: start + life * 0.45, value: shape.map(extent => round(extent * peak * (1 + rise * 0.2))) },
+    { time: start + life, value: shape.map(extent => round(extent * peak * 0.06)) },
+  ];
+}
+
+function volumePlan(plan, random) {
   const { id, center, size, start, ground, oily } = plan;
   const fire = size * (oily ? 1.3 : 1);
-  const rise = size * 0.5;
   const smokeDensity = oily ? 4 : 2.4;
   const smokeWidth = size * (oily ? 1.1 : 0.8);
   const smokeHeight = size * (oily ? 3 : 2.2);
   const smokeBase = Math.max(ground, center[1]);
-  const volumes = [
-    { name: 'fireball', shape: 'mesh', fit: 'bounds', density: 3, falloff: 0.9, noiseAmount: 0.7, noiseScale: round(1.2 / size * 4), absorption: [0.25, 0.6, 1], emission: [1, 0.42, 0.08], emissionStrength: 5 },
-    { name: 'core', shape: 'mesh', fit: 'bounds', density: 2, falloff: 0.9, noiseAmount: 0.4, noiseScale: round(1.2 / size * 6), absorption: [0.3, 0.7, 1], emission: [1, 0.85, 0.5], emissionStrength: 12 },
-    { name: 'smoke', shape: 'mesh', fit: 'bounds', density: smokeDensity, falloff: 0.85, noiseAmount: 0.8, noiseScale: round(1.5 / size * 3), absorption: [0.92, 0.92, 0.92], steps: 24 },
-  ];
-  const tracks = [
-    nodeTrack(`${id}-fireball`, 'scale', [
-      { time: 0, value: [TINY, TINY, TINY] }, { time: start, value: [TINY, TINY, TINY] },
-      { time: start + 0.35, value: [fire, fire * 0.9, fire], easing: 'easeOutCubic' },
-      { time: start + 1.2, value: [fire * 1.15, fire, fire * 1.15] },
-      { time: start + 2.4, value: [fire * 0.08, fire * 0.08, fire * 0.08] },
-    ], 'easeOutCubic'),
-    nodeTrack(`${id}-fireball`, 'translation', [
-      { time: 0, value: [...center] }, { time: start, value: [...center] },
-      { time: start + 2.4, value: [center[0], center[1] + fire * 0.5 + rise, center[2]] },
-    ]),
-    nodeTrack(`${id}-core`, 'scale', [
-      { time: 0, value: [TINY, TINY, TINY] }, { time: start, value: [TINY, TINY, TINY] },
-      { time: start + 0.2, value: [fire * 0.55, fire * 0.5, fire * 0.55], easing: 'easeOutCubic' },
-      { time: start + 0.9, value: [TINY, TINY, TINY] },
-    ], 'easeOutCubic'),
-    nodeTrack(`${id}-core`, 'translation', [{ time: 0, value: [...center] }]),
-    nodeTrack(`${id}-smoke`, 'scale', [
-      { time: 0, value: [TINY, TINY, TINY] }, { time: start + 0.15, value: [TINY, TINY, TINY] },
-      { time: start + 4, value: [smokeWidth, smokeHeight, smokeWidth], easing: 'easeOutQuad' },
-      { time: start + SMOKE_SECONDS, value: [smokeWidth * 1.5, smokeHeight * 1.2, smokeWidth * 1.5] },
-    ], 'easeOutQuad'),
-    nodeTrack(`${id}-smoke`, 'translation', [
-      { time: 0, value: [center[0], smokeBase, center[2]] }, { time: start + 0.15, value: [center[0], smokeBase, center[2]] },
-      { time: start + 4, value: [center[0], smokeBase + smokeHeight * 0.5, center[2]] },
-      { time: start + SMOKE_SECONDS, value: [center[0], smokeBase + smokeHeight * 0.65, center[2]] },
-    ], 'easeOutQuad'),
-  ];
+  const volumes = [];
+  const tracks = [];
+  FIRE_LOBES.forEach((lobe, index) => {
+    const name = 'fireball';
+    const angle = random() * Math.PI * 2;
+    const offset = [Math.cos(angle) * fire * (0.12 + random() * 0.18), fire * (0.1 + random() * 0.25), Math.sin(angle) * fire * (0.12 + random() * 0.18)];
+    const widths = [0.95 + random() * 0.1, 0.8 + random() * 0.1, 0.95 + random() * 0.1];
+    const home = [center[0] + offset[0], center[1] + offset[1], center[2] + offset[2]];
+    volumes.push({ name, shape: 'mesh', fit: 'bounds', density: lobe.density, falloff: 0.95, noiseAmount: 1, noiseScale: round(lobe.noiseScale / size), absorption: [0.25, 0.6, 1], emission: lobe.emission, emissionStrength: lobe.strength, steps: 20 });
+    tracks.push(nodeTrack(`${id}-${name}`, 'scale', scaleKeys(plan, widths.map(width => width * fire), 1, 1, lobe.life), 'easeOutCubic'));
+    tracks.push(nodeTrack(`${id}-${name}`, 'translation', [
+      { time: 0, value: home }, { time: start, value: home },
+      { time: start + lobe.life, value: [home[0] + offset[0] * 0.6, home[1] + fire * (0.35 + index * 0.12), home[2] + offset[2] * 0.6] },
+    ]));
+  });
+  volumes.push({ name: 'core', shape: 'mesh', fit: 'bounds', density: 2, falloff: 0.9, noiseAmount: 0.8, noiseScale: round(9 / size), absorption: [0.3, 0.7, 1], emission: [1, 0.8, 0.4], emissionStrength: 12, steps: 20 });
+  tracks.push(nodeTrack(`${id}-core`, 'scale', scaleKeys(plan, [fire * 0.6, fire * 0.55, fire * 0.6], 1, 0, 0.9), 'easeOutCubic'));
+  tracks.push(nodeTrack(`${id}-core`, 'translation', [{ time: 0, value: [center[0], center[1] + fire * 0.25, center[2]] }]));
+  volumes.push({ name: 'smoke', shape: 'mesh', fit: 'bounds', density: smokeDensity, falloff: 0.9, noiseAmount: 1, noiseScale: round(4 / size), absorption: [0.92, 0.92, 0.92], steps: 24 });
+  tracks.push(nodeTrack(`${id}-smoke`, 'scale', [
+    { time: 0, value: [TINY, TINY, TINY] }, { time: start + 0.15, value: [TINY, TINY, TINY] },
+    { time: start + 4, value: [smokeWidth, smokeHeight, smokeWidth], easing: 'easeOutQuad' },
+    { time: start + SMOKE_SECONDS, value: [smokeWidth * 1.6, smokeHeight * 1.2, smokeWidth * 1.6] },
+  ], 'easeOutQuad'));
+  tracks.push(nodeTrack(`${id}-smoke`, 'translation', [
+    { time: 0, value: [center[0], smokeBase, center[2]] }, { time: start + 0.15, value: [center[0], smokeBase, center[2]] },
+    { time: start + 4, value: [center[0], smokeBase + smokeHeight * 0.5, center[2]] },
+    { time: start + SMOKE_SECONDS, value: [center[0], smokeBase + smokeHeight * 0.65, center[2]] },
+  ], 'easeOutQuad'));
+  // The cap: smoke that mushrooms and spreads sideways once the column has risen.
+  volumes.push({ name: 'smoke-cap', shape: 'mesh', fit: 'bounds', density: smokeDensity * 0.7, falloff: 0.92, noiseAmount: 1, noiseScale: round(3 / size), absorption: [0.88, 0.88, 0.88], steps: 24 });
+  tracks.push(nodeTrack(`${id}-smoke-cap`, 'scale', [
+    { time: 0, value: [TINY, TINY, TINY] }, { time: start + 1.2, value: [TINY, TINY, TINY] },
+    { time: start + 5, value: [smokeWidth * 1.8, smokeWidth * 0.7, smokeWidth * 1.8], easing: 'easeOutQuad' },
+    { time: start + SMOKE_SECONDS, value: [smokeWidth * 2.6, smokeWidth * 0.8, smokeWidth * 2.6] },
+  ], 'easeOutQuad'));
+  tracks.push(nodeTrack(`${id}-smoke-cap`, 'translation', [
+    { time: 0, value: [center[0], smokeBase + smokeHeight * 0.6, center[2]] },
+    { time: start + SMOKE_SECONDS, value: [center[0], smokeBase + smokeHeight * 0.9, center[2]] },
+  ]));
   return { volumes, tracks };
 }
 
-function addVolumes(candidate, plan) {
+function addVolumes(candidate, plan, random) {
   const environment = candidate.environment;
   const existing = environment.localVolumes ?? [];
-  const { volumes, tracks } = volumePlan(plan);
+  const { volumes, tracks } = volumePlan(plan, random);
   if (existing.length + volumes.length > MAX_LOCAL_VOLUMES) {
     throw invalidField('id', plan.id, `a scene with room for ${volumes.length} more local volumes (${existing.length} of ${MAX_LOCAL_VOLUMES} in use); remove one with set-environment first`);
   }
@@ -184,6 +209,22 @@ function addVolumes(candidate, plan) {
   }
   environment.localVolumes = existing;
   return tracks;
+}
+
+// The fire's light on the set: an orange point light over the centre that flares with the blast and dies with the fire, and a
+// stronger bloom so the glow spills past the flames, as it does in a photograph.
+function addFireLight(candidate, plan) {
+  const { center, size, start } = plan;
+  const lights = candidate.environment.pointLights ?? [];
+  if (lights.length >= MAX_POINT_LIGHTS) return [];
+  const peak = round(2.5 * size * size);
+  lights.push({ position: [center[0], round(center[1] + size * 0.5), center[2]], color: [1, 0.55, 0.2], intensity: 0, range: round(size * 8) });
+  candidate.environment.pointLights = lights;
+  const bloom = candidate.effects.bloom ?? {};
+  candidate.effects.bloom = { ...bloom, strength: Math.max(bloom.strength ?? 0, 0.5) };
+  return [{ kind: 'light', id: `point:${lights.length - 1}`, property: 'intensity', interpolation: 'LINEAR', keyframes: uniqueKeys([
+    { time: 0, value: 0 }, { time: start, value: 0 }, { time: start + 0.1, value: peak }, { time: start + 0.8, value: round(peak * 0.6) }, { time: start + 3.2, value: 0 },
+  ]) }];
 }
 
 function addMaterial(candidate, id, fields) {
@@ -199,7 +240,7 @@ function particleSystems(candidate, plan, random) {
   addMaterial(candidate, `${id}-dust-grey`, { color: [0.45, 0.4, 0.34], roughness: 1 });
   addMaterial(candidate, `${id}-rubble-grey`, { color: [0.12, 0.11, 0.1], roughness: 0.9 });
   const specification = [
-    { name: 'sparks', material: 'spark-glow', count: oily ? 420 : 300, lifetime: [0.6, 1.8], speed: [round(size * 1.5 + 3), round(size * 4 + 8)], size: round(0.025 * reach), spread: 80, drag: 0.5, scale: 'shrink', emitter: { shape: 'sphere', position: [...center], radius: round(size * 0.15) }, color: [[1, 0.9, 0.5], [0.8, 0.2, 0.05]] },
+    { name: 'sparks', material: 'spark-glow', count: oily ? 900 : 700, lifetime: [0.6, 2], speed: [round(size * 1.5 + 3), round(size * 4 + 8)], size: round(0.012 * reach), spread: 85, drag: 0.5, scale: 'shrink', emitter: { shape: 'sphere', position: [...center], radius: round(size * 0.15) }, color: [[1, 0.9, 0.5], [0.8, 0.2, 0.05]] },
     { name: 'dust', material: 'dust-grey', count: 360, lifetime: [1.5, 3.2], speed: [round(size * 0.8), round(size * 2.2)], size: [round(0.08 * reach), round(0.22 * reach)], spread: 88, drag: 1.8, scale: 'grow', emitter: { shape: 'disc', position: [center[0], ground, center[2]], radius: round(size * 0.3) }, alpha: [0.8, 0] },
     { name: 'rubble', material: 'rubble-grey', count: 60, lifetime: [1.5, 3], speed: [round(size * 0.8 + 2), round(size * 2.4 + 5)], size: [0.04, round(0.1 + 0.03 * size)], spread: 70, drag: 0.1, floor: ground, bounce: 0.3, scale: 'constant', emitter: { shape: 'sphere', position: [...center], radius: round(size * 0.1) } },
   ];
@@ -214,7 +255,7 @@ function addParticles(candidate, plan, random) {
   const systems = particleSystems(candidate, plan, random).map(system => JSON.parse(JSON.stringify(system)));
   const total = [...section.systems, ...systems].reduce((sum, system) => sum + (system.count ?? 100), 0);
   if (section.systems.length + systems.length > MAX_PARTICLE_SYSTEMS || total > MAX_PARTICLES) {
-    throw invalidField('id', plan.id, `a scene with room for ${systems.length} more particle systems and ${total - MAX_PARTICLES} fewer particles (${section.systems.length} of ${MAX_PARTICLE_SYSTEMS} systems in use); clear particles with set-particles first`);
+    throw invalidField('id', plan.id, `a scene with room for ${systems.length} more particle systems and ${MAX_PARTICLES} particles in all (${section.systems.length} of ${MAX_PARTICLE_SYSTEMS} systems in use, ${total} particles would be needed); clear particles with set-particles first`);
   }
   section.systems.push(...systems);
   candidate.particles = section;
@@ -294,7 +335,8 @@ export function addExplosion(candidate, rawOperation, helpers) {
   plan.oily = plan.fuel === 'oily';
   const random = seededRandom(plan.seed);
   addAirSteps(candidate, plan);
-  const tracks = addVolumes(candidate, plan);
+  const tracks = addVolumes(candidate, plan, random);
+  tracks.push(...addFireLight(candidate, plan));
   addParticles(candidate, plan, random);
   tracks.push(...addScorch(candidate, plan));
   if (plan.debris) throwDebris(candidate, plan, helpers, random);
