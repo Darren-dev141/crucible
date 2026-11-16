@@ -563,6 +563,8 @@ function initializeRenderer(scene, { memoryBudgetMiB, backend, transparent = fal
     memoryBudgetMiB,
     maximumMemoryBudgetMiB: MAXIMUM_MEMORY_MIB,
     transparent,
+    // Every preview and job frame is read back or exported, so none may draw with the fallback post program of a build in flight (#1767).
+    exactFrames: true,
   }))));
   // Outlines, toon light and polylines draw only for a frame that carries environment.lines; user passes run last, on the finished frame.
   // Mesh blend installs before line art, so its stage runs first and the lines draw over the blended colour; it blends only the

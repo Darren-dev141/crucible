@@ -2,7 +2,7 @@ import { invalidField } from './field-error.js';
 import { finiteNumber, knownKeys, vectorOfThree } from './agent-recipe-checks.js';
 import {
   EXPLOSION_EMPTY_GRID, EXPLOSION_GRID_BOX, EXPLOSION_GRID_FPS, EXPLOSION_GRID_FRAMES, EXPLOSION_REFERENCE_SIZE,
-  GAS_SIM_TEMPERATURE_UNIT, registerExplosionGrids,
+  EXPLOSION_MOTION_BLUR_DEFAULT, GAS_SIM_TEMPERATURE_UNIT, explosionEmptyGridName, registerExplosionGrids,
 } from './explosion-grids.js';
 import { VOLUME_GRID_SEQUENCE_MAX_FRAMES } from './volume-grid-sequence.js';
 
@@ -19,8 +19,16 @@ export const EXPLOSION_LIMITS = Object.freeze({
   debrisSpeedLimit: 40,
 });
 
-const EXPLOSION_FIELDS = ['type', 'id', 'center', 'size', 'start', 'seed', 'fuel', 'debris', 'shake', 'ground'];
+const EXPLOSION_FIELDS = ['type', 'id', 'center', 'size', 'start', 'seed', 'fuel', 'debris', 'shake', 'ground', 'sparks', 'motionBlur'];
 const DEBRIS_FIELDS = ['node'];
+const SPARK_FIELDS = ['count', 'speed', 'lifetime'];
+// Bounds of the `sparks` overrides: the count stays well inside the 4096 sparks of one scene and the 4000 particles of a blast.
+export const SPARK_OVERRIDE_LIMITS = Object.freeze({ count: [1, 2000], speed: [0, 100], lifetime: [0.05, 5] });
+const SPARK_MODES = Object.freeze(['streaks', 'specks', 'none']);
+/** Sparks are the spark streaks of #1761 unless the operation says "specks" (the plain glowing specks of the first release) or "none". */
+export const EXPLOSION_SPARKS_DEFAULT = 'streaks';
+/** The shutter in seconds of the fireball blur when the scene's camera has none: one frame at 24 frames per second, as in the approved preview. */
+export const EXPLOSION_DEFAULT_SHUTTER = 0.0417;
 const POSITION_LIMIT = 10000;
 const SHAKE_SECONDS = 1;
 const SHAKE_KEYS_PER_SECOND = 32;
@@ -45,6 +53,45 @@ function seededRandom(seed) {
 
 function round(value) {
   return Number(value.toFixed(5));
+}
+
+function rangeOverride(value, path, [minimum, maximum]) {
+  if (typeof value === 'number') return [finiteNumber(value, path, minimum, maximum), value];
+  if (!Array.isArray(value) || value.length !== 2) {
+    throw invalidField(path, value, `a number or [minimum, maximum] from ${minimum} to ${maximum}, such as [${Math.max(minimum, 1)}, ${Math.min(maximum, 3)}]`, TypeError);
+  }
+  const range = value.map((entry, index) => finiteNumber(entry, `${path}[${index}]`, minimum, maximum));
+  if (range[0] > range[1]) throw invalidField(path, value, 'a range with the smaller number first');
+  return range;
+}
+
+/** The `sparks` option as `{ streaks, count?, speed?, lifetime? }`: `streaks` false keeps the plain specks of the first release. */
+function validatedSparks(value) {
+  if (value === undefined) return { mode: EXPLOSION_SPARKS_DEFAULT };
+  if (value === true) return { mode: 'streaks' };
+  if (value === false) return { mode: 'specks' };
+  if (typeof value === 'string') {
+    if (!SPARK_MODES.includes(value)) throw invalidField('sparks', value, `one of ${SPARK_MODES.join(', ')} (true and false are aliases for streaks and specks), or { count, speed, lifetime } for streaks`);
+    return { mode: value };
+  }
+  knownKeys(value, SPARK_FIELDS, 'sparks');
+  const sparks = { mode: 'streaks' };
+  if (value.count !== undefined) {
+    const [minimum, maximum] = SPARK_OVERRIDE_LIMITS.count;
+    if (!Number.isInteger(value.count) || value.count < minimum || value.count > maximum) {
+      throw invalidField('sparks.count', value.count, `a whole number from ${minimum} to ${maximum}, such as 700`);
+    }
+    sparks.count = value.count;
+  }
+  if (value.speed !== undefined) sparks.speed = rangeOverride(value.speed, 'sparks.speed', SPARK_OVERRIDE_LIMITS.speed);
+  if (value.lifetime !== undefined) sparks.lifetime = rangeOverride(value.lifetime, 'sparks.lifetime', SPARK_OVERRIDE_LIMITS.lifetime);
+  return sparks;
+}
+
+function validatedMotionBlur(value) {
+  if (value === undefined) return EXPLOSION_MOTION_BLUR_DEFAULT;
+  if (typeof value !== 'boolean') throw invalidField('motionBlur', value, 'true to blur the fireball along its velocity or false to leave it sharp');
+  return value;
 }
 
 /** Checks the operation and returns it with every default filled in. */
@@ -72,7 +119,7 @@ export function validatedExplosion(operation) {
     debris = { node: operation.debris.node };
   }
   const shake = operation.shake === undefined ? undefined : finiteNumber(operation.shake, 'shake', ...EXPLOSION_LIMITS.shake);
-  return { id, center, size, start, seed, fuel, ground, debris, shake };
+  return { id, center, size, start, seed, fuel, ground, debris, shake, sparks: validatedSparks(operation.sparks), motionBlur: validatedMotionBlur(operation.motionBlur) };
 }
 
 function claimIds(candidate, id) {
@@ -153,7 +200,7 @@ function blastFrames(plan, names) {
     const latest = Math.floor(room / blastFps(plan.size) * 10) / 10;
     throw invalidField('start', plan.start, `at most ${latest} s for a blast of size ${plan.size}: the fireball plays from a list of at most ${VOLUME_GRID_SEQUENCE_MAX_FRAMES} grid frames, and the wait before it takes ${blastFps(plan.size)} empty frames a second; pass a smaller start, or start a timeline later instead`);
   }
-  return [...Array(padding).fill(EXPLOSION_EMPTY_GRID), ...names];
+  return [...Array(padding).fill(explosionEmptyGridName(plan.motionBlur)), ...names];
 }
 
 function blastSeconds(plan) {
@@ -171,7 +218,7 @@ function addBlastVolume(candidate, plan) {
   }
   const { center, ground } = plan;
   const scale = blastScale(plan.size);
-  const frames = blastFrames(plan, registerExplosionGrids(plan.fuel, plan.seed));
+  const frames = blastFrames(plan, registerExplosionGrids(plan.fuel, plan.seed, plan.motionBlur));
   const box = EXPLOSION_GRID_BOX * scale;
   const floor = Math.max(ground, center[1]);
   const densityGain = plan.oily ? OILY_DENSITY_GAIN : 1;
@@ -196,10 +243,35 @@ function addBlastVolume(candidate, plan) {
   // The volume's own light (lightsScene) follows the fire, so the old point light and its track are gone. A stronger bloom lets the glow spill.
   const bloom = candidate.effects.bloom ?? {};
   candidate.effects.bloom = { ...bloom, strength: Math.max(bloom.strength ?? 0, 0.5) };
+  if (plan.motionBlur) openShutter(candidate);
+}
+
+// A grid that carries velocity blurs over the scene's motion blur shutter (#1759), so the blur takes the shutter the camera already has and opens one
+// frame at 24 frames a second when it has none.
+function openShutter(candidate) {
+  const motionBlur = candidate.effects.motionBlur ?? {};
+  const shutter = motionBlur.shutter > 0 ? motionBlur.shutter : EXPLOSION_DEFAULT_SHUTTER;
+  candidate.effects.motionBlur = { ...motionBlur, shutter };
 }
 
 function addMaterial(candidate, id, fields) {
   candidate.materials.push({ id, ...fields });
+}
+
+// The spark streaks of the approved combined preview (#1761): 700 sparks (900 for oily fuel) thrown in every direction from a small ball above the
+// floor, cooling along the blackbody curve. The fireball is 2.5 m at the reference size, so lengths scale with the blast and speeds with its square root,
+// the way the grid's own playback does. The shutter stays the spark default (half a frame), as in the preview.
+function sparkStreakSpecification(plan) {
+  const { size, oily, sparks } = plan;
+  const scale = blastScale(size);
+  const speedScale = Math.sqrt(scale);
+  const floor = Math.max(plan.ground, plan.center[1]);
+  return {
+    name: 'sparks', type: 'sparks', material: 'spark-glow', count: sparks.count ?? (oily ? 900 : 700),
+    lifetime: sparks.lifetime ?? [0.5, 2], speed: sparks.speed ?? [round(2 * speedScale), round(9 * speedScale)],
+    size: [round(0.008 * speedScale), round(0.016 * speedScale)], spread: 180, drag: 0.9,
+    emitter: { shape: 'sphere', position: [plan.center[0], round(floor + 0.2 * size), plan.center[2]], radius: round(0.08 * size) },
+  };
 }
 
 function particleSystems(candidate, plan, random) {
@@ -207,16 +279,17 @@ function particleSystems(candidate, plan, random) {
   const reach = Math.sqrt(size);
   const piece = `${id}-speck`;
   candidate.geometries.push({ id: piece, type: 'box', bevel: 0 });
-  addMaterial(candidate, `${id}-spark-glow`, { color: [1, 0.5, 0.1], emission: 8, emissiveColor: [1, 0.5, 0.1], roughness: 1 });
+  // A spark streak writes its blackbody radiance as the vertex colour, so its material is unlit white (src/particle-sparks.js).
+  if (plan.sparks.mode === 'streaks') addMaterial(candidate, `${id}-spark-glow`, { tag: 'unlit', color: [1, 1, 1], emission: 0 });
+  if (plan.sparks.mode === 'specks') addMaterial(candidate, `${id}-spark-glow`, { color: [1, 0.5, 0.1], emission: 8, emissiveColor: [1, 0.5, 0.1], roughness: 1 });
   addMaterial(candidate, `${id}-dust-grey`, { color: [0.45, 0.4, 0.34], roughness: 1 });
   addMaterial(candidate, `${id}-rubble-grey`, { color: [0.12, 0.11, 0.1], roughness: 0.9 });
-  // Later options (#1761 and #1762, not merged): the sparks below become a spark system with its own streak look when `sparks` lands, and the
-  // fireball volume takes a velocity motion blur from its simulation when that lands. Each would be one optional operation field.
   const specification = [
-    { name: 'sparks', material: 'spark-glow', count: oily ? 900 : 700, lifetime: [0.6, 2], speed: [round(size * 1.5 + 3), round(size * 4 + 8)], size: round(0.012 * reach), spread: 85, drag: 0.5, scale: 'shrink', emitter: { shape: 'sphere', position: [...center], radius: round(size * 0.15) }, color: [[1, 0.9, 0.5], [0.8, 0.2, 0.05]] },
+    plan.sparks.mode === 'streaks' ? sparkStreakSpecification(plan) : { name: 'sparks', material: 'spark-glow', count: oily ? 900 : 700, lifetime: [0.6, 2], speed: [round(size * 1.5 + 3), round(size * 4 + 8)], size: round(0.012 * reach), spread: 85, drag: 0.5, scale: 'shrink', emitter: { shape: 'sphere', position: [...center], radius: round(size * 0.15) }, color: [[1, 0.9, 0.5], [0.8, 0.2, 0.05]] },
     { name: 'dust', material: 'dust-grey', count: 360, lifetime: [1.5, 3.2], speed: [round(size * 0.8), round(size * 2.2)], size: [round(0.08 * reach), round(0.22 * reach)], spread: 88, drag: 1.8, scale: 'grow', emitter: { shape: 'disc', position: [center[0], ground, center[2]], radius: round(size * 0.3) }, alpha: [0.8, 0] },
     { name: 'rubble', material: 'rubble-grey', count: 60, lifetime: [1.5, 3], speed: [round(size * 0.8 + 2), round(size * 2.4 + 5)], size: [0.04, round(0.1 + 0.03 * size)], spread: 70, drag: 0.1, floor: ground, bounce: 0.3, scale: 'constant', emitter: { shape: 'sphere', position: [...center], radius: round(size * 0.1) } },
   ];
+  if (plan.sparks.mode === 'none') specification.shift();
   return specification.map(({ name, material, ...settings }, index) => {
     candidate.nodes.push({ id: `${id}-${name}`, geometry: piece, material: `${id}-${material}`, castShadow: false });
     return { node: `${id}-${name}`, seed: Math.floor(random() * 1e9) + index, delay: start, direction: [0, 1, 0], floor: ground, ...settings };

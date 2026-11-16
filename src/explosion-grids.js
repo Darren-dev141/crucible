@@ -13,11 +13,16 @@ export const EXPLOSION_GRID_BOX = 8;
 /** The `size` in metres of an add-explosion that plays the bake at its own speed and scale. */
 export const EXPLOSION_REFERENCE_SIZE = 2.5;
 export const EXPLOSION_EMPTY_GRID = 'explosion-empty.67vg';
+/** The empty frame of a blast that carries velocity: every frame of a sequence has the same channels, so it needs its own. */
+export const EXPLOSION_EMPTY_VELOCITY_GRID = 'explosion-empty-velocity.67vg';
+/** Whether add-explosion blurs the fireball along its velocity when the operation does not say (see motionBlur in agent-explosion.js). */
+export const EXPLOSION_MOTION_BLUR_DEFAULT = true;
 export { GAS_SIM_TEMPERATURE_UNIT };
 
 const MAX_CACHED_BAKES = 4;
 const BAKE_SECONDS_LIMIT = 90;
-const NAME_PATTERN = /^explosion-(dry|oily)-(\d{1,10})_(\d{4})\.67vg$/;
+// A bake with velocity (for the motion blur of the fireball) says so in its name: `explosion-dry-7-velocity_0000.67vg`.
+const NAME_PATTERN = /^explosion-(dry|oily)-(\d{1,10})(-velocity)?_(\d{4})\.67vg$/;
 // Oily fuel burns sootier: more smoke at the core and more smoke from every burned unit of fuel.
 const FUEL_OPTIONS = Object.freeze({
   dry: Object.freeze({}),
@@ -25,19 +30,23 @@ const FUEL_OPTIONS = Object.freeze({
 });
 
 const bakes = new Map();
-let emptyBytes = null;
+const emptyFrames = new Map();
 
 function gridSize() {
   return [EXPLOSION_GRID_BOX, EXPLOSION_GRID_BOX, EXPLOSION_GRID_BOX];
 }
 
-/** The names of the frames of one bake, in playing order. */
-export function explosionGridNames(fuel, seed) {
-  return Array.from({ length: EXPLOSION_GRID_FRAMES }, (_, index) => `explosion-${fuel}-${seed}_${String(index).padStart(4, '0')}.67vg`);
+function bakeLabel(fuel, seed, velocity) {
+  return `explosion-${fuel}-${seed}${velocity ? '-velocity' : ''}`;
 }
 
-function bakeFrames(fuel, seed) {
-  const key = `${fuel}-${seed}`;
+/** The names of the frames of one bake, in playing order; with `velocity` the bake carries the velocity channels. */
+export function explosionGridNames(fuel, seed, velocity = false) {
+  return Array.from({ length: EXPLOSION_GRID_FRAMES }, (_, index) => `${bakeLabel(fuel, seed, velocity)}_${String(index).padStart(4, '0')}.67vg`);
+}
+
+function bakeFrames(fuel, seed, velocity) {
+  const key = bakeLabel(fuel, seed, velocity);
   const cached = bakes.get(key);
   if (cached) return cached;
   const baked = bakeGasSim({
@@ -47,6 +56,7 @@ function bakeFrames(fuel, seed) {
     fps: EXPLOSION_GRID_FPS,
     seed,
     maxSeconds: BAKE_SECONDS_LIMIT,
+    velocity,
     ...FUEL_OPTIONS[fuel],
   });
   const frames = baked.frames.map(frame => encodeVolumeGrid({ resolution: baked.resolution, channels: frame, size: gridSize() }));
@@ -55,14 +65,20 @@ function bakeFrames(fuel, seed) {
   return frames;
 }
 
-function emptyFrame() {
-  if (!emptyBytes) {
+function emptyFrame(velocity) {
+  if (!emptyFrames.has(velocity)) {
     const axis = EXPLOSION_GRID_RESOLUTION;
     const cells = axis * axis * axis;
     const channels = { density: new Float32Array(cells), temperature: new Float32Array(cells), flame: new Float32Array(cells) };
-    emptyBytes = encodeVolumeGrid({ resolution: [axis, axis, axis], channels, size: gridSize() });
+    if (velocity) Object.assign(channels, { velocityX: new Float32Array(cells), velocityY: new Float32Array(cells), velocityZ: new Float32Array(cells) });
+    emptyFrames.set(velocity, encodeVolumeGrid({ resolution: [axis, axis, axis], channels, size: gridSize() }));
   }
-  return emptyBytes;
+  return emptyFrames.get(velocity);
+}
+
+/** The name of the empty frame that goes with a bake: the one with velocity channels when the bake has them. */
+export function explosionEmptyGridName(velocity) {
+  return velocity ? EXPLOSION_EMPTY_VELOCITY_GRID : EXPLOSION_EMPTY_GRID;
 }
 
 /**
@@ -73,30 +89,33 @@ export function explosionGridNamesFor(operation) {
   const fuel = operation.fuel ?? 'dry';
   const seed = operation.seed ?? 1;
   if (!Object.hasOwn(FUEL_OPTIONS, fuel) || !Number.isInteger(seed) || seed < 0 || seed > 4294967295) return null;
-  return [...explosionGridNames(fuel, seed), EXPLOSION_EMPTY_GRID];
+  const velocity = (operation.motionBlur ?? EXPLOSION_MOTION_BLUR_DEFAULT) === true;
+  return [...explosionGridNames(fuel, seed, velocity), explosionEmptyGridName(velocity)];
 }
 
 /** The bytes of an explosion grid file by name, baked on first use, or null when the name is not one add-explosion writes. */
 export function explosionGridBytes(name) {
-  if (name === EXPLOSION_EMPTY_GRID) return emptyFrame();
+  if (name === EXPLOSION_EMPTY_GRID) return emptyFrame(false);
+  if (name === EXPLOSION_EMPTY_VELOCITY_GRID) return emptyFrame(true);
   const match = typeof name === 'string' ? NAME_PATTERN.exec(name) : null;
   if (!match) return null;
   const seed = Number(match[2]);
-  const index = Number(match[3]);
+  const index = Number(match[4]);
   if (seed > 4294967295 || index >= EXPLOSION_GRID_FRAMES) return null;
-  return bakeFrames(match[1], seed)[index];
+  return bakeFrames(match[1], seed, Boolean(match[3]))[index];
 }
 
 /**
  * Bakes the blast of `fuel` and `seed` and registers its frames and the empty frame, so a grid volume that lists them draws in this process.
  * Returns the frame names. Same fuel and seed give the same bytes.
  */
-export function registerExplosionGrids(fuel, seed) {
-  const names = explosionGridNames(fuel, seed);
+export function registerExplosionGrids(fuel, seed, velocity = false) {
+  const names = explosionGridNames(fuel, seed, velocity);
+  const emptyName = explosionEmptyGridName(velocity);
   // The MCP server sends these grids with the call (explosionGridNamesFor), so the preview page has them already and bakes nothing.
-  if (isVolumeGridRegistered(names[0]) && isVolumeGridRegistered(names.at(-1)) && isVolumeGridRegistered(EXPLOSION_EMPTY_GRID)) return names;
-  const frames = bakeFrames(fuel, seed);
+  if (isVolumeGridRegistered(names[0]) && isVolumeGridRegistered(names.at(-1)) && isVolumeGridRegistered(emptyName)) return names;
+  const frames = bakeFrames(fuel, seed, velocity);
   names.forEach((name, index) => registerVolumeGrid(name, frames[index]));
-  registerVolumeGrid(EXPLOSION_EMPTY_GRID, emptyFrame());
+  registerVolumeGrid(emptyName, emptyFrame(velocity));
   return names;
 }

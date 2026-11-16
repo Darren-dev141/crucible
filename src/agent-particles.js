@@ -11,7 +11,7 @@ import { bakingContext, boundedArray, finiteNumber, knownKeys, rootNodeWithGeome
 const PARTICLES_FIELDS = ['gravity', 'wind', 'fields', 'systems'];
 const SYSTEM_TYPES = ['emitter', 'hair', 'sparks'];
 const EMITTER_SYSTEM_FIELDS = ['type', 'node', 'seed', 'count', 'rate', 'delay', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'size', 'scale', 'drag', 'floor', 'bounce', 'friction', 'colliders', 'spin', 'color', 'alpha', 'instances', 'orient'];
-const SPARK_SYSTEM_FIELDS = ['type', 'preset', 'node', 'seed', 'count', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'position', 'size', 'drag', 'floor', 'bounce', 'temperature', 'intensity', 'shutter'];
+const SPARK_SYSTEM_FIELDS = ['type', 'preset', 'node', 'seed', 'count', 'delay', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'position', 'size', 'drag', 'floor', 'bounce', 'temperature', 'intensity', 'shutter'];
 const SPARK_PRESETS = Object.freeze({
   // A blast: a few hundred sparks thrown in every direction from a small ball, fast, light enough for drag to pull them in, living 0.5 to 2 s.
   explosion: Object.freeze({ count: 800, speed: [6, 24], spread: 180, lifetime: [0.5, 2], size: [0.006, 0.014], drag: 0.9, emitter: Object.freeze({ shape: 'sphere', radius: 0.2 }) }),
@@ -256,13 +256,13 @@ function normalizeSparkSystem(input, context, path, recipe) {
     temperature: normalizeSparkTemperature(input.temperature ?? SPARK_DEFAULTS.temperature, `${path}.temperature`),
     intensity: finiteNumber(input.intensity ?? SPARK_DEFAULTS.intensity, `${path}.intensity`, 0, SPARK_LIMITS.maxIntensity),
     shutter: finiteNumber(input.shutter ?? SPARK_DEFAULTS.shutter, `${path}.shutter`, 0, SPARK_LIMITS.maxShutter),
-    scale: 'constant',
   };
   if (Math.hypot(...system.direction) === 0) {
     throw invalidField(`${path}.direction`, system.direction, 'a direction that is not the zero vector, such as [0, 1, 0]');
   }
   if (input.floor !== undefined) system.floor = finiteNumber(input.floor, `${path}.floor`, -POSITION_LIMIT, POSITION_LIMIT);
   if (input.bounce !== undefined) system.bounce = finiteNumber(input.bounce, `${path}.bounce`, 0, 1);
+  if (input.delay !== undefined) system.delay = finiteNumber(input.delay, `${path}.delay`, 0, 3600);
   checkSparkMaterial(system, recipe, path);
   return system;
 }
