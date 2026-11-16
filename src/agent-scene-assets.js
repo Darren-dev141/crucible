@@ -360,7 +360,7 @@ export function stageAssetClips(runtime, graph, time) {
     for (const record of runtime.animators) {
       let transaction;
       if (record.crowd) {
-        transactions.push(record.crowd.stage(time ?? 0));
+        transactions.push(record.crowd.stage(time ?? 0, graph.getNode(record.node)?.worldMatrix));
         continue;
       }
       if (record.pose) {

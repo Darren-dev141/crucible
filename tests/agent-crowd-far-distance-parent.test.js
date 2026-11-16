@@ -42,3 +42,31 @@ test('farDistance measures in world space when the crowd placement has a moved p
     assert.deepEqual(blendsAt(moved, time), blendsAt(unmoved, time), `the moved crowd shows the same poses as the unmoved one at ${time} s`);
   }
 });
+
+const PARENT_TRACK = [{ time: 0, value: [0, 0, 0] }, { time: 2, value: [6, 0, -10] }, { time: 4, value: [100, 0, 40] }];
+
+/** The same crowd under a parent that moves along PARENT_TRACK, or rests at `restAt`, watched from a fixed camera. */
+async function crowdUnderParent({ animated, restAt = [0, 0, 0] }) {
+  const robot = await loadRobot();
+  const walking = robot.animations.findIndex(animation => animation.name === 'Walking');
+  const crowd = { clip: walking, count: 30, seed: 5, spacing: 2, rateJitter: 0, farDistance: 15, farRate: 2 };
+  const recipe = {
+    format: 'crucible.scene', schemaVersion: 1,
+    geometries: [], materials: [],
+    camera: { eye: [0, 3, 14], target: [0, 1, 0] },
+    nodes: [{ id: 'stage', translation: restAt }, { id: 'people', parent: 'stage', asset: { id: ASSET_ID, crowd } }],
+    ...(animated ? { motion: { duration: 4, tracks: [{ kind: 'node', id: 'stage', property: 'translation', keyframes: PARENT_TRACK }] } } : {}),
+  };
+  const assets = new Map([[assetCopyKey(ASSET_ID, 0), await loadRobot()], [assetCopyKey(ASSET_ID, 1), robot]]);
+  return createAgentScene(recipe, {}, { assets });
+}
+
+test('farDistance follows a parent that has a translation track', async () => {
+  const moving = await crowdUnderParent({ animated: true });
+  for (const { time, value } of PARENT_TRACK) {
+    const resting = await crowdUnderParent({ animated: false, restAt: value });
+    assert.deepEqual(blendsAt(moving, time), blendsAt(resting, time), `the moving crowd shows the poses of a crowd resting where the parent is at ${time} s`);
+  }
+  const atStart = await crowdUnderParent({ animated: false });
+  assert.notDeepEqual(blendsAt(moving, 4), blendsAt(atStart, 4), 'at 4 s the parent is far away, so the crowd holds far poses');
+});

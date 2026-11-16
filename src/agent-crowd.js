@@ -23,12 +23,13 @@ function staticWorldMatrix(recipeNodes, node) {
   return world;
 }
 
-/** The camera eye in the space of the crowd instance matrices, so far distances compare like with like when the placement has a moved parent. */
-function eyeInCrowdSpace(recipe, node) {
-  const eye = recipe.camera?.eye;
+/**
+ * The camera eye in the space of the crowd instance matrices, so far distances compare like with like when the placement
+ * has a moved parent. `placementWorld` is the placement node's world matrix; `inverse` and `target` are reused buffers.
+ */
+function eyeInCrowdSpace(eye, placementWorld, inverse = mat4.create(), target = vec3.create()) {
   if (!eye) return null;
-  const inverseWorld = mat4.invert(mat4.create(), staticWorldMatrix(recipe.nodes, node));
-  return inverseWorld ? Array.from(vec3.transformMat4(vec3.create(), eye, inverseWorld)) : eye;
+  return mat4.invert(inverse, placementWorld) ? vec3.transformMat4(target, eye, inverse) : eye;
 }
 
 export const CROWD_LIMITS = Object.freeze({ maxInstances: 1000, maxCachedCrowds: 4 });
@@ -146,13 +147,20 @@ export function expandCrowd(recipe, node, asset, copy, cache, runtime, limits) {
     });
     runtime.partExtras.set(id, { group: node.id, crowd: part.crowd, assembly: part.assembly, ...(part.lods ? { lods: part.lods } : {}), ...(part.morph ? { morph: part.morph } : {}) });
   });
-  const eye = eyeInCrowdSpace(recipe, node);
+  const cameraEye = recipe.camera?.eye ?? null;
+  const staticEye = eyeInCrowdSpace(cameraEye, staticWorldMatrix(recipe.nodes, node));
+  const inverseScratch = mat4.create();
+  const eyeScratch = vec3.create();
   const record = {
     node: node.id, assetId, copy, asset, partNodeIds, clip: null, drive: null, drivePose: null,
     crowd: {
-      /** The pose at a scene time, applied on commit: only frame offsets change, so nothing here can fail. */
-      stage(time) {
+      /**
+       * The pose at a scene time, applied on commit: only frame offsets change, so nothing here can fail.
+       * `placementWorld` is the placement's world matrix at that time, so far distances follow an animated parent.
+       */
+      stage(time, placementWorld = null) {
         const seconds = time * settings.speed;
+        const eye = placementWorld ? eyeInCrowdSpace(cameraEye, placementWorld, inverseScratch, eyeScratch) : staticEye;
         return {
           commit: () => built.set.setTimes(index => built.crowd.clipTime(index, seconds), eye),
           discard() {},
