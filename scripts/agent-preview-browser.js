@@ -805,6 +805,7 @@ function bytesToBase64(bytes) {
 
 // The feature images of the last denoise "oidn" trace, kept until finishPathTrace draws it.
 let tracedFeatures;
+let tracedExposure = 1;
 
 function encodeTracedPng(rgba, width, height) {
   const canvas = document.createElement('canvas');
@@ -1056,7 +1057,8 @@ window.__agentPreview = {
       // The scene's motion blur shutter also blurs a grid volume that carries velocity (#1759), in the trace as in the rasterizer.
       environment: { ...environment, map: agentEnvironmentMap(environment), ...(record.scene.effects.motionBlur.shutter > 0 ? { volumeShutter: record.scene.effects.motionBlur.shutter } : {}) },
       camera: record.scene.camera,
-    }, options);
+    }, { ...options, exposure: record.scene.effects.exposure });
+    tracedExposure = record.scene.effects.exposure;
     // An external denoiser (denoise "oidn") works on the traced features outside the page; finishPathTrace then draws its result.
     if (result.report.denoiser === 'oidn') {
       tracedFeatures = result.features;
@@ -1123,7 +1125,7 @@ window.__agentPreview = {
       pixels = denoiseRadiance({ width, height, ...tracedFeatures });
     }
     tracedFeatures = undefined;
-    return { data: encodeTracedPng(toneMapToRgba8(pixels, width, height), width, height) };
+    return { data: encodeTracedPng(toneMapToRgba8(pixels, width, height, { exposure: tracedExposure }), width, height) };
   },
   async createWithAssets(input) {
     const pool = new Map();

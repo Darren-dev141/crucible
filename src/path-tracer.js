@@ -123,11 +123,13 @@ export function normalizePathTracerOptions(options = {}) {
     denoiser: denoiserNamed(options.denoise ?? true),
     viewTransform: options.viewTransform ?? 'aces',
     look: options.look ?? null,
+    exposure: options.exposure ?? 1,
     backend: options.backend ?? 'cpu',
     samplingPattern: options.samplingPattern ?? 'random',
     lightSelection: options.lightSelection ?? 'auto',
   };
   result.denoise = result.denoiser !== 'none';
+  if (typeof result.exposure !== 'number' || !Number.isFinite(result.exposure) || result.exposure <= 0) throw new RangeError(`Path tracer exposure must be a finite number above 0 (got ${result.exposure}). Pass 1 to leave the picture as traced, 2 to double it.`);
   if (!VIEW_TRANSFORM_NAMES.includes(result.viewTransform)) throw new RangeError(`Path tracer viewTransform must be one of ${VIEW_TRANSFORM_NAMES.join(', ')}.`);
   if (!PATH_TRACER_BACKENDS.includes(result.backend)) throw new TypeError('Path tracer backend must be "cpu", "gpu" or "webgpu".');
   if (!SAMPLING_PATTERNS.includes(result.samplingPattern)) throw new RangeError(`Path tracer samplingPattern must be one of ${SAMPLING_PATTERNS.join(', ')}.`);
@@ -1023,14 +1025,14 @@ function createPathTracer(scene, options) {
 
 // ---- Image ----
 
-/** The display transform of the rasterizer's post pass (view transform, gamma 2.2, optional look) applied to linear pixels. */
-export function toneMapToRgba8(linear, width, height, { viewTransform = 'aces', look = null } = {}) {
+/** The display transform of the rasterizer's post pass (exposure, view transform, gamma 2.2, optional look) applied to linear pixels. */
+export function toneMapToRgba8(linear, width, height, { viewTransform = 'aces', look = null, exposure = 1 } = {}) {
   const rgba = new Uint8ClampedArray(width * height * 4);
   const plainCurve = viewTransform === 'aces' && !look;
   for (let pixel = 0; pixel < width * height; pixel++) {
     const color = plainCurve
-      ? [0, 1, 2].map(channel => acesChannel(linear[pixel * 3 + channel]) ** (1 / 2.2))
-      : displayColor([linear[pixel * 3], linear[pixel * 3 + 1], linear[pixel * 3 + 2]], { viewTransform, look });
+      ? [0, 1, 2].map(channel => acesChannel(linear[pixel * 3 + channel] * exposure) ** (1 / 2.2))
+      : displayColor([linear[pixel * 3] * exposure, linear[pixel * 3 + 1] * exposure, linear[pixel * 3 + 2] * exposure], { viewTransform, look });
     for (let channel = 0; channel < 3; channel++) rgba[pixel * 4 + channel] = Math.round(color[channel] * 255);
     rgba[pixel * 4 + 3] = 255;
   }
