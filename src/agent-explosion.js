@@ -131,7 +131,7 @@ function addAirSteps(candidate, plan) {
 // inside it. Several partly overlapping fire volumes were tried and drew hard box seams: volumes are composited nearest entry
 // first, an approximation that fails where similar boxes overlap. Warm to cool: the white core dies first, the orange fire next.
 const FIRE_LOBES = [
-  { emission: [1, 0.38, 0.06], strength: 2.2, density: 4, noiseScale: 11, life: 2.8 },
+  { emission: [1, 0.36, 0.05], strength: 2.6, density: 2, noiseScale: 18, life: 2.8 },
 ];
 
 function scaleKeys(plan, shape, peak, rise, life) {
@@ -160,15 +160,15 @@ function volumePlan(plan, random) {
     const offset = [Math.cos(angle) * fire * (0.12 + random() * 0.18), fire * (0.1 + random() * 0.25), Math.sin(angle) * fire * (0.12 + random() * 0.18)];
     const widths = [0.95 + random() * 0.1, 0.8 + random() * 0.1, 0.95 + random() * 0.1];
     const home = [center[0] + offset[0], center[1] + offset[1], center[2] + offset[2]];
-    volumes.push({ name, shape: 'mesh', fit: 'bounds', density: lobe.density, falloff: 0.95, noiseAmount: 1, noiseScale: round(lobe.noiseScale / size), absorption: [0.25, 0.6, 1], emission: lobe.emission, emissionStrength: lobe.strength, steps: 20 });
+    volumes.push({ name, shape: 'mesh', fit: 'bounds', density: lobe.density, falloff: 0.8, noiseAmount: 1, noiseScale: round(lobe.noiseScale / size), absorption: [0.06, 0.12, 0.25], emission: lobe.emission, emissionStrength: lobe.strength, steps: 20 });
     tracks.push(nodeTrack(`${id}-${name}`, 'scale', scaleKeys(plan, widths.map(width => width * fire), 1, 1, lobe.life), 'easeOutCubic'));
     tracks.push(nodeTrack(`${id}-${name}`, 'translation', [
       { time: 0, value: home }, { time: start, value: home },
       { time: start + lobe.life, value: [home[0] + offset[0] * 0.6, home[1] + fire * (0.35 + index * 0.12), home[2] + offset[2] * 0.6] },
     ]));
   });
-  volumes.push({ name: 'core', shape: 'mesh', fit: 'bounds', density: 2, falloff: 0.9, noiseAmount: 0.8, noiseScale: round(9 / size), absorption: [0.3, 0.7, 1], emission: [1, 0.8, 0.4], emissionStrength: 12, steps: 20 });
-  tracks.push(nodeTrack(`${id}-core`, 'scale', scaleKeys(plan, [fire * 0.6, fire * 0.55, fire * 0.6], 1, 0, 0.9), 'easeOutCubic'));
+  volumes.push({ name: 'core', shape: 'mesh', fit: 'bounds', density: 1.5, falloff: 0.85, noiseAmount: 1, noiseScale: round(14 / size), absorption: [0.1, 0.2, 0.4], emission: [1, 0.92, 0.7], emissionStrength: 14, steps: 20 });
+  tracks.push(nodeTrack(`${id}-core`, 'scale', scaleKeys(plan, [fire * 0.75, fire * 0.7, fire * 0.75], 1, 0, 1.3), 'easeOutCubic'));
   tracks.push(nodeTrack(`${id}-core`, 'translation', [{ time: 0, value: [center[0], center[1] + fire * 0.25, center[2]] }]));
   volumes.push({ name: 'smoke', shape: 'mesh', fit: 'bounds', density: smokeDensity, falloff: 0.9, noiseAmount: 1, noiseScale: round(4 / size), absorption: [0.92, 0.92, 0.92], steps: 24 });
   tracks.push(nodeTrack(`${id}-smoke`, 'scale', [
@@ -217,7 +217,7 @@ function addFireLight(candidate, plan) {
   const { center, size, start } = plan;
   const lights = candidate.environment.pointLights ?? [];
   if (lights.length >= MAX_POINT_LIGHTS) return [];
-  const peak = round(2.5 * size * size);
+  const peak = round(18 * size * size);
   lights.push({ position: [center[0], round(center[1] + size * 0.5), center[2]], color: [1, 0.55, 0.2], intensity: 0, range: round(size * 8) });
   candidate.environment.pointLights = lights;
   const bloom = candidate.effects.bloom ?? {};
@@ -265,7 +265,7 @@ function addScorch(candidate, plan) {
   const { id, center, size, start, ground } = plan;
   const radius = round(size * 0.55);
   candidate.geometries.push({ id: `${id}-disc`, type: 'cylinder', bevel: 0 });
-  addMaterial(candidate, `${id}-char`, { color: [0.02, 0.02, 0.02], roughness: 1 });
+  addMaterial(candidate, `${id}-char`, { color: [0.1, 0.09, 0.08], roughness: 1 });
   candidate.nodes.push({ id: `${id}-scorch`, geometry: `${id}-disc`, material: `${id}-char`, translation: [center[0], round(ground + 0.004), center[2]], scale: [radius, 0.004, radius], decal: true, castShadow: false });
   // The MCP schema has no node visible track, so the disc is a speck until the blast and jumps to full size at `start`.
   const speck = [TINY, TINY, TINY];
