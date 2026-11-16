@@ -2711,6 +2711,10 @@ export class CrucibleRenderer {
     const effects = resolveEffects(frame.effects);
     const environment = { lightDirection: [-3, 6, 4], fogColor: [0.35, 0.43, 0.43], fogDensity: 0.006, daylight: 1, explosionCenter: [0, 0, 0], ...this.environment, ...frame.environment };
     environment.fogDensity ??= this.fittedFogDensity ?? 0.006;
+    if (environment.localVolumes?.some?.(localVolume => localVolume?.lightsScene === true)) {
+      // Fire lights the set: the emitting volumes add point lights before the lighting state is written (#1046).
+      environment.pointLights = requireFeatureCode('volumeFog').support.withVolumeFireLights(this, environment, environment.volumeTime ?? frame.time ?? 0).pointLights;
+    }
     const volume = resolveVolumeFog(environment.volumeFog);
     if (this.fogFieldOverride) volume.field = this.fogFieldOverride;
     if (volume.density > 0) {
