@@ -1,6 +1,7 @@
 import { registerShaderFeatureCode } from './shader-registry.js';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS } from './local-volumes.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
+import { withVolumeEmissionLights, packedVolumesEmit } from './local-volume-lights.js';
 import { BLACKBODY_REFERENCE_KELVIN, BLACKBODY_MAXIMUM_GAIN } from './volume-grid.js';
 import { drawMeshVolumes } from './mesh-volume-pass.js';
 import { FogFieldTexture, createFogLightBuffers, packFogLights, volumeShadowAmbient, DEFAULT_FLOW_STRENGTH, DEFAULT_FLOW_PERIOD, resolveFogDetail, fogUsesDetail } from './fog-field.js';
@@ -490,7 +491,7 @@ function packLights(renderer) {
 
 registerShaderFeatureCode('volumeFog', {
   // The JavaScript half, which the renderer calls for a frame that draws a volume fog.
-  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes },
+  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeEmissionLights, packedVolumesEmit },
   keyDeclarations: KEY_LIGHT_DECLARATIONS,
   keyFunctions: KEY_LIGHT_FUNCTIONS,
   localDeclarations: LOCAL_VOLUME_DECLARATIONS,

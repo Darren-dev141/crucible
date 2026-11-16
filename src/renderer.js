@@ -2014,7 +2014,7 @@ export class CrucibleRenderer {
       context.deleteFramebuffer(target.framebuffer);
     }
     this.bloomTargets = [];
-    this.renderTargets.release('multisampleColor', 'multisampleDepth', 'frameColor', 'sceneDepth', 'bloomA', 'bloomB');
+    this.renderTargets.release('multisampleColor', 'multisampleDepth', 'frameColor', 'sceneDepth', 'bloomA', 'bloomB', 'bloomVolumeSource');
     this.releaseOcclusionTarget();
     this.passSupport?.releaseTargets(context);
     for (const stage of this.postStages ?? []) stage.releaseTargets(context);
@@ -2280,6 +2280,14 @@ export class CrucibleRenderer {
     return requireFeatureCode('volumeFog').support.prepareLocalVolumes(this, input, frame, volumeTime) > 0;
   }
 
+  // The environment with a point light for each emitting local volume (see src/local-volume-lights.js). A scene with no volume that
+  // emits gets its own environment back, and the code that makes the lights is not loaded.
+  withVolumeEmissionLights(environment, volumeTime) {
+    const emitsAnything = Array.isArray(environment.localVolumes) && environment.localVolumes.some(volume => volume?.emission?.some(channel => channel > 0));
+    if (!emitsAnything) return environment;
+    return requireFeatureCode('volumeFog').support.withVolumeEmissionLights(environment, this.sceneParts, volumeTime);
+  }
+
   // The post steps this frame uses. A step that is off costs nothing in a program that has it compiled out.
   postStepsOf(frame, effects, volume, occluded, fogSky, localVolumes) {
     const steps = [];
@@ -2338,7 +2346,9 @@ export class CrucibleRenderer {
     this.restoreSingleLevelFiltering();
     let sourceTexture = this.frameTexture;
     for (const stage of this.postStages) sourceTexture = stage.apply(this, frame, effects, sourceTexture) ?? sourceTexture;
-    if (effects.bloom.strength > 0) this.drawBloom(effects.bloom, sourceTexture);
+    const localVolumes = this.prepareLocalVolumes(environment.localVolumes, frame, environment.volumeTime ?? frame.time ?? 0);
+    const bloomSource = effects.bloom.strength > 0 && localVolumes && requireFeatureCode('volumeFog').support.packedVolumesEmit(this.localVolumeBuffers) ? this.drawVolumeBloomSource(frame, environment, sourceTexture) : sourceTexture;
+    if (effects.bloom.strength > 0) this.drawBloom(effects.bloom, bloomSource);
     const occluded = effects.ambientOcclusion > 0 && Boolean(this.depthTexture);
     if (occluded) this.drawAmbientOcclusion(frame, effects);
     // A frame that names an outputFramebuffer (src/float-output.js) draws its final pass there, not on the canvas.
@@ -2349,7 +2359,6 @@ export class CrucibleRenderer {
     context.bindVertexArray(null);
     const fogSky = this.fogSkyVisibility?.(this.sceneParts, volume, context, environment);
     const fogSupport = volume.density > 0 ? requireFeatureCode('volumeFog').support : null;
-    const localVolumes = this.prepareLocalVolumes(environment.localVolumes, frame, environment.volumeTime ?? frame.time ?? 0);
     if (fogSupport) fogSupport.packLights(this);
     else if (this.fogLightBuffers) this.fogLightBuffers.count = 0;
     const post = this.selectPostProgram(this.postStepsOf(frame, effects, volume, occluded, fogSky, localVolumes));
@@ -2409,24 +2418,65 @@ export class CrucibleRenderer {
   // Allocated on the first frame that asks for bloom, so scenes without it pay nothing.
   ensureBloomTargets() {
     if (this.bloomTargets.length > 0) return;
-    const context = this.context;
-    for (let index = 0; index < 2; index++) {
-      const texture = context.createTexture();
-      const framebuffer = context.createFramebuffer();
-      this.bloomTargets.push({ texture, framebuffer });
-      context.bindTexture(context.TEXTURE_2D, texture);
-      context.texImage2D(context.TEXTURE_2D, 0, this.hdr ? context.RGBA16F : context.RGBA8, this.bloomWidth, this.bloomHeight, 0, context.RGBA, this.hdr ? context.HALF_FLOAT : context.UNSIGNED_BYTE, null);
-      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
-      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, context.LINEAR);
-      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_S, context.CLAMP_TO_EDGE);
-      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_T, context.CLAMP_TO_EDGE);
-      context.bindFramebuffer(context.FRAMEBUFFER, framebuffer);
-      context.framebufferTexture2D(context.FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.TEXTURE_2D, texture, 0);
-      if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) throw new Error('Bloom framebuffer allocation failed. Choose a lower quality preset.');
-    }
-    context.bindFramebuffer(context.FRAMEBUFFER, null);
+    this.bloomTargets.push(this.createBloomTarget(), this.createBloomTarget());
     this.renderTargets.record('bloomA', { width: this.bloomWidth, height: this.bloomHeight, format: this.hdr ? 'RGBA16F' : 'RGBA8' });
     this.renderTargets.record('bloomB', { width: this.bloomWidth, height: this.bloomHeight, format: this.hdr ? 'RGBA16F' : 'RGBA8' });
+  }
+
+  // One texture and framebuffer of the bloom's size.
+  createBloomTarget() {
+    const context = this.context;
+    const texture = context.createTexture();
+    const framebuffer = context.createFramebuffer();
+    context.bindTexture(context.TEXTURE_2D, texture);
+    context.texImage2D(context.TEXTURE_2D, 0, this.hdr ? context.RGBA16F : context.RGBA8, this.bloomWidth, this.bloomHeight, 0, context.RGBA, this.hdr ? context.HALF_FLOAT : context.UNSIGNED_BYTE, null);
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, context.LINEAR);
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_S, context.CLAMP_TO_EDGE);
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_T, context.CLAMP_TO_EDGE);
+    context.bindFramebuffer(context.FRAMEBUFFER, framebuffer);
+    context.framebufferTexture2D(context.FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.TEXTURE_2D, texture, 0);
+    if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) throw new Error('Bloom framebuffer allocation failed. Choose a lower quality preset.');
+    context.bindFramebuffer(context.FRAMEBUFFER, null);
+    return { texture, framebuffer };
+  }
+
+  // Bloom reads the frame with the glow of the local volumes already in it. The volumes are composited in the post pass, after
+  // the bloom is added, so this draws that composite (the frame plus the volumes, nothing else) at the bloom's size into a
+  // third bloom target, allocated on the first frame that has an emitting volume with bloom on. Returns its texture.
+  drawVolumeBloomSource(frame, environment, sourceTexture) {
+    const context = this.context;
+    this.ensureBloomTargets();
+    if (this.bloomTargets.length < 3) {
+      this.bloomTargets.push(this.createBloomTarget());
+      this.renderTargets.record('bloomVolumeSource', { width: this.bloomWidth, height: this.bloomHeight, format: this.hdr ? 'RGBA16F' : 'RGBA8' });
+    }
+    const target = this.bloomTargets[2];
+    const post = this.selectPostProgram(['local']);
+    context.bindFramebuffer(context.FRAMEBUFFER, target.framebuffer);
+    context.viewport(0, 0, this.bloomWidth, this.bloomHeight);
+    context.disable(context.DEPTH_TEST);
+    context.disable(context.CULL_FACE);
+    context.bindVertexArray(null);
+    context.useProgram(post.program);
+    context.activeTexture(context.TEXTURE0);
+    context.bindTexture(context.TEXTURE_2D, sourceTexture);
+    if (this.localVolumeBuffers.blurred) {
+      context.generateMipmap(context.TEXTURE_2D);
+      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR_MIPMAP_LINEAR);
+      this.mipmappedTexture = sourceTexture;
+    }
+    context.uniform1i(post.uniforms.frameTexture, 0);
+    context.activeTexture(context.TEXTURE1);
+    context.bindTexture(context.TEXTURE_2D, this.depthTexture ?? this.whiteTexture);
+    context.uniform1i(post.uniforms.sceneDepth, 1);
+    requireFeatureCode('volumeFog').support.bindLocalVolumes(this, post, frame, environment);
+    context.uniform1f(post.uniforms.hdrEnabled, 0);
+    context.uniform2f(post.uniforms.resolution, this.bloomWidth, this.bloomHeight);
+    context.uniformMatrix4fv(post.uniforms.inverseViewProjection, false, this.inverseViewProjection);
+    context.uniform3fv(post.uniforms.eye, frame.eye);
+    context.drawArrays(context.TRIANGLES, 0, 3);
+    return target.texture;
   }
 
   drawBloom(bloom, sourceTexture = this.frameTexture) {
@@ -2721,7 +2771,7 @@ export class CrucibleRenderer {
       const lightLength = direction?.length === 3 ? Math.hypot(...direction) : NaN;
       if (!Number.isFinite(lightLength) || lightLength < 1e-6 || !Array.from(direction).every(component => typeof component === 'number' && Math.abs(component) <= 1e6)) throw new RangeError('Volume light direction must have a finite nonzero length and bounded components');
     }
-    updateLightingState(this.lighting, environment, { world: this.world });
+    updateLightingState(this.lighting, this.withVolumeEmissionLights(environment, environment.volumeTime ?? frame.time ?? 0), { world: this.world });
     this.syncViewTransform(environment);
     // The shadow view follows the sun, so a moved sun redraws the map.
     const lightChanged = String(this.activeLightDirection) !== String(environment.lightDirection);
