@@ -1,0 +1,1 @@
+- A box or sphere local volume can shade the opaque surfaces under it from the key light, in the rasterizer and the CPU path tracer, when `castShadow: true` is set; it is off by default so the default frame does not change (#1047).

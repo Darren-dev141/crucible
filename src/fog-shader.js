@@ -1,5 +1,5 @@
 import { registerShaderFeatureCode } from './shader-registry.js';
-import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS } from './local-volumes.js';
+import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, LOCAL_VOLUME_SURFACE_SHADOW_TAPS } from './local-volumes.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
@@ -341,6 +341,23 @@ vec3 localVolumeInScatter(int index, vec3 position, vec3 direction) {
   }
   return localVolumeSkyLight(index, position) + sunLight;
 }
+// The share of the key light a surface keeps under the volumes that cast shadows (#1047): exp of the optical depth the volumes put between it and the sun.
+vec3 localVolumeSurfaceShadow(vec3 position, vec3 towardSun) {
+  vec3 depthSum = vec3(0.0);
+  for (int index = 0; index < 8; index++) {
+    if (index >= localVolumeCount) break;
+    if (localVolumeGrid[index].z < 0.5 || localVolumeGrid[index].x > 0.5 || localVolumeCenters[index].w > 1.5) continue;
+    vec2 span = localVolumeInterval(index, position, towardSun);
+    float entry = max(span.x, 0.0);
+    if (span.y <= entry) continue;
+    float profileSum = 0.0;
+    for (int tap = 0; tap < ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}; tap++) {
+      profileSum += min(localVolumeProfile(index, position + towardSun * (entry + (span.y - entry) * (float(tap) + 0.5) / ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}.0), true) * ${LOCAL_VOLUME_LIGHT_DEPTH_SATURATION.toFixed(3)}, 1.0);
+    }
+    depthSum += localVolumeAbsorption[index].rgb * (profileSum * (span.y - entry) / ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}.0);
+  }
+  return exp(-depthSum * ${LOCAL_VOLUME_SHADOW_STRENGTH.toFixed(3)});
+}
 // The light behind a volume, blurred by the optical depth in front of it: taps of the frame spread over a disc whose radius grows with the depth,
 // each counted only where its surface lies at or past the ray's first volume entry, so an object in front of the volume is never smeared into it.
 vec3 localVolumeBlurred(vec3 background, float opticalDepth, float firstEntry, vec3 origin, vec3 direction) {
@@ -470,6 +487,10 @@ vec3 localVolumes(vec3 background) {
     blurEntry = min(blurEntry, entry);
   }
   if (blurDepth > 0.0) background = localVolumeBlurred(background, blurDepth, blurEntry, origin, direction);
+  if (depth < 1.0 && surfacePoint.w > 0.0 && max(volumeLightColor.r, max(volumeLightColor.g, volumeLightColor.b)) > 0.0) {
+    vec3 surfaceWorld = surfacePoint.xyz / surfacePoint.w;
+    background *= mix(vec3(1.0), localVolumeSurfaceShadow(surfaceWorld, normalize(volumeLightDirection)), keyVisibility(surfaceWorld));
+  }
   return background * transmittance + radiance;
 }
 `;

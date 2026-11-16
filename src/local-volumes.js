@@ -43,7 +43,10 @@ export function packLocalVolumes(volumes, buffers) {
     buffers.emission.set([...volume.emission.map(channel => channel * volume.emissionStrength), volume.noiseScale], at);
     buffers.steps.set([volume.steps, packedShape === PACKED_SHAPE_MESH ? buffers.meshParts.length : 0, volume.scatter ?? 0, volume.blur ?? 0], at);
     if (packedShape === PACKED_SHAPE_MESH) buffers.meshParts.push({ part: volume.part, label: `environment.localVolumes[${index}]` });
-    if (volume.shape !== 'grid') buffers.grid[at + 1] = volume.shadowDetail ? 1 : 0;
+    if (volume.shape !== 'grid') {
+      buffers.grid[at + 1] = volume.shadowDetail ? 1 : 0;
+      buffers.grid[at + 2] = volume.castShadow === true ? 1 : 0;
+    }
     if (volume.shape === 'grid') {
       if (buffers.gridVolume) throw new RangeError(ONE_GRID_VOLUME_MESSAGE);
       buffers.gridVolume = volume;
@@ -75,6 +78,10 @@ export const LOCAL_VOLUME_LIGHT_DEPTH_SATURATION = 6;
  * side of the smoke clearly darker than the sunlit side, the way the many scatters of a real smoke take the light from its shade.
  */
 export const LOCAL_VOLUME_SHADOW_STRENGTH = 1.2;
+
+/** How many taps along the key light measure the optical depth a volume puts between a surface and the sun (#1047). */
+export const LOCAL_VOLUME_SURFACE_SHADOW_TAPS = 8;
+
 
 /** The taps along the light of a volume with `shadowDetail` (the others take 3), so the shadow follows the noise and not only the smooth profile. The shader's loop is bounded by the same number. */
 export const LOCAL_VOLUME_DETAIL_SHADOW_TAPS = 8;
