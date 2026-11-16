@@ -1,7 +1,7 @@
 import { resolveVolumeFog } from './volumetric.js';
-import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN } from './local-volumes.js';
+import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_GRID_SHADOW_TAPS, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY } from './local-volumes.js';
 import { countOpenEdges } from './local-volume-parts.js';
-import { blackbodyRadiance } from './volume-grid.js';
+import { bakeEmissionRamp, emissionRampPosition, sampleBakedRamp } from './local-volume-ramp-bake.js';
 import { buildTriangleBvh } from './triangle-bvh.js';
 import { createTracer } from './ray-query.js';
 
@@ -173,17 +173,40 @@ const SKY_DEPTH_TAPS = 1;
 const SKY_DIRECTIONS = [[0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]];
 
 /**
+ * The phase function times the light left after `depth`, summed over the octaves of a volume's `scatterOctaves` (the octave sum of the rasterizer's localVolumeInScatter):
+ * octave n weighs MULTI_SCATTER^n, sees MULTI_EXTINCTION^n of the depth and has MULTI_ANISOTROPY^n of the anisotropy. One octave is the single scatter.
+ */
+function scatterOctaveSum(volume, cosine, depth) {
+  let total = 0;
+  let weight = 1;
+  let extinction = 1;
+  let anisotropy = volume.anisotropy ?? 0;
+  for (let octave = 0; octave < (volume.scatterOctaves ?? 1); octave++) {
+    total += weight * henyeyGreensteinPhase(anisotropy, cosine) * Math.exp(-depth * extinction);
+    weight *= LOCAL_VOLUME_MULTI_SCATTER;
+    extinction *= LOCAL_VOLUME_MULTI_EXTINCTION;
+    anisotropy *= LOCAL_VOLUME_MULTI_ANISOTROPY;
+  }
+  return total;
+}
+
+/**
  * The optical depth per colour channel between a point inside a volume and the volume's far side along a direction, from midpoint
  * taps of its profile: the rasterizer's `localVolumeDepth`, so the lit side of a volume is brighter than the shaded side.
  */
-function writeOpticalDepth(volume, x, y, z, direction, taps, span, out) {
+function writeOpticalDepth(volume, x, y, z, direction, taps, span, out, detailShadow = false) {
   const exitDistance = localVolumeInterval(volume, x, y, z, direction[0], direction[1], direction[2], Infinity, span) ? Math.max(span[1], 0) : 0;
   let profileSum = 0;
   for (let tap = 0; tap < taps; tap++) {
     const distance = exitDistance * (tap + 0.5) / taps;
-    profileSum += Math.min(localVolumeProfile(volume, x + direction[0] * distance, y + direction[1] * distance, z + direction[2] * distance, false) * LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, 1);
+    profileSum += Math.min(localVolumeProfile(volume, x + direction[0] * distance, y + direction[1] * distance, z + direction[2] * distance, detailShadow) * LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, 1);
   }
   for (let channel = 0; channel < 3; channel++) out[channel] = volume.absorption[channel] * volume.density * profileSum * exitDistance / taps;
+}
+
+// Which of a grid sample's three channels (density, temperature, flame) drives a ramp.
+function rampSourceChannel(source) {
+  return source === 'density' ? 0 : source === 'temperature' ? 1 : 2;
 }
 
 /**
@@ -226,11 +249,11 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
       flattenedDirection[0] = sun.direction[0] / flattenedLength;
       flattenedDirection[1] = sun.direction[1] * LOCAL_VOLUME_SUN_FLATTEN / flattenedLength;
       flattenedDirection[2] = sun.direction[2] / flattenedLength;
-      writeOpticalDepth(volume, x, y, z, flattenedDirection, SUN_DEPTH_TAPS, span, sunDepth);
+      const detailShadow = volume.shadowDetail === true && volume.shape !== 'grid';
+      writeOpticalDepth(volume, x, y, z, flattenedDirection, detailShadow ? LOCAL_VOLUME_DETAIL_SHADOW_TAPS : SUN_DEPTH_TAPS, span, sunDepth, detailShadow);
       const cosine = sun.direction[0] * directionX + sun.direction[1] * directionY + sun.direction[2] * directionZ;
-      const phase = henyeyGreensteinPhase(volume.anisotropy ?? 0, cosine);
       for (let channel = 0; channel < 3; channel++) {
-        sunLight[channel] = sun.color[channel] * phase * LOCAL_VOLUME_KEY_GAIN * Math.exp(-sunDepth[channel] * LOCAL_VOLUME_SHADOW_STRENGTH);
+        sunLight[channel] = sun.color[channel] * LOCAL_VOLUME_KEY_GAIN * scatterOctaveSum(volume, cosine, sunDepth[channel] * LOCAL_VOLUME_SHADOW_STRENGTH);
       }
     }
     for (let channel = 0; channel < 3; channel++) {
@@ -239,20 +262,30 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
     }
   }
 
-  const gridCell = new Float64Array(3);
-  const blackbody = new Float64Array(3);
+  // The emission ramp (#1046), baked once per volume: the light per unit length is the ramp colour at the source value times the position along the ramp, as the
+  // rasterizer's localVolumeRampLight does.
+  const bakedRamps = new Map(volumes.filter(volume => volume.emissionRamp).map(volume => [volume, bakeEmissionRamp(volume.emissionRamp)]));
+  const rampColor = new Float64Array(3);
+  function addRampLight(volume, sourceValue, stepLength, throughput, emitted) {
+    const position = emissionRampPosition(volume.emissionRamp, sourceValue);
+    if (position <= 0) return;
+    sampleBakedRamp(bakedRamps.get(volume), position, rampColor);
+    for (let channel = 0; channel < 3; channel++) emitted[channel] += throughput[channel] * rampColor[channel] * volume.emissionStrength * position * stepLength;
+  }
+
+  const gridCell = new Float64Array(6);
 
   // One step through a grid volume (shape "grid"): extinction from the density, emission from the flame channel and, with blackbodyIntensity, from the
   // temperature channel. The rasterizer's march repeats it (fog-shader.js).
   function crossGridStep(volume, x, y, z, directionX, directionY, directionZ, stepLength, throughput, emitted) {
-    localVolumeGridSample(volume, x, y, z, gridCell);
+    localVolumeGridSample(volume, x, y, z, gridCell, volume.blackbodyIntensity > 0);
     const width = gridCell[0] * stepLength;
     if (width > 0 && volume.scatter > 0 && lighting) addScatteredLight(volume, x, y, z, directionX, directionY, directionZ, width, throughput, emitted);
-    blackbodyRadiance(gridCell[1] * volume.temperatureScale, blackbody);
     const flameWidth = gridCell[2] * stepLength;
     const blackbodyWidth = volume.blackbodyIntensity * volume.emissionStrength * stepLength;
+    if (volume.emissionRamp) addRampLight(volume, gridCell[rampSourceChannel(volume.emissionRamp.source)], stepLength, throughput, emitted);
     for (let channel = 0; channel < 3; channel++) {
-      emitted[channel] += throughput[channel] * (volume.emission[channel] * volume.emissionStrength * flameWidth + blackbody[channel] * blackbodyWidth);
+      emitted[channel] += throughput[channel] * (volume.emission[channel] * volume.emissionStrength * flameWidth + gridCell[3 + channel] * blackbodyWidth);
       throughput[channel] *= Math.exp(-volume.absorption[channel] * volume.density * width);
     }
   }
@@ -302,11 +335,46 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
         if (volume.scatter > 0 && lighting) {
           addScatteredLight(volume, originX + directionX * distance, originY + directionY * distance, originZ + directionZ * distance, directionX, directionY, directionZ, width, throughput, emitted);
         }
+        if (volume.emissionRamp) addRampLight(volume, profile, stepLength, throughput, emitted);
         for (let channel = 0; channel < 3; channel++) {
           emitted[channel] += throughput[channel] * volume.emission[channel] * volume.emissionStrength * width;
           throughput[channel] *= Math.exp(-volume.absorption[channel] * volume.density * width);
         }
       }
     }
+  };
+}
+
+/**
+ * Builds the function that dims the sun's direct light at a surface by the local volumes that cast shadows (#1047), or returns null when none does.
+ * It writes `exp(-depth)` per channel into `out`, where depth sums, over the box and sphere volumes with `castShadow` true, the optical depth between
+ * the point and the sun from midpoint taps of the saturated profile with its noise. The rasterizer's `localVolumeSurfaceShadow` repeats it
+ * (its post pass scales the surface colour by mix(1, exp(-depth), sun visibility): the sky and fill light reach the frame after it and stay as they were).
+ */
+export function createLocalVolumeSurfaceShadow(volumes) {
+  const casters = volumes.filter(volume => volume.castShadow === true && !volume.mesh && volume.shape !== 'mesh' && (volume.shape !== 'grid' || volume.gridData));
+  if (casters.length === 0) return null;
+  const span = new Float64Array(2);
+  const depth = new Float64Array(3);
+  return function writeSurfaceShadow(x, y, z, directionX, directionY, directionZ, out) {
+    depth.fill(0);
+    for (const volume of casters) {
+      if (!localVolumeInterval(volume, x, y, z, directionX, directionY, directionZ, Infinity, span)) continue;
+      const entry = Math.max(span[0], 0);
+      const length = span[1] - entry;
+      if (length <= 0) continue;
+      // A grid reads its simulated density as it is, at its own tap count and strength; a box or sphere saturates its faded skin and counts its depth LOCAL_VOLUME_SHADOW_STRENGTH times.
+      const isGrid = volume.shape === 'grid';
+      const taps = isGrid ? LOCAL_VOLUME_GRID_SHADOW_TAPS : LOCAL_VOLUME_SURFACE_SHADOW_TAPS;
+      const strength = isGrid ? 1 : LOCAL_VOLUME_SHADOW_STRENGTH;
+      let profileSum = 0;
+      for (let tap = 0; tap < taps; tap++) {
+        const distance = entry + length * (tap + 0.5) / taps;
+        const profile = localVolumeProfile(volume, x + directionX * distance, y + directionY * distance, z + directionZ * distance, true);
+        profileSum += isGrid ? profile : Math.min(profile * LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, 1);
+      }
+      for (let channel = 0; channel < 3; channel++) depth[channel] += strength * volume.absorption[channel] * volume.density * profileSum * length / taps;
+    }
+    for (let channel = 0; channel < 3; channel++) out[channel] = Math.exp(-depth[channel]);
   };
 }

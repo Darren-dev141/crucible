@@ -91,15 +91,16 @@ function ground() {
 }
 
 async function tracedAt(volumeTime) {
-  const localVolumes = [{ shape: 'grid', frames: ['trace-0', 'trace-1', 'trace-2'], fps: 2, loop: false, center: [0, 1.5, 0], size: [20, 1, 20], steps: 16 }];
+  const localVolumes = [{ shape: 'grid', frames: ['trace-0', 'trace-1', 'trace-2'], fps: 2, loop: false, center: [0, 1.5, 0], size: [20, 1, 20], steps: 128 }];
   const { linear } = await renderPathTracedImage({ parts: ground(), environment: { localVolumes, volumeTime }, camera: LOOKING_DOWN }, IMAGE);
   return Array.from(linear);
 }
 
 test('the CPU path tracer draws the frame its time selects, the same pixels every time, and holds the last frame', async () => {
-  registerUniformFrame('trace-0', 0);
-  registerUniformFrame('trace-1', 1);
-  registerUniformFrame('trace-2', 2);
+  const deep = [4, 128, 4]; // 128 voxels deep, so the half voxel ramp at the faces (#1752) stays under the tolerance
+  registerUniformFrame('trace-0', 0, deep);
+  registerUniformFrame('trace-1', 1, deep);
+  registerUniformFrame('trace-2', 2, deep);
   const first = await tracedAt(0);
   const second = await tracedAt(0.5);
   const third = await tracedAt(1);

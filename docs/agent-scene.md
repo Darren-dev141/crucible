@@ -66,7 +66,7 @@ Call `loadAgentSceneModules(operations)` before `apply` when the operations add 
 ## Recipe contract
 
 The recipe must contain `format`, `schemaVersion`, `geometries`, `materials`, and `nodes`.
-The optional `camera` object supplies a perspective camera, or an orthographic one with `projection: 'orthographic'` and `orthoScale` (view height in metres, default 4). The lens is `fov` (vertical degrees) or `focalLength` in millimetres with `sensorWidth` (default 36); giving both is an error. `shift: [x, y]` moves the frame by a fraction of its width and height, positive right and up. `fStop` (0.7 to 64) turns on depth of field focused on `target` (1.4 or lower is full blur) and cannot be combined with `effects.depthOfField.blur`. The path tracer draws perspective cameras without shift.
+The optional `camera` object supplies a perspective camera, or an orthographic one with `projection: 'orthographic'` and `orthoScale` (view height in metres, default 4). The lens is `fov` (vertical degrees) or `focalLength` in millimetres with `sensorWidth` (default 36); giving both is an error. `shift: [x, y]` moves the frame by a fraction of its width and height, positive right and up. `fStop` (0.7 to 64) turns on depth of field focused on `target` (1.4 or lower is full blur); `focusDistance` (metres along the view axis, positive, needs `fStop`) puts the focus plane there instead, so the subject can stay sharp without moving `target`, in the rasterizer and the path tracer alike (it is not the `effects.depthOfField.focusDistance` of the blur effect, nor a motion track: the lens keeps it while camera tracks move the camera) and cannot be combined with `effects.depthOfField.blur`. The path tracer draws perspective cameras without shift.
 All objects reject unknown keys.
 Inputs must contain plain, finite, acyclic JSON data without accessors, sparse arrays, or executable values.
 JSON nesting has a fixed maximum of 64 levels.
@@ -239,7 +239,7 @@ Normal transforms must also remain finite.
 Cached local geometry bounds provide a conservative world Float32 check from eight corners per mesh.
 The check bounds the sum of absolute matrix products, so intermediate shader arithmetic cannot overflow before cancellation.
 
-The camera contains `eye`, `target`, `up`, `fov`, `near`, and `far`, plus the optional `projection`, `orthoScale`, `focalLength`, `sensorWidth`, `shift` and `fStop` when the recipe sets them.
+The camera contains `eye`, `target`, `up`, `fov`, `near`, and `far`, plus the optional `projection`, `orthoScale`, `focalLength`, `sensorWidth`, `shift`, `fStop` and `focusDistance` when the recipe sets them.
 Its defaults are `[4, 3, 5]`, `[0, 0, 0]`, `[0, 1, 0]`, `45`, `0.1`, and `1000`.
 FOV uses degrees and ranges between zero and 180.
 The clipping range must satisfy `0 < near < far` at Float32 precision.
@@ -300,6 +300,7 @@ A node with an `asset` field places a GLB from the `--assets` catalog inside the
 ```
 
 - `id` is an id from `scene_asset_catalog`. `materials` override source materials by glTF material name (`color`, `metallic`, `roughness`, `opacity`, `emission`, `emissiveColor`, and `tag`: `foliage` or `grass` makes the leaves of an imported tree sway in `environment.wind` and cast moving shadows, like grown ones); `scene_inspect` lists the names. Placements with the same overrides share one material. An override with an `id` (1 to 128 characters, one per placement, not an existing material id) gets a material of its own that a `motion` material track names: `{ "kind": "material", "id": "stool-heat", "property": "emission" }` (also `emissiveColor`, `color`, `metallic`, `roughness`) fades a heat glow without another `scene_create`; textures and shading stay.
+- `flatten` flattens every material of the placement in one call, so an imported asset with many materials needs no override per name: `{ "unlit": true }` draws them without lighting, `{ "color": [0.8, 0.8, 0.8] }` paints them one linear colour, and both together give a flat unlit silhouette for a sketch-to-3D composite. It drops normal, metallic-roughness, occlusion and emissive maps and any glow; `color` also drops the base map, and `unlit` alone keeps it. Other placements in the scene are unchanged, and a named override in `materials` still wins over `flatten`. To flatten the whole scene, give each placement the same `flatten`.
 - `emissionMask` on an override (and on a recipe material) makes the glow follow a ramp along one axis: `{ "axis": "y", "from": 0.2, "to": 0.5 }` multiplies `emission` by a smooth step that is 0 at `from` and 1 at `to` (a `from` above `to` flips it), so a part glows only at the end that would cool last while its texture and shading stay. The axis and the numbers are metres in the part's own space (the coordinates its mesh stores, at the placement's scale), so read them from the bounds in `scene_inspect`. Without `emissionMask` nothing changes and the shader pays nothing. The rasterizer applies it; the path tracers and GLB export ignore it (the path tracer says so in its notes). Errors name the field and what to pass, such as `emissionMask.axis` needing `x`, `y` or `z`.
 - Placements of the same asset share geometry and materials, so they draw as one instanced batch per material (`drawBatches` in the render status stays flat as copies are added). Skins and morphs keep working.
 - `clip` plays that clip, held at its first frame until scene time `start`, then at `speed`, looping unless `loop` is false. Each placement that plays a clip gets a decoded copy of its own (its geometry is not shared), because a pose is state of one decoded asset. A seek gives the same frame as playing to that time. `set-motion` tracks still move the node itself, so a walking figure is a clip plus a motion track on the same node.
@@ -400,7 +401,7 @@ Final resource references and hierarchy must be valid before publication.
 | --- | --- |
 | `set-node` | `id`, optional `translation`, `rotation`, `scale`, `parent`, `label`, `geometry`, `material` |
 | `set-material` | `id`, optional `color`, `metallic`, `roughness`, `emission`, `emissiveColor`, `pattern`, `map` |
-| `set-camera` | Optional `eye`, `target`, `up`, `fov`, `near`, `far`, `projection`, `orthoScale`, `focalLength`, `sensorWidth`, `shift`, `fStop` directly on the command; `focalLength` replaces `fov` and `fov` replaces `focalLength` |
+| `set-camera` | Optional `eye`, `target`, `up`, `fov`, `near`, `far`, `projection`, `orthoScale`, `focalLength`, `sensorWidth`, `shift`, `fStop`, `focusDistance` directly on the command; `focalLength` replaces `fov` and `fov` replaces `focalLength` |
 | `add-geometry` | `geometry`, containing a complete geometry record |
 | `remove-geometry` | `id` |
 | `add-material` | `material`, containing a complete material record |

@@ -174,10 +174,10 @@ thickness. Replace the two holes by three round holes, 0.02 m in diameter, going
     id: 'workshop',
     prompt: `A small workshop scene on a square floor slab 3 m by 3 m and 0.05 m thick, with its top face 0.05 m above the
 ground (Y = 0). The scene is centred on X = 0 and Z = 0. On the slab stand a table and a chair, plus a mug. The table top is 1.2 m
-long (X), 0.6 m deep (Z) and 0.04 m thick, with its upper surface 0.75 m above the slab; four square legs, 0.05 m on a
+long (X), 0.6 m deep (Z) and 0.04 m thick, with its upper surface 0.75 m above the slab top (Y = 0.8); four square legs, 0.05 m on a
 side, run from the slab to the underside of the top, their outer faces 0.05 m in from the top's edges. The table is centred
 on the slab. The chair sits 0.8 m toward +Z from the table's centre: its seat is 0.4 m square and 0.03 m thick, with the
-upper surface 0.45 m above the slab, on four square legs 0.04 m on a side in the seat's corners, flush with its edges
+upper surface 0.45 m above the slab top (Y = 0.5), on four square legs 0.04 m on a side in the seat's corners, flush with its edges
 and stopping at the underside of the seat. The mug is a closed solid cylinder 0.08 m in diameter and 0.1 m tall, standing
 on the table top at X = 0.3, Z = -0.05. Every object rests on what is below it, and the objects do not overlap.`,
     checks: [

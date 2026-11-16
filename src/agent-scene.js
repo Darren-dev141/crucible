@@ -467,6 +467,12 @@ function checkCameraLens(camera) {
   if (camera.fStop !== undefined && !(Number.isFinite(camera.fStop) && camera.fStop >= 0.7 && camera.fStop <= 64)) {
     throw invalidField('camera.fStop', camera.fStop, 'a number from 0.7 to 64, such as 2.8 (smaller numbers blur more)');
   }
+  if (camera.focusDistance !== undefined) {
+    if (camera.fStop === undefined) throw invalidField('camera.focusDistance', camera.focusDistance, 'a field used with fStop, such as fStop 2.8; add fStop or remove focusDistance');
+    if (!(Number.isFinite(camera.focusDistance) && camera.focusDistance > 0)) {
+      throw invalidField('camera.focusDistance', camera.focusDistance, 'a positive distance in metres along the view axis, such as 3.5 (default: the distance to target)');
+    }
+  }
 }
 
 function cameraFrom(value = {}) {
