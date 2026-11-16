@@ -108,7 +108,7 @@ A 224 MiB GLB (5.4 million vertices, 65 small textures) takes about 460 MB of th
 
 A file over `maxBytes` (256 MiB by default) fails before decoding with an error that names the size, the limit and the value to pass. A file with too many texture pixels is scaled down to `maxTexturePixels`, or fails naming that option.
 
-`scripts/render-media.mjs --scene file` serves a GLB above 32 MiB from a local HTTP server that streams it from disk. Handing a file that size to the page through a Playwright route copies it through the browser protocol as one message and closed the whole browser tab (a 225 MB file did, with nothing else loading).
+`scripts/render-media.mjs --scene file` and `scripts/render-file-native.mjs` serve a GLB above 32 MiB from a local HTTP server that streams it from disk. Handing a file that size to the page through a Playwright route copies it through the browser protocol as one message and closed the whole browser tab (a 225 MB file did, with nothing else loading).
 
 ## Loading a large scene without a long freeze
 

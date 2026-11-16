@@ -9,7 +9,7 @@ import { createServer } from 'node:net';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { prepareFileScene } from './file-scene.mjs';
+import { prepareServedFileScene } from './file-scene.mjs';
 import { readNativeCapacity } from './native-capacity.mjs';
 import { collectExportChunks, traceFrameNative } from './agent-native-trace.mjs';
 import { chunkedTriangleBound } from './native-bake-page.js';
@@ -165,12 +165,15 @@ async function main() {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const tracer = await loadNativeTracer();
   const { chromium } = await import('playwright');
-  const world = prepareFileScene({ configPath: options.config });
-  const { description } = world;
-  const camera = options.camera ?? { eye: description.eye, target: description.target, fov: description.frame?.fov ?? 45 };
   const { server, port } = await startViteServer(root);
   let browser;
+  let world;
   try {
+    // A GLB above LARGE_ASSET_BYTES must reach the page over HTTP: a Playwright route copies it through the browser protocol,
+    // which closed the tab for a file of about 80 MiB (#1811), the same reason scripts/render-media.mjs serves it this way.
+    world = await prepareServedFileScene({ configPath: options.config, pageOrigin: `http://127.0.0.1:${port}` });
+    const { description } = world;
+    const camera = options.camera ?? { eye: description.eye, target: description.target, fov: description.frame?.fov ?? 45 };
     const launchArguments = ['--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--no-sandbox'];
     if (options.softwareGl) launchArguments.push('--use-angle=swiftshader');
     browser = await chromium.launch({ headless: true, ...(options.chrome ? { executablePath: options.chrome } : {}), args: launchArguments });
@@ -212,6 +215,7 @@ async function main() {
     console.log(`FILE_NATIVE ${JSON.stringify(report)}`);
   } finally {
     await browser?.close();
+    await world?.close();
     server.kill();
   }
 }

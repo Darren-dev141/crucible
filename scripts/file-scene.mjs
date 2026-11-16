@@ -1,6 +1,6 @@
 import { readFileSync, existsSync, statSync, openSync, fstatSync, closeSync } from 'node:fs';
 import { resolve, dirname, join, basename } from 'node:path';
-import { LARGE_ASSET_BYTES } from './asset-server.mjs';
+import { LARGE_ASSET_BYTES, startAssetServer } from './asset-server.mjs';
 
 const ASSET_FIELDS = ['glb', 'hdri'];
 const MAXIMUM_KEY_FILE_BYTES = 64 * 1024 ** 2;
@@ -81,4 +81,21 @@ function routeStagedParts(description, route) {
   }
   delete description.hdriPreview;
   delete description.glbFirstView;
+}
+
+/**
+ * Reads scene.json and serves every asset above `largeAssetBytes` from a local HTTP server instead of a page route, so a big
+ * GLB never goes through the browser protocol (it closed the tab at about 80 MiB, #1811). `close()` stops the server.
+ */
+export async function prepareServedFileScene({ configPath, root, pageOrigin, largeAssetBytes = LARGE_ASSET_BYTES }) {
+  const assetPaths = [];
+  const assetServer = await startAssetServer(assetPaths, { pageOrigin });
+  try {
+    const world = prepareFileScene({ configPath, root, largeAssetOrigin: assetServer.origin, largeAssetBytes });
+    assetPaths.push(...world.assets);
+    return { ...world, close: assetServer.close };
+  } catch (error) {
+    await assetServer.close();
+    throw error;
+  }
 }
