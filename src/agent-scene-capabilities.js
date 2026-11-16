@@ -305,6 +305,7 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
       flush: 'to, side, offset: own face on side level with the same face of the target',
       align: 'to, axis, at (min, center, max), offset: anchor on one axis',
       centered: 'to, axes (default x, y, z): centre on those axes',
+      level: 'at (bottom, center, top), y: no to; that face of the part sits at world height y',
     }),
     notes: 'Region (mesh tag): target faces only. One relation per axis, no loops, mesh nodes only. A relation sets translation on its axes. set-node with relations [] removes them.',
   }),

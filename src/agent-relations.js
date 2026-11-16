@@ -6,7 +6,8 @@ import { invalidField } from './field-error.js';
 // mesh node (or from the faces that carry one of its tags). Relations are solved after geometry exists, in
 // dependency order, and again on every edit. The same recipe always solves to the same translations.
 
-export const RELATION_KINDS = Object.freeze(['attach', 'flush', 'align', 'centered', 'gap']);
+export const RELATION_KINDS = Object.freeze(['attach', 'flush', 'align', 'centered', 'gap', 'level']);
+export const LEVEL_FACES = Object.freeze(['bottom', 'center', 'top']);
 export const RELATION_SIDES = Object.freeze(['+x', '-x', '+y', '-y', '+z', '-z']);
 export const RELATION_LIMITS = Object.freeze({ maxPerNode: 8, maxNodes: 256, maxOffset: 1e6 });
 
@@ -18,6 +19,7 @@ const KIND_FIELDS = Object.freeze({
   flush: ['side', 'offset'],
   align: ['axis', 'at', 'offset'],
   centered: ['axes'],
+  level: ['at', 'y'],
 });
 
 function axisIndex(axis) {
@@ -30,6 +32,22 @@ function sideAxis(side) {
 
 function relationPath(nodeIndex, index) {
   return `nodes[${nodeIndex}].relations[${index}]`;
+}
+
+// A level relation names no target: it puts the bottom, centre or top face of the part's own world bounds at a world height.
+function normalizeLevel(path, relation) {
+  for (const key of Object.keys(relation)) {
+    if (!['kind', 'at', 'y'].includes(key)) {
+      throw invalidField(`${path}.${key.slice(0, 48)}`, relation[key], 'a field a level relation takes: at, y (it names no "to")', TypeError);
+    }
+  }
+  if (!LEVEL_FACES.includes(relation.at)) {
+    throw invalidField(`${path}.at`, relation.at, `one of ${LEVEL_FACES.join(', ')}, the face of the part that sits at height y`, TypeError);
+  }
+  if (typeof relation.y !== 'number' || !Number.isFinite(relation.y) || Math.abs(relation.y) > RELATION_LIMITS.maxOffset) {
+    throw invalidField(`${path}.y`, relation.y, `a finite world height in metres within +-${RELATION_LIMITS.maxOffset}, such as 0.5`);
+  }
+  return { kind: 'level', at: relation.at, y: relation.y };
 }
 
 function normalizeRelation(nodeIndex, index, relation) {
@@ -45,6 +63,9 @@ function normalizeRelation(nodeIndex, index, relation) {
     if (!allowed.includes(key)) {
       throw invalidField(`${path}.${key.slice(0, 48)}`, relation[key], `a field a ${relation.kind} relation takes: ${allowed.join(', ')}`, TypeError);
     }
+  }
+  if (relation.kind === 'level') {
+    return normalizeLevel(path, relation);
   }
   if (typeof relation.to !== 'string' || !relation.to) {
     throw invalidField(`${path}.to`, relation.to, 'the ID of the part it is placed against, such as "body"', TypeError);
@@ -96,6 +117,8 @@ export function relationAxes(relation) {
       return [sideAxis(relation.side)];
     case 'align':
       return [axisIndex(relation.axis)];
+    case 'level':
+      return [1];
     default:
       return relation.axes.map(axisIndex);
   }
@@ -121,7 +144,7 @@ function dependencyOrder(nodesById, relatedIds) {
       visit(node.parent);
     }
     for (const relation of node.relations ?? []) {
-      visit(relation.to);
+      if (relation.kind !== 'level') visit(relation.to);
     }
     path.pop();
     finished.add(nodeId);
@@ -173,14 +196,14 @@ export function normalizeRelations(nodes) {
     }
     const decided = new Map();
     normalized.forEach((relation, index) => {
-      const referenced = nodesById.get(relation.to);
-      if (relation.to === node.id) {
+      const referenced = relation.kind === 'level' ? undefined : nodesById.get(relation.to);
+      if (relation.kind !== 'level' && relation.to === node.id) {
         throw invalidField(`${relationPath(nodeIndex, index)}.to`, relation.to, 'the ID of another part, such as "body", not its own node');
       }
-      if (!referenced) {
+      if (!referenced && relation.kind !== 'level') {
         throw invalidField(`${relationPath(nodeIndex, index)}.to`, relation.to, 'the ID of a node in this recipe; list them with scene_inspect, or drop the relation');
       }
-      if (referenced.geometry === undefined) {
+      if (referenced && referenced.geometry === undefined) {
         throw invalidField(`${relationPath(nodeIndex, index)}.to`, relation.to, 'the ID of a mesh node, such as a box, since this one is a group with no geometry');
       }
       for (const axis of relationAxes(relation)) {
@@ -224,6 +247,10 @@ function targetValue(bounds, axis, anchor) {
 function constraintsFor(relation, selfBounds, targetBounds) {
   const offset = relation.offset ?? 0;
   const wanted = [];
+  if (relation.kind === 'level') {
+    const anchor = { bottom: 'min', center: 'center', top: 'max' }[relation.at];
+    return [{ axis: 1, anchor, value: relation.y, delta: relation.y - targetValue(selfBounds, 1, anchor) }];
+  }
   const sideAnchors = side => {
     const axis = sideAxis(side);
     const outward = side[0] === '+';
@@ -277,6 +304,12 @@ export function solveRelations(nodes, worldBounds) {
     const delta = [0, 0, 0];
     const selfBounds = worldBounds(node, worldMatrixOf(nodeId, nodesById, cache), undefined);
     node.relations.forEach((relation, index) => {
+      if (relation.kind === 'level') {
+        for (const constraint of constraintsFor(relation, selfBounds, undefined)) {
+          delta[constraint.axis] = constraint.delta;
+        }
+        return;
+      }
       const target = nodesById.get(relation.to);
       let targetBounds;
       try {
