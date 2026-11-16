@@ -65,7 +65,8 @@ test('blackbody radiance is dark when cold, red then white as it heats, and brig
   const flame = blackbodyRadiance(3000, [0, 0, 0]);
   assert.ok(ember[0] > ember[1] && ember[1] > ember[2], 'an ember is red');
   assert.ok(flame[2] / flame[0] > ember[2] / ember[0], 'a hotter body is whiter');
-  assert.ok(flame[0] > ember[0] * 15, 'brightness grows with (kelvin / 1500)^4');
+  const luminance = radiance => radiance[0] * 0.2126 + radiance[1] * 0.7152 + radiance[2] * 0.0722;
+  assert.ok(Math.abs(luminance(flame) / luminance(ember) - 16) < 1e-3, 'brightness grows with (kelvin / 1500)^4');
 });
 
 test('a grid volume resolves with its fields and refuses what only the other shapes take', () => {
@@ -140,9 +141,9 @@ test('the path tracer attenuates by the grid density and adds the flame and the 
   const [flameRed, flameGreen] = await centerRadiance(ground(0), [{ ...slab, grid: 'slab-flame', emission: [0.5, 0.25, 0], emissionStrength: 2 }]);
   assert.ok(Math.abs(flameRed - 1) < 2e-3, `red ${flameRed}`);
   assert.ok(Math.abs(flameGreen - 0.5) < 2e-3, `green ${flameGreen}`);
-  const [glowRed] = await centerRadiance(ground(0), [{ ...slab, grid: 'slab-flame', emissionStrength: 1, blackbodyIntensity: 1, temperatureScale: 0.5 }]);
-  const expected = blackbodyRadiance(1500, [0, 0, 0])[0];
-  assert.ok(Math.abs(glowRed - expected) < 2e-3 * expected, `blackbody red ${glowRed}, expected ${expected}`);
+  const glow = await centerRadiance(ground(0), [{ ...slab, grid: 'slab-flame', emissionStrength: 1, blackbodyIntensity: 1, temperatureScale: 0.5 }]);
+  const expected = blackbodyRadiance(1500, [0, 0, 0]);
+  expected.forEach((value, channel) => assert.ok(Math.abs(glow[channel] - value) <= 2e-3 * value, `blackbody channel ${channel} ${glow[channel]}, expected ${value}`));
 });
 
 test('a grid volume is zero outside its box and takes the profile from the density', () => {

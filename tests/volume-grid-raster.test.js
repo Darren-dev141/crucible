@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { freePort } from './helpers/free-port.js';
 import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
-import { encodeVolumeGrid } from '../src/volume-grid.js';
+import { blackbodyRadiance, encodeVolumeGrid } from '../src/volume-grid.js';
 
 async function startServer(port) {
   const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -83,7 +83,11 @@ test('a constant grid draws like the box volume of the same density and emission
     const page = await browser.newPage({ viewport: { width: 64, height: 64 } });
     await page.goto(`http://127.0.0.1:${port}/`);
     const place = { center: [0, 0, 1.5], steps: 16 };
-    const [plain, smokeBox, smokeGrid, glowBox, glowGrid, hot, cold] = await drawScenarios(
+    // The light of the 2500 K grid (halfway between two table nodes) as the CPU path tracer's blackbodyRadiance gives it, written as a box's constant emission.
+    const fire = blackbodyRadiance(2500, [0, 0, 0]);
+    const fireStrength = Math.max(...fire) * 0.05;
+    const fireHue = fire.map(value => value / Math.max(...fire));
+    const [plain, smokeBox, smokeGrid, glowBox, glowGrid, hot, cold, fireGrid, fireBox] = await drawScenarios(
       page,
       { smoke: constantGrid({ density: 1 }), flame: constantGrid({ density: 0, flame: 1 }), hot: constantGrid({ density: 0, temperature: 2500 }) },
       [
@@ -94,9 +98,11 @@ test('a constant grid draws like the box volume of the same density and emission
         [{ shape: 'grid', ...place, size: [1.2, 1.2, 1], density: 0, grid: 'flame', emission: [1, 0.4, 0.1], emissionStrength: 1.5 }],
         [{ shape: 'grid', ...place, size: [1.2, 1.2, 1], density: 0, grid: 'hot', blackbodyIntensity: 1, emissionStrength: 0.2 }],
         [{ shape: 'grid', ...place, size: [1.2, 1.2, 1], density: 0, grid: 'hot', blackbodyIntensity: 0, emissionStrength: 0.2 }],
+        [{ shape: 'grid', ...place, size: [1.2, 1.2, 1], density: 0, grid: 'hot', blackbodyIntensity: 1, emissionStrength: 0.05 }],
+        [{ shape: 'box', ...place, size: [1.2, 1.2, 1], density: 0, falloff: 0, emission: fireHue, emissionStrength: fireStrength }],
       ],
     );
-    for (const result of [plain, smokeBox, smokeGrid, glowBox, glowGrid, hot, cold]) assert.equal(result.glError, 0);
+    for (const result of [plain, smokeBox, smokeGrid, glowBox, glowGrid, hot, cold, fireGrid, fireBox]) assert.equal(result.glError, 0);
     assert.ok(smokeGrid.center[0] < plain.center[0] - 20, 'the grid density darkens the wall behind it');
     assert.ok(Math.abs(smokeGrid.center[0] - smokeBox.center[0]) <= 3, `grid ${smokeGrid.center[0]} against box ${smokeBox.center[0]}`);
     assert.ok(Math.abs(glowGrid.center[0] - glowBox.center[0]) <= 3, `grid glow ${glowGrid.center[0]} against box glow ${glowBox.center[0]}`);
@@ -104,6 +110,7 @@ test('a constant grid draws like the box volume of the same density and emission
     assert.deepEqual(cold.center, plain.center, 'blackbodyIntensity 0 draws no temperature glow');
     assert.ok(hot.center[0] > plain.center[0] + 20, 'a hot grid glows');
     assert.ok(hot.center[0] > hot.center[2], 'blackbody light is warm');
+    fireGrid.center.forEach((value, channel) => assert.ok(Math.abs(value - fireBox.center[channel]) <= 3, `the shader's blackbody ${fireGrid.center} against the tracer's ${fireBox.center}`));
   } finally {
     await browser?.close();
     server.kill();
