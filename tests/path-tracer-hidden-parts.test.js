@@ -5,6 +5,7 @@ import test from 'node:test';
 
 import { box } from '../src/geometry.js';
 import { buildTraceScene } from '../src/path-tracer-scene.js';
+import { createEnvironmentMap } from '../src/environment.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 
 function placed(translation, scale) {
@@ -62,4 +63,15 @@ test('a hidden part that a mesh volume names still shapes the volume', async () 
   assert.ok(inside < lit * 0.9, `smoke fills the hidden box: ${inside} against ${lit}`);
   const sceneWithVolume = buildTraceScene([floor(), hiddenBox()], volumeEnvironment);
   assert.equal(sceneWithVolume.indices.length, buildTraceScene([floor()], environment).indices.length, 'the hidden box is not a wall');
+});
+
+test('a scene whose parts are all hidden traces the sky alone, and a scene with no parts still throws', async () => {
+  const allHidden = [hiddenBox(), { ...floor(), visible: false }];
+  const behindCamera = [{ ...floor(), matrix: placed([0, 50, 0], [20, 0.1, 20]) }];
+  const skyEnvironment = { map: createEnvironmentMap({ width: 8, height: 4, data: new Float32Array(8 * 4 * 3).fill(0.7), intensity: 1 }) };
+  const hidden = await renderPathTracedImage({ parts: allHidden, environment: skyEnvironment, camera }, OPTIONS);
+  const sky = await renderPathTracedImage({ parts: behindCamera, environment: skyEnvironment, camera }, OPTIONS);
+  assert.deepEqual(Array.from(hidden.linear), Array.from(sky.linear), 'the same pixels as a scene with nothing in view');
+  assert.ok(Math.abs(hidden.linear[0] - 0.7) < 0.05, `the sky colour: ${hidden.linear[0]}`);
+  assert.throws(() => buildTraceScene([], environment), /takes 1 to/);
 });

@@ -596,6 +596,14 @@ export function refuseLocalVolumes(scene, tracerName) {
 }
 
 // The rasterizer's own test (renderer.js `isHidden`): a part hides by `visible: false` or by the `visibility.visible` that a posed scene keys.
+// One triangle with all three corners on the origin has no area, so no ray hits it and no shadow ray stops at it.
+const UNHITTABLE_PLACEHOLDER_PART = Object.freeze({
+  name: 'all parts hidden',
+  geometry: Object.freeze({ positions: new Float32Array(9), normals: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) }),
+  matrix: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
+  material: Object.freeze({ tag: 'surface', color: Object.freeze([0, 0, 0]), metallic: 0, roughness: 1, emission: 0 }),
+});
+
 function isHiddenPart(part) {
   return part?.visible === false || part?.visibility?.visible === false;
 }
@@ -857,7 +865,9 @@ export async function buildTraceSceneForDevice(allParts, environment, gpuModule)
 export function buildTraceScene(allParts, environment = {}, options = {}) {
   const limits = { ...resolveTriangleLimits(options), instances: resolveInstanceLimit(options), lights: resolveLightLimit(options), parts: resolvePartLimit(options) };
   const { volumes: localVolumes, boundsOnlyParts } = resolveTraceLocalVolumes(environment.localVolumes, allParts, environment.volumeTime ?? 0, environment.volumeShutter ?? 0);
-  const parts = boundsOnlyParts.length ? allParts.filter(part => !boundsOnlyParts.includes(part)) : allParts;
+  const shownParts = boundsOnlyParts.length ? allParts.filter(part => !boundsOnlyParts.includes(part)) : allParts;
+  // A frame where every part is hidden traces the sky or background alone, like the rasterizer (#1806). The BVH and the native kernel need one triangle.
+  const parts = Array.isArray(allParts) && allParts.length > 0 && shownParts.length === 0 ? [UNHITTABLE_PLACEHOLDER_PART] : shownParts;
   const tryInstancing = options.instancing === true && Array.isArray(parts) && parts.length > 0;
   const geometries = tryInstancing ? parts.map(traceGeometry) : undefined;
   if (tryInstancing && countSharedGeometries(parts, geometries) > 0) return buildInstancedTraceScene(parts, geometries, environment, localVolumes, limits);
