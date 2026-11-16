@@ -1,15 +1,16 @@
 #!/usr/bin/env node
-// Draws the add-explosion recipe in Glaze (the rasterizer) and scores its peak frame against a Cycles reference frame (#1736): how much the
-// cloud breaks up (silhouette roughness), how fast it fades at its edge, how far its luminance distribution is from the reference's, and an RMSE
+// Draws the add-explosion recipe in Glaze (the rasterizer) and scores its peak frame against a Cycles render of the SAME scene, camera, gas and frame (#1736):
+// how much the cloud breaks up (silhouette roughness), how fast it fades at its edge, how far its luminance distribution is from the reference's, and an RMSE
 // of the two after both are centred and scaled to the same cloud size (scripts/explosion-breakup-metrics.mjs explains the reduction).
 //
-//   git show origin/evidence-pr-1720:look-comparison.png > out/look-comparison.png
-//   bash ~/.agents/tools/gpu-lock.sh node scripts/measure-explosion-breakup.mjs --reference out/look-comparison.png --out artifacts/explosion-breakup/before
+//   GPU_LOCK_WEIGHT=heavy bash ~/.agents/tools/gpu-lock.sh node scripts/measure-explosion-breakup.mjs --out artifacts/explosion-breakup/before
 //
-// The reference is the first panel (0, 0, 640, 360) of look-comparison.png, cropped to the fireball (--crop x,y,width,height inside the panel).
-// --times lists the motion times to draw (the first one is scored against the reference, the others are only saved), --backend gpu|cpu.
-// Sparks are left out of the recipe so only the gas is measured. Prints one JSON object and saves each frame as frame-<time>.png.
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+// The Cycles frame (scripts/explosion-cycles-reference.mjs, Blender 5.3 at below normal priority) shows the grid frame the recipe plays at the first time, so it
+// moves with the bake: the numbers say how well Glaze matches Cycles on that gas, and the Cycles row of the report says how ragged that gas is in truth.
+// Not shared between the two: the sky (Cycles has a flat colour), the sun and the sparks, dust, rubble and debris, which only Glaze draws (sparks are off).
+// --times lists the motion times to draw in Glaze (the first one is scored), --backend gpu|cpu, --blender <exe>, --samples <n>.
+// Prints one JSON object and saves frame-<time>.png and the Cycles render as cycles.png.
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
@@ -17,33 +18,34 @@ import { createAgentRuntime } from './agent-runtime.mjs';
 import { createAgentMcpServer } from './mcp-server.mjs';
 import { decodePng } from '../bench/agent-modeling/png-check.mjs';
 import { compareFrames, describeFrame, luminanceImage } from './explosion-breakup-metrics.mjs';
+import { renderCyclesReference } from './explosion-cycles-reference.mjs';
 
-const REFERENCE_PANEL = { x: 0, y: 0, width: 640, height: 360 };
-const DEFAULT_CROP = '170,120,280,200';
+const CYCLES_SIZE = { width: 960, height: 540 };
+const FLOOR_COLOR = [0.12, 0.11, 0.1];
 const FRAME_SIZE = { width: 1024, height: 576 };
 
 // The scene the evidence stills use: a floor disc and a camera that looks at the blast from above and to the side.
 const SCENE = {
   format: 'crucible.scene', schemaVersion: 1,
   geometries: [{ id: 'disc', type: 'cylinder' }],
-  materials: [{ id: 'floor', color: [0.12, 0.11, 0.1], roughness: 1 }],
+  materials: [{ id: 'floor', color: FLOOR_COLOR, roughness: 1 }],
   nodes: [{ id: 'floor', geometry: 'disc', material: 'floor', scale: [9, 0.1, 9], translation: [0, -0.05, 0] }],
   camera: { eye: [0, 3.2, 9], target: [0, 1.6, 0], fov: 40 },
 };
 
 function parseArguments(argv) {
-  const options = { backend: 'gpu', times: [0.45], crop: DEFAULT_CROP, size: 4, seed: 1, out: 'artifacts/explosion-breakup/run' };
+  const options = { backend: 'gpu', times: [0.45], samples: 128, size: 4, seed: 1, out: 'artifacts/explosion-breakup/run' };
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index]?.replace(/^--/, '');
-    if (!['reference', 'backend', 'times', 'crop', 'size', 'seed', 'out'].includes(name) || argv[index + 1] === undefined) {
-      throw new Error(`Unknown or incomplete option ${argv[index]}; use --reference <png> --out <folder> [--times 0.45,1.2] [--crop x,y,w,h] [--backend gpu|cpu] [--size 4] [--seed 1].`);
+    if (!['backend', 'times', 'samples', 'size', 'seed', 'out', 'blender'].includes(name) || argv[index + 1] === undefined) {
+      throw new Error(`Unknown or incomplete option ${argv[index]}; use --out <folder> [--times 0.45,1.2] [--backend gpu|cpu] [--size 4] [--seed 1] [--samples 128] [--blender <exe>].`);
     }
     options[name] = argv[index + 1];
   }
   options.times = String(options.times).split(',').map(Number);
   options.size = Number(options.size);
   options.seed = Number(options.seed);
-  if (!options.reference) throw new Error('Pass --reference <png>: the look-comparison.png of the evidence-pr-1720 branch.');
+  options.samples = Number(options.samples);
   return options;
 }
 
@@ -75,22 +77,21 @@ async function drawFrames(options) {
       const image = look.content.find(item => item.type === 'image');
       frames.push({ motionTime, png: Buffer.from(image.data, 'base64') });
     }
-    return frames;
+    const exported = (await call(client, 'scene_export_recipe', { sessionId: created.sessionId })).structuredContent;
+    return { frames, volume: (exported.recipe ?? exported).environment.localVolumes[0] };
   } finally {
     await close();
   }
 }
 
-function referenceCrop(png, cropText) {
-  const [x, y, width, height] = cropText.split(',').map(Number);
-  return luminanceImage(png, { x: REFERENCE_PANEL.x + x, y: REFERENCE_PANEL.y + y, width, height });
-}
-
 const options = parseArguments(process.argv.slice(2));
 await mkdir(options.out, { recursive: true });
-const reference = describeFrame(referenceCrop(decodePng(await readFile(options.reference)), options.crop));
-const frames = await drawFrames(options);
-const report = { backend: options.backend, size: options.size, seed: options.seed, crop: options.crop, times: [] };
+const { frames, volume } = await drawFrames(options);
+const frameIndex = Math.round(options.times[0] * volume.fps);
+const cyclesPng = await renderCyclesReference({ volume, frameIndex, camera: SCENE.camera, floor: 0, floorColor: FLOOR_COLOR, folder: join(options.out, 'cycles-work'), ...CYCLES_SIZE, samples: options.samples, blender: options.blender });
+await copyFile(cyclesPng, join(options.out, 'cycles.png'));
+const reference = describeFrame(luminanceImage(decodePng(await readFile(cyclesPng))));
+const report = { backend: options.backend, size: options.size, seed: options.seed, gridFrame: frameIndex, samples: options.samples, times: [] };
 for (const [position, frame] of frames.entries()) {
   await writeFile(join(options.out, `frame-${frame.motionTime}.png`), frame.png);
   const described = describeFrame(luminanceImage(decodePng(frame.png)));
