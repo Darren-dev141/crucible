@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  SNIPPET_LIMITS, ShaderSnippetError, validateShaderSnippet, validateSnippetUniforms, snippetUniformDeclarations, mapShaderInfoLog,
+  SNIPPET_LIMITS, ShaderSnippetError, validateShaderSnippet, validateSnippetUniforms, snippetUniformDeclarations, mapShaderInfoLog, measureCodeBytes,
 } from '../src/shader-snippet-validator.js';
 import { normalizeUserPasses, buildPassFragment, describeUserPasses, USER_PASS_INPUTS, USER_PASS_CAPABILITIES } from '../src/user-pass.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
@@ -43,6 +43,36 @@ test('the validator refuses each forbidden pattern and says where', () => {
   rejects(`${ENTRY} é`, /not allowed/);
   rejects('x'.repeat(SNIPPET_LIMITS.maxBytes + 1), /limit is 4096/);
   rejects('   ', /empty/);
+});
+
+test('the byte limit counts code, not comments or indentation', () => {
+  const commentLine = `  // ${'a note that explains the next line '.repeat(3)}\n`;
+  const commented = `${commentLine.repeat(60)}/* ${'block '.repeat(200)} */\n${wrap('    float a = 1.0;')}`;
+  assert.ok(commented.length > 6000);
+  const checked = validateShaderSnippet(commented);
+  assert.equal(checked.source.length, commented.length);
+  assert.equal(checked.source.split('\n').length, commented.split('\n').length);
+  assert.ok(!checked.source.includes('note'));
+
+  const indented = wrap(`${' '.repeat(5000)}float a = 1.0;`);
+  assert.doesNotThrow(() => validateShaderSnippet(indented));
+
+  const realCode = wrap('  float a = 1.0;\n'.repeat(300));
+  assert.ok(realCode.length > 5000);
+  rejects(realCode, /The fragment is \d+ bytes \(\d+ after comments and spaces are removed\); the limit is 4096\./);
+  assert.throws(() => validateShaderSnippet(realCode), error => {
+    const [, raw, code] = error.message.match(/is (\d+) bytes \((\d+) after/);
+    assert.equal(Number(raw), realCode.length);
+    assert.equal(Number(code), measureCodeBytes(realCode));
+    assert.ok(Number(code) < Number(raw));
+    return true;
+  });
+
+  rejects(`${commentLine.repeat(2000)}${ENTRY}`, /most accepted, comments included, is 65536/);
+});
+
+test('preprocessor lines stay refused when comments pad the snippet', () => {
+  rejects(`${'// padding\n'.repeat(500)}#define X 1\n${ENTRY}`, /Preprocessor lines \(#\)/, [501, 1]);
 });
 
 test('loops nest and call helpers within the work limit', () => {
