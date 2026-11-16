@@ -19,7 +19,7 @@ export function resolveLocalVolumes(input, label = 'localVolumes') {
 /** The uniform arrays the post shader reads, one vec4 per volume. Pass resolved volumes. */
 export function createLocalVolumeBuffers() {
   const size = MAX_LOCAL_VOLUMES * 4;
-  return { count: 0, blurred: false, meshParts: [], grid: new Float32Array(size), gridVolume: null, gridShutter: 0, centers: new Float32Array(size), extents: new Float32Array(size), absorption: new Float32Array(size), emission: new Float32Array(size), steps: new Float32Array(size), axes: new Float32Array(size * 3), rampSetup: new Float32Array(size), rampColors: new Float32Array(size * LOCAL_VOLUME_RAMP_STOPS) };
+  return { count: 0, blurred: false, meshParts: [], grid: new Float32Array(size), gridVolume: null, gridShutter: 0, kind: 'both', centers: new Float32Array(size), extents: new Float32Array(size), absorption: new Float32Array(size), emission: new Float32Array(size), steps: new Float32Array(size), axes: new Float32Array(size * 3), rampSetup: new Float32Array(size), rampColors: new Float32Array(size * LOCAL_VOLUME_RAMP_STOPS) };
 }
 
 // The emission ramp of volume `index` (#1046): rampSetup holds x the source code (0 none), y the stop count and z, w the source range; rampColors
@@ -46,6 +46,10 @@ export function packLocalVolumes(volumes, buffers) {
   buffers.meshParts = [];
   buffers.gridVolume = null;
   buffers.gridShutter = 0;
+  // Which march the frame needs (#1768): a mesh volume needs neither.
+  const hasGrid = volumes.some(volume => volume.shape === 'grid');
+  const hasShape = volumes.some(volume => volume.shape !== 'grid' && !volume.part);
+  buffers.kind = hasGrid && !hasShape ? 'grid' : (hasShape && !hasGrid ? 'shape' : 'both');
   buffers.grid.fill(0);
   buffers.rampSetup.fill(0);
   buffers.blurred = volumes.some(volume => volume.blur > 0 && volume.density > 0);
