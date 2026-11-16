@@ -13,6 +13,26 @@ function luminanceOf(buffer, index) {
   return 0.2126 * buffer[index * 3] + 0.7152 * buffer[index * 3 + 1] + 0.0722 * buffer[index * 3 + 2];
 }
 
+/**
+ * How noisy a path traced frame is: the root mean square of the per pixel noise (the standard error of each pixel's mean, from the
+ * tracer's variance buffer) divided by the mean luminance of the frame. 0.1 means the typical pixel is off by about 10% of the
+ * frame's average brightness. Returns null when the figure cannot be told: under 2 samples a pixel has no variance, and a black
+ * frame has no light to compare against. Never 0 for those, because 0 would read as a clean frame.
+ */
+export function estimateRelativeNoise({ color, variance, averageSamples }) {
+  if (!(averageSamples >= 2)) return null;
+  const pixelCount = variance.length;
+  let varianceSum = 0;
+  let luminanceSum = 0;
+  for (let pixel = 0; pixel < pixelCount; pixel++) {
+    varianceSum += variance[pixel];
+    luminanceSum += luminanceOf(color, pixel);
+  }
+  const meanLuminance = luminanceSum / pixelCount;
+  if (!(meanLuminance > 0)) return null;
+  return Math.sqrt(varianceSum / pixelCount) / meanLuminance;
+}
+
 function demodulate(color, albedo, pixelCount) {
   const light = new Float32Array(color.length);
   for (let pixel = 0; pixel < pixelCount; pixel++) {

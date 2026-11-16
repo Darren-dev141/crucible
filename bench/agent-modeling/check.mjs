@@ -414,6 +414,12 @@ export function checkOne(check, measures) {
       const everyPart = measures.uv.parts === measures.uv.of;
       return { pass: everyPart && measures.uv.stretch <= check.maxStretch, detail: everyPart ? `stretch ${round(measures.uv.stretch)}` : `${measures.uv.parts}/${measures.uv.of} nodes have UVs` };
     }
+    case 'toolCalled': {
+      // The only check on how the run went, not on the recipe: it needs the run's tool counts, which a bare recipe grade lacks.
+      if (!measures.toolsByName) return { pass: true, detail: 'tool calls not recorded for this grade' };
+      const calls = measures.toolsByName[check.tool] ?? 0;
+      return { pass: calls > 0, detail: `${check.tool} called ${calls} times` };
+    }
     default:
       if (isSceneCheck(check.kind)) return checkSceneState(check, measures.recipe);
       throw new TypeError(`Unknown check kind ${check.kind}.`);
@@ -433,7 +439,7 @@ export function recipeFeatures(recipe) {
 }
 
 /** Grade a recipe: { pass, passed, total, results: [{ kind, label, pass, detail }] }. An invalid recipe fails every check. */
-export async function gradeRecipe(task, recipe) {
+export async function gradeRecipe(task, recipe, toolsByName) {
   let measures;
   try {
     measures = recipe.format === 'crucible.asset' ? await measureAssetRecipe(recipe) : await measureRecipe(recipe);
@@ -447,6 +453,7 @@ export async function gradeRecipe(task, recipe) {
     measures.renderedLook = await measureRenderedLook(recipe).catch(error => ({ drawError: error.message }));
   }
   measures.recipe = recipe;
+  measures.toolsByName = toolsByName;
   const results = task.checks.map(check => ({ kind: check.kind, ...(check.label ? { label: check.label } : {}), ...checkOne(check, measures) }));
   const passed = results.filter(result => result.pass).length;
   return { pass: passed === results.length, passed, total: results.length, results };

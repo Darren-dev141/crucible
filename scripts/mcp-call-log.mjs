@@ -1,6 +1,6 @@
 import { appendFileSync } from 'node:fs';
 
-export const CALL_LOG_ENVIRONMENT_VARIABLE = 'SIXTYSEVENJS_MCP_LOG';
+export const CALL_LOG_ENVIRONMENT_VARIABLE = 'MCP_LOG';
 
 // Result size is the UTF-8 length of the text content plus the base64 length of images: what the agent has to read.
 function resultByteCount(result) {

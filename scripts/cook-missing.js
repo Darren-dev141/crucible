@@ -21,3 +21,11 @@ export function buildJobNativeInput() {
 export function buildFlattenedJobNativeInput() {
   throwMissing();
 }
+
+export function packGridVolumes() {
+  throwMissing();
+}
+
+export function writeGridVolumeKernelParams() {
+  throwMissing();
+}

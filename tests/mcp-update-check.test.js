@@ -50,12 +50,15 @@ test('versions compare numerically and ignore anything that is not a stable x.y.
 
 test('each off switch disables the check', () => {
   assert.equal(updateCheckDisabled({}), false);
+  assert.equal(updateCheckDisabled({ CRUCIBLE_NO_UPDATE_CHECK: '1' }), true);
   assert.equal(updateCheckDisabled({ SIXTYSEVENJS_NO_UPDATE_CHECK: '1' }), true);
   assert.equal(updateCheckDisabled({ NO_UPDATE_NOTIFIER: '1' }), true);
   assert.equal(updateCheckDisabled({ CI: 'true' }), true);
   assert.equal(updateCheckDisabled({ CI: '1' }), true);
   assert.equal(updateCheckDisabled({ CI: 'false' }), false);
   assert.equal(updateCheckDisabled({ SIXTYSEVENJS_NO_UPDATE_CHECK: '0' }), false);
+  assert.equal(updateCheckDisabled({ CRUCIBLE_NO_UPDATE_CHECK: '0' }), false);
+  assert.equal(updateCheckDisabled({ CRUCIBLE_NO_UPDATE_CHECK: '0', SIXTYSEVENJS_NO_UPDATE_CHECK: '1' }), false);
 });
 
 test('a newer version is found, written to the cache and reported', async () => {
@@ -226,7 +229,7 @@ test('the started server reads a seeded cache and reports the newer version in i
   const cacheFile = join(cacheHome, 'crucible', 'update-check.json');
   await mkdir(dirname(cacheFile), { recursive: true });
   await writeFile(cacheFile, JSON.stringify({ checkedAt: Date.now(), latest: '99.0.0' }));
-  const { CI, NO_UPDATE_NOTIFIER, SIXTYSEVENJS_NO_UPDATE_CHECK, ...inheritedEnvironment } = process.env;
+  const { CI, NO_UPDATE_NOTIFIER, CRUCIBLE_NO_UPDATE_CHECK, SIXTYSEVENJS_NO_UPDATE_CHECK, ...inheritedEnvironment } = process.env;
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverEntry, '--backend', 'cpu'],

@@ -196,6 +196,23 @@ function explosionFunctionFor(enabledSteps) {
 // A marker step, not a condition: it adds the velocity blur of a grid volume to the local step (#1759). Every program without it has the source it had before the blur.
 export const GRID_MOTION_STEP = 'gridMotion';
 
+// Two more marker steps, for a frame whose local volumes are all grids or all boxes and spheres (#1768): the program compiles only the march it uses, and the driver builds half
+// the code. A frame with both kinds has neither marker and the program it had before. Mesh volumes use neither march, so they do not count toward either kind.
+export const GRID_ONLY_STEP = 'localGridOnly';
+export const SHAPE_ONLY_STEP = 'localShapeOnly';
+const LOCAL_VOLUME_KIND_STEPS = { grid: GRID_ONLY_STEP, shape: SHAPE_ONLY_STEP };
+
+/** The marker step for the kind of volume a frame draws ('grid', 'shape' or 'both'), or an empty list for 'both'. */
+export function localVolumeKindSteps(kind) {
+  return kind in LOCAL_VOLUME_KIND_STEPS ? [LOCAL_VOLUME_KIND_STEPS[kind]] : [];
+}
+
+function localVolumeKindOf(enabledSteps) {
+  if (enabledSteps.has(GRID_ONLY_STEP)) return 'grid';
+  if (enabledSteps.has(SHAPE_ONLY_STEP)) return 'shape';
+  return 'both';
+}
+
 function fogCodeFor(enabledSteps) {
   let declarations = '';
   let functions = '';
@@ -215,7 +232,7 @@ function fogCodeFor(enabledSteps) {
     const code = requireFeatureCode('volumeFog');
     const motion = enabledSteps.has(GRID_MOTION_STEP);
     declarations += code.localDeclarations + (motion ? code.localMotionDeclarations : '');
-    functions += code.localFunctions(motion);
+    functions += code.localFunctions(motion, localVolumeKindOf(enabledSteps));
   } else {
     functions += LOCAL_VOLUMES_STUB;
   }
@@ -229,8 +246,8 @@ const LOCAL_VOLUME_COMPOSITE_MAIN = `void main() {
 }`;
 
 /** The fragment shader that composites the local volumes over the frame and nothing else (no anti-aliasing, bloom, fog or tone map). */
-export function createLocalVolumeCompositeFragment(motion = false) {
-  const enabled = new Set(motion ? ['local', GRID_MOTION_STEP] : ['local']);
+export function createLocalVolumeCompositeFragment(motion = false, kind = 'both') {
+  const enabled = new Set(['local', ...(motion ? [GRID_MOTION_STEP] : []), ...localVolumeKindSteps(kind)]);
   const definitions = Object.entries(POST_STEP_CONDITIONS)
     .map(([step, [macro, condition]]) => `#define ${macro} ${enabled.has(step) ? `(${condition})` : 'false'}`)
     .join('\n');

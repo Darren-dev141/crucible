@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { readEnvironmentVariable } from './environment-variable.js';
 
 export const UPDATE_CHECK_URL = 'https://registry.npmjs.org/@codepawlhq/crucible/latest';
 export const UPDATE_CHECK_TIMEOUT_MS = 2000;
@@ -14,7 +15,8 @@ const STABLE_VERSION = /^\d{1,9}\.\d{1,9}\.\d{1,9}$/;
 // Any one of these turns the check off. CI counts as set when it holds any text other than 0 or false.
 export function updateCheckDisabled(env = process.env) {
   const flagged = name => env[name] !== undefined && env[name] !== '' && env[name] !== '0';
-  return flagged('SIXTYSEVENJS_NO_UPDATE_CHECK') || flagged('NO_UPDATE_NOTIFIER') || (flagged('CI') && env.CI !== 'false');
+  const crucibleValue = readEnvironmentVariable('NO_UPDATE_CHECK', env);
+  return (crucibleValue !== undefined && crucibleValue !== '0') || flagged('NO_UPDATE_NOTIFIER') || (flagged('CI') && env.CI !== 'false');
 }
 
 function versionParts(version) {
