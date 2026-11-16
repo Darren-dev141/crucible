@@ -519,7 +519,8 @@ function refuseLinkingBeyondMaskBits(environment, parts) {
 
 function resolveLights(environment, limit = resolveLightLimit(), parts = []) {
   const areaLights = environment.areaLights ?? [];
-  const sunPower = Math.max(...(environment.keyColor ?? [0, 0, 0]));
+  const sunColor = Array.from(environment.keyColor ?? [0, 0, 0], channel => channel * (environment.keyIntensity ?? 1));
+  const sunPower = Math.max(...sunColor);
   const lightCount = (environment.pointLights?.length ?? 0) + (environment.spotLights?.length ?? 0) + (environment.areaLights?.filter(light => light.portal !== true).length ?? 0);
   if (!limit.native && lightCount > MAX_TRACE_LIGHTS) throw new RangeError(`A path trace takes at most ${MAX_TRACE_LIGHTS} point, spot and area lights.`);
   if (limit.native) {
@@ -529,7 +530,7 @@ function resolveLights(environment, limit = resolveLightLimit(), parts = []) {
     refuseLinkingBeyondMaskBits(environment, parts);
   }
   return {
-    sun: sunPower > 0 ? { bit: SUN_BIT, direction: normalized(environment.lightDirection ?? [0, 1, 0]), color: environment.keyColor, angularRadius: environment.sunAngularRadius ?? SUN_ANGULAR_RADIUS } : null,
+    sun: sunPower > 0 ? { bit: SUN_BIT, direction: normalized(environment.lightDirection ?? [0, 1, 0]), color: sunColor, angularRadius: environment.sunAngularRadius ?? SUN_ANGULAR_RADIUS } : null,
     points: (environment.pointLights ?? []).map((light, index) => ({ bit: POINT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.pointLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.pointLights[${index}]`) })),
     spots: (environment.spotLights ?? []).map((light, index) => ({
       bit: SPOT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.spotLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.spotLights[${index}]`),
