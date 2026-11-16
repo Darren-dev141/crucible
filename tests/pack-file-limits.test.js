@@ -48,7 +48,7 @@ test('a recipe preview larger than a sequence frame still loads (#1313)', async 
 test('a content image over the frame limit refuses the pack (#1313)', async context => {
   const folder = installPack(context, (manifest, root) => {
     mkdirSync(join(root, 'models'));
-    writeFileSync(join(root, 'models/wide.png'), pngWithDeclaredSize(1920, 1080));
+    writeFileSync(join(root, 'models/wide.png'), pngWithDeclaredSize(4096, 2160));
     manifest.contents.images = [{ id: 'wide', file: 'models/wide.png' }];
   });
   await assert.rejects(() => load(folder), /pack "limited" models\/wide\.png: got "contents\.images\[0\]\.file/);

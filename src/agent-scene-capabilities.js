@@ -112,6 +112,8 @@ export const MAXIMUM_VIDEO_SECONDS = 60;
 export const RENDER_OUTPUT_FORMATS = Object.freeze(['png', 'png16', 'exr']);
 export const MAXIMUM_JOB_FPS = 60;
 export const MAXIMUM_JOB_FRAMES = 900;
+// Frames one stills job may write when it sets `frames`; a longer clip is rendered in parts with motion.start.
+export const MAXIMUM_STILLS_FRAMES = 300;
 /** Recipe bake presets and ranges. A bake inline on the page fails the edit after 20 s, before the 30 s page deadline; on a worker it has 90 s. */
 export const BAKE_PRESETS = Object.freeze({
   draft: Object.freeze({ samples: 32, bounces: 1, texelsPerUnit: 3 }),
@@ -144,6 +146,9 @@ export const MAXIMUM_JOB_SIDE = 3840;
 export const MAXIMUM_JOB_PIXELS = 3840 * 2160;
 export const MAXIMUM_SEQUENCE_JOB_SIDE = 1920;
 export const MAXIMUM_SEQUENCE_JOB_PIXELS = 1920 * 1080;
+// The longest side of a square frame each limit allows, so a square overlay can be sized before the submit.
+export const MAXIMUM_SQUARE_JOB_SIDE = Math.floor(Math.sqrt(MAXIMUM_JOB_PIXELS));
+export const MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE = Math.floor(Math.sqrt(MAXIMUM_SEQUENCE_JOB_PIXELS));
 /**
  * Largest --memory value in MiB the MCP server accepts. Measured: a 1920x1080 frame needs about 175 MiB of targets
  * (planRenderSize estimate, 4 samples), Node RSS peaks under 180 MiB, so 384 leaves about 200 MiB for scene textures and geometry.
