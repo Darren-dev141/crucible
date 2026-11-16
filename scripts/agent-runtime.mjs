@@ -28,6 +28,7 @@ import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMU
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
 import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
+import { namesCatalogFiles, resolveAssetPlacementNames } from '../src/agent-asset-names.js';
 import { sequenceFrameIds } from '../src/agent-texture-sequence.js';
 import { readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grids.js';
 import { catalogLookReferences, BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES } from '../src/look-catalog.js';
@@ -268,6 +269,19 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (!packsRoot) return Promise.resolve(null);
     packsPromise ??= createPackRegistry(packsRoot, { packageVersion: packageMetadata.version });
     return packsPromise;
+  }
+
+  /** Replaces each `asset: { name }` placement of a recipe or edit list with its catalog id, so everything after this holds the pinned hash. */
+  async function pinNamedAssets(value) {
+    if (namesCatalogFiles(value)) resolveAssetPlacementNames(value, (await catalog()).resolveName);
+  }
+
+  /** The same for the asset recipe of scene_create_asset: `assetName` (a catalog file name) becomes `assetId`. */
+  async function pinNamedAssetRecipe(recipe) {
+    if (recipe?.assetName === undefined) return;
+    if (recipe.assetId !== undefined) throw new TypeError('Pass exactly one of recipe.assetId (the pinned SHA-256) or recipe.assetName (the catalog file name), not both.');
+    recipe.assetId = (await catalog()).resolveName(recipe.assetName);
+    delete recipe.assetName;
   }
 
   /** The catalog IDs a recipe or edit list loads: placed assets, map sequence frames and the HDRI and .cube files that are not shipped. */
@@ -1067,9 +1081,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     create({ recipe }) {
       const createScene = () => enqueue(async () => {
         await requirePreviewRenderer();
+        await pinNamedAssets(recipe);
         await boot();
         const sessionId = randomUUID();
-        const createInput = { recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) };
+        const createInput ={ recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) };
         const result = await evaluate('create', createInput, page, recipe?.bake ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
         registerCreatedScene(sessionId, result, Boolean(recipe?.bake));
         return result;
@@ -1094,6 +1109,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     createAsset({ recipe }) {
       return enqueue(async () => {
         await requirePreviewRenderer();
+        await pinNamedAssetRecipe(recipe);
         const bytes = await (await catalog()).read(recipe.assetId);
         await boot();
         const sessionId = randomUUID();
@@ -1137,6 +1153,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     apply(input) {
       const applyOperations = () => enqueue(async () => {
         await requirePreviewRenderer();
+        await pinNamedAssets(input.operations);
         if (input.branch !== undefined) {
           const { branch, ...rest } = input;
           return invoke('branchApply', { ...rest, name: validateBranchName(branch) });
