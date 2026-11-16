@@ -6,7 +6,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { mat4, vec3 } from 'gl-matrix';
 import { createAgentMcpServer } from '../scripts/mcp-server.mjs';
 import { createAgentScene } from '../src/agent-scene.js';
-import { applyProjection } from '../src/camera.js';
+import { applyProjection, resolveThinLens } from '../src/camera.js';
 import { effectsWithFStop } from '../src/camera-effects.js';
 import { previewHarness } from './support/preview-harness.mjs';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from '../src/light-limits.js';
@@ -183,4 +183,25 @@ test('the preview draws the lens fields and the f-stop depth of field, and set-c
   assert.equal(lens.focalLength, 50);
   assert.equal(lens.fov, undefined);
   assert.equal(lens.orthoScale, undefined);
+});
+
+test('a recipe camera carries focusDistance with fStop, round trips through export, and refuses bad values', () => {
+  const make = camera => createAgentScene(baseRecipe({ camera }));
+  const scene = make({ eye: [0, 1, 6], target: [0, 1, -4], fStop: 2, focusDistance: 3.5 });
+  assert.equal(scene.camera.focusDistance, 3.5);
+  assert.equal(scene.exportRecipe().camera.focusDistance, 3.5);
+  assert.equal(make(scene.exportRecipe().camera).camera.focusDistance, 3.5);
+  for (const focusDistance of [0, -2, '3']) {
+    assert.throws(() => make({ fStop: 2, focusDistance }), /camera\.focusDistance: got .*; expected a positive distance in metres/);
+  }
+  assert.throws(() => make({ focusDistance: 3 }), /camera\.focusDistance: got 3; expected a field used with fStop/);
+  scene.apply([{ type: 'set-camera', focusDistance: 1.25 }], { expectedRevision: 0 });
+  assert.equal(scene.camera.focusDistance, 1.25);
+  assert.throws(() => scene.apply([{ type: 'set-camera', focusDistance: -1 }], { expectedRevision: 1 }), /camera\.focusDistance/);
+});
+
+test('the raster effects and the path tracer lens read the recipe camera focusDistance', () => {
+  const { camera } = createAgentScene(baseRecipe({ camera: { eye: [0, 1, 6], target: [0, 1, -4], fStop: 2, focusDistance: 3.5 } }));
+  assert.equal(effectsWithFStop({ depthOfField: { blur: 0, focusDistance: 5 } }, camera).depthOfField.focusDistance, 3.5);
+  assert.equal(resolveThinLens(camera, { aspect: 1, eye: camera.eye, target: camera.target }).focalDistance, 3.5);
 });
