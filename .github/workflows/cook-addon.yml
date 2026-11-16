@@ -16,6 +16,8 @@ on:
       - 'scripts/agent-memory-guard.mjs'
       - 'scripts/check-first-native-job.mjs'
       - 'scripts/addon-job-paths.mjs'
+      - 'scripts/cook-addon-cache-key.mjs'
+      - 'tests/cook-addon-cache-key.test.js'
       - 'tests/addon-job-paths.test.js'
       - 'scripts/build-mcp.mjs'
       - '.github/workflows/cook-addon.yml'
@@ -419,16 +421,47 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
-      # Cached by the cargo.lock of the installed Cook, so a Cook bump rebuilds and every other run reuses the target folder.
+      # The built addon is cached by the Cook pin, the runner and the Rust toolchain (#1800). A hit skips the cargo target restore
+      # and the cargo build; a miss builds as before and saves the addon. Fork pull requests may restore but never save, so a fork
+      # cannot plant an addon that a later run on this repository would load.
+      - name: Work out the addon cache key
+        id: addon-key
+        run: |
+          rustc_line=$(cd node_modules/@codepawlhq/cook && rustc --version)
+          node scripts/cook-addon-cache-key.mjs "$RUNNER_OS" "$RUNNER_ARCH" "$rustc_line" | tee -a "$GITHUB_OUTPUT"
+      - name: Restore the built Cook addon
+        id: addon-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/@codepawlhq/cook/build
+          key: ${{ steps.addon-key.outputs.key }}
+      # Cached by the cargo.lock of the installed Cook, so a Cook bump rebuilds and every other miss reuses the target folder.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.addon-cache.outputs.cache-hit != 'true'
         with:
           workspaces: node_modules/@codepawlhq/cook
           cache-on-failure: true
       - name: Build the Cook addon
+        if: steps.addon-cache.outputs.cache-hit != 'true'
         run: |
           start=$(date +%s)
           npm run cook:build
-          echo "build_seconds=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
+          build_seconds=$(( $(date +%s) - start ))
+          echo "$build_seconds" > node_modules/@codepawlhq/cook/build/build-seconds.txt
+          echo "build_seconds=$build_seconds" >> "$GITHUB_ENV"
+          echo "addon_source=built from the pin, cache miss" >> "$GITHUB_ENV"
+      - name: Save the built Cook addon
+        if: steps.addon-cache.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/@codepawlhq/cook/build
+          key: ${{ steps.addon-key.outputs.key }}
+      - name: Report that the Cook addon came from the cache
+        if: steps.addon-cache.outputs.cache-hit == 'true'
+        run: |
+          recorded=$(cat node_modules/@codepawlhq/cook/build/build-seconds.txt 2>/dev/null || echo '?')
+          echo "build_seconds=0" >> "$GITHUB_ENV"
+          echo "addon_source=restored from the cache, cargo skipped, saved about ${recorded} s (the build time recorded when it was cached)" >> "$GITHUB_ENV"
       - name: Install lavapipe and report what it supports
         run: |
           sudo apt-get update -qq
@@ -472,7 +505,7 @@ jobs:
           set +e
           node scripts/summarize-addon-tests.mjs addon-tests.tap --title 'Tests that load Cook, addon built, lavapipe adapter' \n            --gpu-bound 'a process that rendered with the native addon exits with code 0' > summary.md
           status=$?
-          echo "Cargo build ${build_seconds:-?} s, tests ${test_seconds:-?} s." >> summary.md
+          echo "Cook addon: ${addon_source:-unknown}. Cargo build ${build_seconds:-?} s, tests ${test_seconds:-?} s." >> summary.md
           cat summary.md >> "$GITHUB_STEP_SUMMARY"
           cat summary.md
           exit $status
