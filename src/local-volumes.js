@@ -1,7 +1,8 @@
 import { MAX_LOCAL_VOLUMES, LOCAL_VOLUME_MAXIMUM_STEPS, ONE_GRID_VOLUME_MESSAGE, resolveLocalVolumesWith } from './local-volume-resolve.js';
 import { localVolumeNoise } from './local-volume-noise.js';
 import { sampleVolumeGrid, volumeGridFloats } from './volume-grid.js';
-import { LOCAL_VOLUME_RAMP_STOPS, rampSourceCode, bakeEmissionRamp } from './local-volume-ramp.js';
+import { LOCAL_VOLUME_RAMP_STOPS, rampSourceCode, resolveEmissionRamp } from './local-volume-ramp.js';
+import { bakeEmissionRamp } from './local-volume-ramp-bake.js';
 import { resolveGridVolume, LOCAL_VOLUME_GRID_MAXIMUM_STEPS } from './local-volume-grid.js';
 
 export * from './local-volume-resolve.js';
@@ -12,7 +13,7 @@ export { LOCAL_VOLUME_GRID_MAXIMUM_STEPS };
  * The scene entry calls resolveLocalVolumesWith instead, so the grid resolver loads with the grid module and not with every scene.
  */
 export function resolveLocalVolumes(input, label = 'localVolumes') {
-  return resolveLocalVolumesWith(resolveGridVolume, input, label);
+  return resolveLocalVolumesWith(resolveGridVolume, input, label, resolveEmissionRamp);
 }
 
 /** The uniform arrays the post shader reads, one vec4 per volume. Pass resolved volumes. */

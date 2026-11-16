@@ -2,6 +2,7 @@
 // The pure tests check the blackbody against a published table, the field, the packing and the CPU path tracer; the browser test draws a graded
 // sphere in the rasterizer (headless Chrome on SwiftShader, from the Vite dev server) and in the CPU path tracer and compares the light per region.
 // It skips when Chrome cannot start. Set LOCAL_VOLUME_RAMP_ARTIFACTS to a folder to also write the numbers there.
+import './support/load-agent-scene-modules.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -9,10 +10,12 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { freePort } from './helpers/free-port.js';
 import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { createAgentScene } from '../src/agent-scene.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { applyViewTransform } from '../src/view-transform.js';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes } from '../src/local-volumes.js';
-import { blackbodyChromaticity, blackbodyRampColor, bakeEmissionRamp, sampleBakedRamp, LOCAL_VOLUME_RAMP_STOPS } from '../src/local-volume-ramp.js';
+import { LOCAL_VOLUME_RAMP_STOPS } from '../src/local-volume-ramp.js';
+import { blackbodyChromaticity, blackbodyRampColor, bakeEmissionRamp, sampleBakedRamp } from '../src/local-volume-ramp-bake.js';
 import { createLocalVolumeCrossing } from '../src/path-tracer-volume.js';
 import { assertWebGpuLocalVolumes } from '../src/path-tracer-webgpu-local-volumes.js';
 import { encodeVolumeGrid, decodeVolumeGrid } from '../src/volume-grid.js';
@@ -345,4 +348,12 @@ test('the rasterizer and the CPU path tracer draw the same graded fireball, and 
 test('the WebGPU path tracer refuses a ramp with a message that names the volume and the backend that draws it', () => {
   const [volume] = resolveLocalVolumes([{ shape: 'sphere', center: [0, 0, 0], radius: 1, emissionRamp: { kelvin: [1000, 3000] } }]);
   assert.throws(() => assertWebGpuLocalVolumes({ localVolumes: [volume] }), /localVolumes\[0\]\.emissionRamp .* backend "cpu"/);
+});
+
+test('a scene recipe resolves emissionRamp through the on-demand module and an edit with a bad ramp throws at build time', () => {
+  const recipe = environment => ({ format: 'crucible.scene', schemaVersion: 1, geometries: [{ id: 'box', type: 'box', bevel: 0 }], materials: [{ id: 'finish', color: [0.6, 0.6, 0.6], emission: 0 }], nodes: [{ id: 'block', geometry: 'box', material: 'finish' }], camera: { eye: [4, 3, 5], target: [0, 0, 0] }, environment });
+  const volume = { shape: 'sphere', center: [0, 1, 0], radius: 1, emissionRamp: { kelvin: [1000, 3000] } };
+  const scene = createAgentScene(recipe({ localVolumes: [volume] }));
+  assert.deepEqual(scene.exportRecipe().environment.localVolumes[0].emissionRamp, { source: 'density', range: [0, 1], exposure: 1, kelvin: [1000, 3000] });
+  assert.throws(() => createAgentScene(recipe({ localVolumes: [{ ...volume, emissionRamp: { kelvin: [3000, 1000] } }] })), /localVolumes\[0\]\.emissionRamp\.kelvin must be \[cool, hot\]/);
 });

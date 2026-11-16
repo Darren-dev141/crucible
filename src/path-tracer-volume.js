@@ -2,7 +2,7 @@ import { resolveVolumeFog } from './volumetric.js';
 import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN } from './local-volumes.js';
 import { countOpenEdges } from './local-volume-parts.js';
 import { blackbodyRadiance } from './volume-grid.js';
-import { bakeEmissionRamp, emissionRampPosition, sampleBakedRamp } from './local-volume-ramp.js';
+import { bakeEmissionRamp, emissionRampPosition, sampleBakedRamp } from './local-volume-ramp-bake.js';
 import { buildTriangleBvh } from './triangle-bvh.js';
 import { createTracer } from './ray-query.js';
 

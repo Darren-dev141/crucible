@@ -1,5 +1,4 @@
 import { finiteRange, vectorField } from './volumetric.js';
-import { resolveEmissionRamp } from './local-volume-ramp.js';
 
 // Local volumes: up to MAX_LOCAL_VOLUMES boxes, spheres or parts (shape "mesh") that absorb and emit light and, with `scatter`, scatter
 // the key light and the sky, for candle haze, smoke puffs and glowing fog in one place. They sit beside environment.volumeFog (the one scattering volume) and need no fog. The post pass marches
@@ -16,7 +15,7 @@ export const LOCAL_VOLUME_MAXIMUM_STEPS = 32;
 export const ONE_GRID_VOLUME_MESSAGE = 'At most one volume in a scene takes shape "grid" for now; merge the grids into one file';
 const LISTED_PART_NAMES = 12;
 
-function resolveLocalVolume(input, label, resolveGrid) {
+function resolveLocalVolume(input, label, resolveGrid, resolveRamp) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError(`${label} must be an object`);
   for (const field of Object.keys(input)) {
     if (!LOCAL_VOLUME_FIELDS.includes(field)) throw new TypeError(`${label} has no field "${field}"; use ${LOCAL_VOLUME_FIELDS.join(', ')}`);
@@ -37,7 +36,7 @@ function resolveLocalVolume(input, label, resolveGrid) {
     noiseScale: finiteRange(input.noiseScale ?? 1, 0.001, 100, `${label}.noiseScale`),
     steps: shape === 'grid' ? 0 : finiteRange(input.steps ?? 16, 4, LOCAL_VOLUME_MAXIMUM_STEPS, `${label}.steps`),
   };
-  if (input.emissionRamp !== undefined) resolved.emissionRamp = resolveEmissionRamp(input.emissionRamp, shape, `${label}.emissionRamp`);
+  if (input.emissionRamp !== undefined) resolved.emissionRamp = resolveRamp(input.emissionRamp, shape, `${label}.emissionRamp`);
   if (shape === 'grid') return resolveGrid(input, resolved, label);
   const gridField = LOCAL_VOLUME_GRID_FIELDS.find(field => input[field] !== undefined);
   if (gridField) throw new TypeError(`${label}.${gridField} belongs to shape "grid"`);
@@ -65,10 +64,10 @@ function resolveLocalVolume(input, label, resolveGrid) {
 }
 
 /** As resolveLocalVolumes, with the function that resolves a volume of shape "grid" passed in. */
-export function resolveLocalVolumesWith(resolveGrid, input, label = 'localVolumes') {
+export function resolveLocalVolumesWith(resolveGrid, input, label = 'localVolumes', resolveRamp) {
   if (!Array.isArray(input)) throw new TypeError(`${label} must be an array of volumes`);
   if (input.length > MAX_LOCAL_VOLUMES) throw new RangeError(`${label} holds at most ${MAX_LOCAL_VOLUMES} volumes, got ${input.length}`);
-  const volumes = input.map((volume, index) => resolveLocalVolume(volume, `${label}[${index}]`, resolveGrid));
+  const volumes = input.map((volume, index) => resolveLocalVolume(volume, `${label}[${index}]`, resolveGrid, resolveRamp));
   const gridVolumeCount = volumes.filter(volume => volume.shape === 'grid').length;
   if (gridVolumeCount > 1) {
     throw new RangeError(ONE_GRID_VOLUME_MESSAGE);
