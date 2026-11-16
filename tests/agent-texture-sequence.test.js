@@ -4,7 +4,8 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentScene, loadAllAgentSceneModules } from '../src/agent-scene.js';
-import { normalizeMapSequence, sequenceFrameIds, sequenceFrameIndex } from '../src/agent-texture-sequence.js';
+import { normalizeMapSequence, sequenceFrameIds, sequenceFrameIndex, hasStreamedSequence, missingStreamedFrames, supplyStreamedFrame, retainStreamedWindow } from '../src/agent-texture-sequence.js';
+import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { createAgentAssetCatalog } from '../scripts/agent-asset-catalog.mjs';
 
 await loadAllAgentSceneModules();
@@ -70,7 +71,7 @@ test('a bad frame ID, frame count, fps or loop is rejected with a message that n
   const good = { frames: FRAME_IDS, fps: 12 };
   assert.deepEqual(normalizeMapSequence({ sequence: { ...good, frames: FRAME_IDS.map(id => id.toUpperCase()) } }).sequence.frames, FRAME_IDS);
   assert.throws(() => normalizeMapSequence({ sequence: { ...good, frames: [FRAME_IDS[0], 'not-an-id'] } }), /map\.sequence\.frames\[1\]: got "not-an-id"; expected the 64 hexadecimal characters/);
-  assert.throws(() => normalizeMapSequence({ sequence: { ...good, frames: [FRAME_IDS[0]] } }), /map\.sequence\.frames: got "1 frames"; expected a list of 2 to 64 catalog image asset IDs/);
+  assert.throws(() => normalizeMapSequence({ sequence: { ...good, frames: [FRAME_IDS[0]] } }), /map\.sequence\.frames: got "1 frames"; expected a list of 2 to 4096 catalog image asset IDs/);
   assert.throws(() => normalizeMapSequence({ sequence: { ...good, fps: 0 } }), /map\.sequence\.fps: got 0; expected a number above 0 and at most 60/);
   assert.throws(() => normalizeMapSequence({ sequence: { ...good, fps: 61 } }), /map\.sequence\.fps: got 61; expected a number above 0 and at most 60/);
   assert.throws(() => normalizeMapSequence({ sequence: { ...good, fps: Number.NaN } }), /fps/);
@@ -161,4 +162,81 @@ test('a non-finite time is refused instead of returning a NaN frame index', () =
 test('a time so large that frame arithmetic overflows is refused instead of returning NaN', () => {
   const sequence = { frames: ['a', 'b', 'c'], fps: 24, loop: true };
   assert.throws(() => sequenceFrameIndex(sequence, 1e308), /time: got/);
+});
+
+function streamedIds(count) {
+  return Array.from({ length: count }, (_, index) => index.toString(16).padStart(64, '0'));
+}
+
+function streamedRecipe(ids, fps = 30) {
+  return quadRecipe({ frames: ids, fps });
+}
+
+test('a sequence may list up to the frame cap, and the error past it names the cap and what to pass', () => {
+  assert.equal(TEXTURE_SEQUENCE_LIMITS.maxFrames, 4096);
+  assert.equal(TEXTURE_SEQUENCE_LIMITS.maxSide, 2048);
+  assert.doesNotThrow(() => normalizeMapSequence({ sequence: { frames: streamedIds(4096), fps: 30 } }));
+  assert.throws(() => normalizeMapSequence({ sequence: { frames: streamedIds(4097), fps: 30 } }),
+    /map\.sequence\.frames: got "4097 frames"; expected a list of 2 to 4096 catalog image asset IDs.*split it into several sequences/);
+});
+
+test('a sequence over the whole-sequence limit ships only its first frame and is flagged for the host', () => {
+  const whole = streamedIds(TEXTURE_SEQUENCE_LIMITS.wholeSequenceFrames);
+  const streamed = streamedIds(TEXTURE_SEQUENCE_LIMITS.wholeSequenceFrames + 1);
+  assert.equal(sequenceFrameIds(streamedRecipe(whole)).length, whole.length);
+  assert.deepEqual(sequenceFrameIds(streamedRecipe(streamed)), [streamed[0]]);
+  assert.equal(hasStreamedSequence(streamedRecipe(whole)), false);
+  assert.equal(hasStreamedSequence(streamedRecipe(streamed)), true);
+  assert.equal(hasStreamedSequence([{ type: 'set-material', id: 'screen', map: { sequence: { frames: streamed, fps: 1 } } }]), true);
+});
+
+test('a streamed sequence decodes frames on demand, holds two at a time and shows the pixels of its own frame', () => {
+  const ids = streamedIds(300);
+  const pixelOf = index => (index * 7) % 256;
+  const firstFrame = new Map([[ids[0], solidFrame(pixelOf(0))]]);
+  const scene = createAgentScene(streamedRecipe(ids), {}, { sequenceFrames: firstFrame });
+  const sequences = scene.sequenceTextures();
+  assert.equal(sequences[0].streamed, true);
+  const frameBytes = 2 * 2 * 4;
+  let peakDecodedBytes = 0;
+  for (let index = 0; index < ids.length; index++) {
+    const time = index / 30;
+    scene.sampleMotion(time);
+    assert.equal(sequences[0].index, index);
+    const missing = missingStreamedFrames(sequences, time);
+    assert.deepEqual(missing, index === 0 ? [] : [ids[index]], 'only the frame of this time is requested, once');
+    if (index > 0) {
+      assert.throws(() => sequences[0].image, /frame \d+ not decoded"; expected frame \d+ \(\w+\) of streamed material screen supplied by the host/, 'a frame that was not supplied is never drawn silently');
+    }
+    for (const id of missing) supplyStreamedFrame(sequences, id, solidFrame(pixelOf(ids.indexOf(id))));
+    const retained = retainStreamedWindow(sequences, time, TEXTURE_SEQUENCE_LIMITS.maxDecodedBytes);
+    peakDecodedBytes = Math.max(peakDecodedBytes, retained);
+    assert.equal(sequences[0].image.data[0], pixelOf(index), `frame ${index} shows the pixels of its own image`);
+  }
+  assert.ok(peakDecodedBytes <= 2 * frameBytes, `at most two frames stay decoded, held ${peakDecodedBytes} bytes`);
+  assert.equal(scene.inspect().textureSequences[0].decodedFrames, 2);
+});
+
+test('a streamed frame of another size, or a window over the byte limit, is refused with the limit and what to change', () => {
+  const ids = streamedIds(70);
+  const scene = createAgentScene(streamedRecipe(ids), {}, { sequenceFrames: new Map([[ids[0], solidFrame(0)]]) });
+  const sequences = scene.sequenceTextures();
+  assert.throws(() => supplyStreamedFrame(sequences, ids[1], { width: 4, height: 4, data: new Uint8ClampedArray(64) }),
+    /different|4x4 frame in material screen.*frames that all measure 2x2/);
+  scene.sampleMotion(1 / 30);
+  supplyStreamedFrame(sequences, ids[1], solidFrame(9));
+  assert.throws(() => retainStreamedWindow(sequences, 1 / 30, 8), /map\.sequence\.frames: got "[\d.e-]+ MiB of decoded st.*; expected at most [\d.e-]+ MiB; use frames of at most 2048 pixels a side/);
+});
+
+test('a looped streamed sequence wraps back to frame 0, which is decoded again on demand', () => {
+  const ids = streamedIds(70);
+  const scene = createAgentScene(streamedRecipe(ids, 10), {}, { sequenceFrames: new Map([[ids[0], solidFrame(5)]]) });
+  const sequences = scene.sequenceTextures();
+  for (const index of [1, 2]) {
+    scene.sampleMotion(index / 10);
+    for (const id of missingStreamedFrames(sequences, index / 10)) supplyStreamedFrame(sequences, id, solidFrame(index));
+    retainStreamedWindow(sequences, index / 10, TEXTURE_SEQUENCE_LIMITS.maxDecodedBytes);
+  }
+  scene.sampleMotion(70 / 10);
+  assert.deepEqual(missingStreamedFrames(sequences, 7), [ids[0]]);
 });
