@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { withInjectedLatency } from '../scripts/netcode-sample.js';
+import { relaySocketUrl, withInjectedLatency } from '../scripts/netcode-sample.js';
 
 function createFakeTransport() {
   const sent = [];
@@ -45,4 +45,13 @@ test('withInjectedLatency drops sends still waiting when the transport closes, a
   assert.equal(fake.state.closed, true);
   assert.equal(fake.sent.length, 0);
   assert.equal(withInjectedLatency(fake.transport, 0), fake.transport);
+});
+
+test('the relay must be a ws: or wss: URL', () => {
+  assert.equal(relaySocketUrl('ws://127.0.0.1:8787/', 'bob'), 'ws://127.0.0.1:8787/?id=bob');
+  assert.equal(relaySocketUrl('wss://relay.example.com/play?room=1', 'a b'), 'wss://relay.example.com/play?room=1&id=a+b');
+  assert.throws(() => relaySocketUrl('https://example.com/', 'bob'), /must use ws: or wss:/);
+  assert.throws(() => relaySocketUrl('javascript:alert(1)', 'bob'), /must use ws: or wss:/);
+  assert.throws(() => relaySocketUrl('127.0.0.1:8787', 'bob'), /must use ws: or wss:|full WebSocket URL/);
+  assert.throws(() => relaySocketUrl('not a url', 'bob'), /full WebSocket URL/);
 });

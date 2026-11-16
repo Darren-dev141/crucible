@@ -21,9 +21,25 @@ const KEY_DIRECTIONS = {
   ArrowDown: [0, 1], KeyS: [0, 1],
 };
 
+// The relay address comes from the page's ?relay= query, so only a WebSocket URL is accepted.
+export function relaySocketUrl(relayUrl, playerId) {
+  let parsed;
+  try {
+    parsed = new URL(relayUrl);
+  } catch {
+    throw new TypeError(`The relay must be a full WebSocket URL such as ws://127.0.0.1:8787/, got ${JSON.stringify(relayUrl)}.`);
+  }
+  if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
+    throw new TypeError(`The relay must use ws: or wss:, got ${JSON.stringify(parsed.protocol)}. Pass ?relay=ws://127.0.0.1:8787/.`);
+  }
+  parsed.searchParams.set('id', playerId);
+  return parsed.href;
+}
+
 function openWebSocket(relayUrl, playerId) {
+  const socketUrl = relaySocketUrl(relayUrl, playerId);
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(`${relayUrl}?id=${encodeURIComponent(playerId)}`);
+    const socket = new WebSocket(socketUrl);
     socket.addEventListener('open', () => resolve(socket), { once: true });
     socket.addEventListener('error', () => reject(new Error(`Could not reach the relay at ${relayUrl}. Start it with: node scripts/netcode-relay.mjs`)), { once: true });
   });

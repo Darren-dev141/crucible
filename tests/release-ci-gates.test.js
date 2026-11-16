@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { changedPathsSince, planChecks, planFromArguments } from '../scripts/preflight.mjs';
 import { failingGatesFor } from '../scripts/check-change-note.mjs';
-import { isVersionPublished, readPublishReleaseProblem, releaseProblem } from '../scripts/check-release-changelog.mjs';
+import { isVersionPublished, readPublishReleaseProblem, registryVersionUrl, releaseProblem } from '../scripts/check-release-changelog.mjs';
 import { skipOrThrow } from './helpers/dev-server-browser.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -216,4 +216,12 @@ test('scripts compare import.meta.url with pathToFileURL, which also holds for P
     .filter(name => name.endsWith('.mjs'))
     .filter(name => readText(`scripts/${name}`).includes('`file:///${'));
   assert.deepEqual(offenders, []);
+});
+
+test('the registry URL is built only from a valid package name and semantic version', () => {
+  assert.equal(registryVersionUrl('@codepawlhq/crucible', '0.21.0-rc.1'), 'https://registry.npmjs.org/%40codepawlhq%2Fcrucible/0.21.0-rc.1');
+  assert.throws(() => registryVersionUrl('@codepawlhq/crucible', '0.21.0/../../evil'), /not a semantic version/);
+  assert.throws(() => registryVersionUrl('@codepawlhq/crucible', '1.2'), /not a semantic version/);
+  assert.throws(() => registryVersionUrl('../evil', '1.2.3'), /not a valid npm package name/);
+  assert.throws(() => registryVersionUrl('Crucible', '1.2.3'), /not a valid npm package name/);
 });

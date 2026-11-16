@@ -14,6 +14,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 // Model: Fox by PixelMannen (CC0), rigged and animated by tomkranis (CC BY 4.0), from the Khronos glTF sample assets.
 
 const FOX_URL = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Fox/glTF-Binary/Fox.glb';
+// The file is written to disk only when it matches this hash.
+const FOX_SHA256 = 'd97044e701822bac5a62696459b27d7b375aada5de8574ed4362edbba94771f7';
 const outputDirectory = resolve(process.argv[2] ?? 'artifacts/981');
 const backend = process.env.PROOF_BACKEND ?? 'gpu';
 const WIDTH = 640;
@@ -29,8 +31,10 @@ await mkdir(assets);
 await mkdir(outputDirectory, { recursive: true });
 
 const foxBytes = Buffer.from(await (await fetch(FOX_URL)).arrayBuffer());
-assert.equal(foxBytes.subarray(0, 4).toString(), 'glTF', 'the download is not a GLB');
 const assetId = createHash('sha256').update(foxBytes).digest('hex');
+if (assetId !== FOX_SHA256) {
+  throw new Error(`The downloaded Fox.glb has sha256 ${assetId}, expected ${FOX_SHA256}. Check the file at ${FOX_URL} and update FOX_SHA256 only if the new file is the same fox.`);
+}
 await writeFile(join(assets, 'fox.glb'), foxBytes);
 
 let browserPath = process.env.CHROME_PATH;

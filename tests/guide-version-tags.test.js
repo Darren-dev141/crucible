@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectFields, findUnmarkedFields, newerFields, readGuides, readReleasedFields } from '../scripts/guide-fields.mjs';
+import { collectFields, findUnmarkedFields, mentions, newerFields, readGuides, readReleasedFields } from '../scripts/guide-fields.mjs';
 import { withVersionHint } from '../scripts/mcp-server.mjs';
 
 const released = { release: '0.20.0', game: ['player', 'player.node', 'npcs'], tools: ['scene_apply operations', 'scene_render_submit settings.id'] };
@@ -52,4 +52,11 @@ test('a refusal of an unknown field names the installed version', () => {
   assert.match(hinted, /^Game setup player\.animation is not a field/);
   assert.match(hinted, /This server is Crucible 0\.19\.0; a field in a newer guide may only arrive in a later release/);
   assert.equal(withVersionHint('node must be a string.', '0.19.0'), 'node must be a string.');
+});
+
+test('a field name with regular expression characters is matched literally', () => {
+  const name = 'a\b+c';
+  assert.equal(mentions('Set `a\b+c.speed` to move.', name), true);
+  assert.equal(mentions('Set `a\bbbc.speed` to move.', name), false);
+  assert.equal(mentions('Set `ab+c[0]` here.', 'a.b+c'), false);
 });
