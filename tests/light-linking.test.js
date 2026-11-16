@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createFragmentShader } from '../src/shaders.js';
 import { ALL_LIGHTS_MASK, materialLayerState } from '../src/material-layers.js';
 import { MAX_AREA_LIGHTS } from '../src/light-limits.js';
-import { applyLightLinks, lightMaskFor, AREA_FIRST_BIT, POINT_FIRST_BIT, SPOT_FIRST_BIT, SUN_BIT } from '../src/light-linking.js';
+import { applyLightLinks, lightMaskFor, unknownLightLinkNames, AREA_FIRST_BIT, POINT_FIRST_BIT, SPOT_FIRST_BIT, SUN_BIT } from '../src/light-linking.js';
 
 function part(name) {
   return { name, geometry: {}, matrix: new Float32Array(16), material: { tag: 'surface', color: [1, 1, 1], metallic: 0, roughness: 0.5 } };
@@ -42,6 +42,12 @@ test('keyAffects limits the sun', () => {
 test('a bad affects value is named in the error', () => {
   assert.throws(() => applyLightLinks(PARTS, { pointLights: [{ affects: 'left' }] }), /pointLights\[0\] affects/);
   assert.throws(() => applyLightLinks(PARTS, { pointLights: [{ affects: [3] }] }), /affects/);
+});
+
+test('a group node is not a name a light can be linked to, since only nodes with a geometry draw a part', () => {
+  const nodes = [{ id: 'room' }, { id: 'left', parent: 'room', geometry: 'box' }];
+  const environment = { pointLights: [{ affects: ['room'] }, { affects: ['left'] }], keyAffects: ['room'] };
+  assert.deepEqual(unknownLightLinkNames(environment, nodes), ['environment.keyAffects: room', 'pointLights[0].affects: room']);
 });
 
 test('lightMaskFor treats a null list as every part', () => {

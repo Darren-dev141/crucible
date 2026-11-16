@@ -47,6 +47,23 @@ function validateEntryObjects(document) {
   }
 }
 
+const NODE_TRANSFORM_LENGTHS = { matrix: 16, translation: 3, rotation: 4, scale: 3 };
+
+function validateNodeTransforms(document) {
+  (document.nodes ?? []).forEach((node, nodeIndex) => {
+    for (const [field, length] of Object.entries(NODE_TRANSFORM_LENGTHS)) {
+      const value = node[field];
+      if (value === undefined) continue;
+      // A NaN or infinite entry (null once serialized) stays loadable: the node is skipped or collapsed with a warning.
+      const numbers = Array.isArray(value) && value.length === length && value.every(entry => typeof entry === 'number' || entry === null);
+      if (!numbers) throw new Error(`Invalid glTF nodes[${nodeIndex}].${field}: expected an array of ${length} numbers. Fix: pass ${length} numbers or remove the field.`);
+    }
+    if (node.rotation && node.rotation.every(component => component === 0)) {
+      throw new Error(`Invalid glTF nodes[${nodeIndex}].rotation: a zero quaternion has no direction. Fix: pass a unit quaternion such as [0, 0, 0, 1].`);
+    }
+  });
+}
+
 /** Throws an error naming the field for each dangling reference the loader would otherwise trip over. */
 export function validateDocumentReferences(document) {
   if (!document || typeof document !== 'object' || Array.isArray(document)) throw new Error('glTF JSON must be an object. Fix: pass a glTF 2.0 document.');
@@ -54,4 +71,5 @@ export function validateDocumentReferences(document) {
   validateMeshReferences(document);
   validateAccessorReferences(document);
   validateSceneReferences(document);
+  validateNodeTransforms(document);
 }

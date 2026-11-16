@@ -89,7 +89,12 @@ function readPackage(folder, errors) {
     return null;
   }
   try {
-    return JSON.parse(readFileSync(path, 'utf8'));
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      errors.push('package.json must hold a JSON object with the addon name, keywords and "crucible" field. Replace its content.');
+      return null;
+    }
+    return parsed;
   } catch (error) {
     errors.push(`package.json is not valid JSON (${error.message}). Fix the syntax.`);
     return null;
@@ -147,7 +152,12 @@ function checkEntrySize(folder, pack, errors) {
     errors.push(`The entry file ${entry} does not exist. Point "exports" (its "." entry) or "main" at a file that is published.`);
     return;
   }
-  const actual = statSync(path).size;
+  const entryStats = statSync(path);
+  if (!entryStats.isFile()) {
+    errors.push(`The entry ${entry} is a folder, not a file. Point "exports" (its "." entry) or "main" at the ES module file itself.`);
+    return;
+  }
+  const actual = entryStats.size;
   if (Number.isInteger(manifest?.bundleBytes) && actual > manifest.bundleBytes) {
     errors.push(`${entry} is ${actual} bytes but "crucible".bundleBytes says ${manifest.bundleBytes}. Raise bundleBytes to at least ${actual}.`);
   }
@@ -208,6 +218,7 @@ export function parseArguments(argumentsList) {
         return { error: '--version needs a Crucible version such as 0.20.0. Pass --version 0.20.0 or --version=0.20.0.' };
       }
       if (!VERSION_PATTERN.test(value)) return { error: `--version must look like 0.20.0, got ${JSON.stringify(value)}.` };
+      if (version !== undefined) return { error: '--version may be given only once. Pass one Crucible version.' };
       version = value;
       if (!inline) index += 1;
     } else if (argument.startsWith('-')) {

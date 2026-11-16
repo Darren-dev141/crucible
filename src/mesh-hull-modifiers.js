@@ -108,10 +108,10 @@ export function convexHullMesh(mesh) {
   const [first, second, third, fourth] = findStartingTetrahedron(positions, count, epsilon);
   const inside = [0, 1, 2].map(axis => (positions[first * 3 + axis] + positions[second * 3 + axis] + positions[third * 3 + axis] + positions[fourth * 3 + axis]) / 4);
   const faces = [];
-  for (const [a, b, c] of [[first, second, third], [first, second, fourth], [first, third, fourth], [second, third, fourth]]) {
-    const face = createFace(positions, a, b, c);
+  for (const [firstCorner, secondCorner, thirdCorner] of [[first, second, third], [first, second, fourth], [first, third, fourth], [second, third, fourth]]) {
+    const face = createFace(positions, firstCorner, secondCorner, thirdCorner);
     if (distanceAbove(face, inside) > 0) {
-      face.corners = [a, c, b];
+      face.corners = [firstCorner, thirdCorner, secondCorner];
       face.normal = face.normal.map(component => -component);
       face.offset = -face.offset;
     }

@@ -92,6 +92,7 @@ These checks need a GPU or a person's eyes, so they do not run on a pull request
 | --- | --- |
 | `npm run smoke:mcp` | MCP tools or the preview, on a GPU |
 | `npm run smoke:character` | Skinning, glTF loading, poses or IK |
+| `npm run smoke:line-art-nodes` | Outlines or `environment.lines.nodes`, on a GPU |
 | `npm run reference` | Shaders, lighting or materials |
 | `npm run benchmark:runtime` | The renderer's frame path |
 | `scripts/blender-golden.py` | A case in `tests/fixtures/blender/cases.json`, or the Blender version |
@@ -123,10 +124,41 @@ Do not weaken a test to make it pass. If a test is flaky, find the cause and fix
 The maintainer sets labels and the milestone, so you do not need to. Every issue has one goal and one priority:
 
 - `goal:capable`, `goal:light` or `goal:ai` say which part of the [goal](docs/goal.md) the work serves.
-- `priority:must`, `priority:should` or `priority:could` say how soon.
-- `bug`, `enhancement` or `documentation` say what kind of work it is.
+- `priority:must`, `priority:should` or `priority:could` say how soon. [Triage](#triage) says how a bug gets one.
+- `bug`, `enhancement` or `documentation` say what kind of work it is. `regression` marks a bug that the last published version did not have.
 
 The milestones are `0 Measure`, `1 Lighter`, `2 Modeling`, `3 Look`, `4 Motion and simulation`, `5 Agent surface` and `6 Games`. [docs/goal.md](docs/goal.md) explains each one. A pull request that misses a label or the milestone gets `needs-triage` until the maintainer sets them.
+
+## Triage
+
+### How urgent a bug is
+
+A bug's priority comes from what a user meets, not from how easy the fix is:
+
+- `priority:must`: fixed before the next release. A normal library call, recipe, MCP tool or render job crashes, hangs,
+  runs out of memory, or gives a wrong picture or wrong data without an error. Something the docs describe that does
+  not work as written counts too, and so does a regression.
+- `priority:should`: real files or agents reach it, but only with unusual input: a glTF or HDR file from another tool,
+  parts that share a name, an edge case in the hierarchy. An error that names the wrong field for a common mistake is
+  `should` too.
+- `priority:could`: only input that makes no sense reaches it (NaN, negative or huge counts, an unknown name), through a
+  direct library call that the recipe and MCP layers already refuse, or the fix only rewords a message.
+
+When two levels both seem to fit, run the smallest case through a recipe or an MCP tool. If it shows there, pick the
+higher level.
+
+### How big an issue is
+
+One issue is one piece of work that one person or agent can finish in one pull request:
+
+- Symptoms with one cause are one issue. Small findings in the same module are one issue with a checkbox per case:
+  four missing input checks in `src/mesh-uv.js` make one issue, not four.
+- Split an issue when its parts touch areas that can be worked on at the same time, or when they have different
+  priorities.
+- Each issue names the file area, gives the smallest case that shows the problem, and ends with a `## Done when` list
+  that a test can check.
+- `good first issue` marks work in one file with a named test file and no look change. `help wanted` marks scoped,
+  self-contained work that is open to outside contributors.
 
 ## Review and merge
 
@@ -181,6 +213,8 @@ waits a few days at most for the issues that should be in it, and moves the rest
 waiting for the owner's approval does not hold a release back. A serious bug ships alone as a patch release, without
 waiting for the week.
 
+1. List the bugs that must be fixed first: `gh issue list --label bug --label priority:must --state open`. The list is
+   empty, or the maintainer moves each issue on it to the next release with a reason written in the issue.
 1. Update the version in `package.json` and in `src/version.js`, run `npm run plugin:sync` to copy it into `.claude-plugin/marketplace.json`, then run `npm run changes:fold`. It writes the files in `changes/` into `CHANGELOG.md` as that version's section and deletes them. Read `npm run changes` first to see what it will fold. It also deletes the `changes/*.size.md` notes.
 2. Run `npm run size:release` and `npm run tool-cost:release`. They reset the size budgets, the baseline and the tool cost ceilings to the release numbers. Read the diffs of `bench/size/budgets.json` and `bench/tool-cost-budgets.json`. Run `node scripts/guide-fields.mjs snapshot` to record the fields this release accepts in `bench/guide-fields/released.json`, then remove the `{since X.Y.Z}` tags of this version from `docs/game.md` and `docs/mcp.md`.
 3. Run `npm test`, `npm run build` and `npm run smoke:package`.

@@ -138,8 +138,9 @@ export function createRuntime(target, options = {}) {
 
   function initialise(system) {
     if (initialised.has(system)) return;
-    initialised.add(system);
     callHook(system, 'init');
+    // Marked only after init succeeds, so a failed init is tried again by the next start() instead of being skipped.
+    initialised.add(system);
   }
 
   function disposeSystem(system) {
@@ -195,7 +196,9 @@ export function createRuntime(target, options = {}) {
     handle = null;
     if (!running || isPaused()) return;
     const frameStart = now();
-    const elapsedMilliseconds = lastTime === null ? 0 : Math.max(0, frameStart - lastTime);
+    const measuredMilliseconds = lastTime === null ? 0 : frameStart - lastTime;
+    // A clock that returns NaN once would otherwise turn the accumulator and elapsed time into NaN for good.
+    const elapsedMilliseconds = Number.isFinite(measuredMilliseconds) ? Math.max(0, measuredMilliseconds) : 0;
     lastTime = frameStart;
     const frameSeconds = Math.min(elapsedMilliseconds / 1000, maximumFrameSeconds);
     try {

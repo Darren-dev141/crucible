@@ -49,6 +49,22 @@ export function compareToBase(measured, baseMeasured, accepted = new Map()) {
   return { rows, problems };
 }
 
+// A size note line that names a bundle, scene or goal the build does not have accepts nothing, and is almost always a typo or
+// a bundle removed since. Only the prefixes this gate owns are checked: other lines (tool:, result:, prose) belong to other gates.
+export function unknownNoteProblems(accepted, measured, goals) {
+  const problems = [];
+  for (const name of accepted.keys()) {
+    const isGoalLine = name.startsWith('goal:');
+    const isBundleLine = name.startsWith('entry:') || name.startsWith('scene:');
+    const exists = isGoalLine ? name.slice('goal:'.length) in goals : name in measured;
+    if ((isGoalLine || isBundleLine) && !exists) {
+      const known = isGoalLine ? Object.keys(goals).map(scene => `goal:${scene}`) : Object.keys(measured);
+      problems.push(`The size note line "${name}" names something the build does not have, so it accepts nothing. Use one of: ${known.join(', ')}.`);
+    }
+  }
+  return problems;
+}
+
 // A goal scene may not cross its goal, and a scene already over its goal on the base may not grow beyond build noise (8 bytes).
 // Only a "- goal:<scene>:" line accepts either, and An approves those lines, so a bundle note for the scene does not count.
 export function goalProblems(measured, baseMeasured, goals, accepted = new Map()) {

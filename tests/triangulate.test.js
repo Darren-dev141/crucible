@@ -16,8 +16,8 @@ function starRing(count, center, innerRadius, outerRadius, seed) {
 }
 
 function trianglesArea(points, triangles) {
-  return triangles.reduce((sum, [a, b, c]) => {
-    const area = signedArea([points[a], points[b], points[c]]);
+  return triangles.reduce((sum, [firstCorner, secondCorner, thirdCorner]) => {
+    const area = signedArea([points[firstCorner], points[secondCorner], points[thirdCorner]]);
     assert.ok(area > 0, 'triangles must be counter-clockwise');
     return sum + area;
   }, 0);

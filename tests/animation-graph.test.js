@@ -315,3 +315,23 @@ test('counts stay bounded', () => {
   const states = Array.from({ length: ANIMATION_GRAPH_LIMITS.maximumStates + 1 }, (_, index) => ({ name: `s${index}`, clip: 'idle' }));
   assert.throws(() => createAnimationGraph({ clips: CLIPS, layers: [{ name: 'base', states }] }), /states must be an array of 1 to 64/);
 });
+
+test('a non-looping state over a looping clip holds the last frame instead of snapping to the first', async () => {
+  const { sampleAnimationClip } = await import('../src/animation.js');
+  const rotationAt = degrees => Array.from(quat.setAxisAngle(new Float64Array(4), [0, 0, 1], degrees * Math.PI / 180));
+  const loopingClip = createAnimationClip({
+    duration: 1,
+    loop: true,
+    tracks: [{ target: 'arm', property: 'rotation', keyframes: [{ time: 0, value: rotationAt(0) }, { time: 1, value: rotationAt(90) }] }],
+  });
+  const graph = createAnimationGraph({
+    clips: { swing: loopingClip },
+    layers: [{ name: 'base', states: [{ name: 'swing', clip: 'swing', loop: false }] }],
+  });
+  const [layer] = graph.poseLayers();
+  for (const seconds of [1, 1.5, 3]) {
+    graph.reset().advance(seconds);
+    const held = sampleAnimationClip(layer.clip, layer.clipTime())[0].value;
+    assert.ok(Math.abs(Math.abs(held[2]) - Math.sin(Math.PI / 4)) < 1e-6, `after ${seconds}s the arm must stay at 90 degrees, got ${held}`);
+  }
+});

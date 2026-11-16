@@ -27,8 +27,8 @@ function volume(mesh) {
       corners.push([mesh.positions[vertex], mesh.positions[vertex + 1], mesh.positions[vertex + 2]]);
     }
     for (let index = 1; index + 1 < corners.length; index++) {
-      const [a, b, c] = [corners[0], corners[index], corners[index + 1]];
-      total += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6;
+      const [firstPoint, secondPoint, thirdPoint] = [corners[0], corners[index], corners[index + 1]];
+      total += (firstPoint[0] * (secondPoint[1] * thirdPoint[2] - secondPoint[2] * thirdPoint[1]) - firstPoint[1] * (secondPoint[0] * thirdPoint[2] - secondPoint[2] * thirdPoint[0]) + firstPoint[2] * (secondPoint[0] * thirdPoint[1] - secondPoint[1] * thirdPoint[0])) / 6;
     }
   }
   return total;
@@ -290,4 +290,11 @@ test('circularize validates its fields and its loop', () => {
   assert.throws(() => normalizeMeshEdits([{ op: 'circularize', verts: { all: true }, regular: 'yes' }]), /edits\[0\]\.regular/);
   assert.throws(() => run(cube(), [{ op: 'circularize', verts: { all: true } }]), /selected neighbours/);
   assert.throws(() => run(cube(), [{ op: 'circularize', verts: { vertices: [0, 1] } }]), /selected neighbours/);
+});
+
+test('unsubdivide hands each coarse face the tags of the quads it came from', () => {
+  const tagged = cube();
+  const subdivided = run(tagged, [{ op: 'subdivide', levels: 1 }]).mesh;
+  const { mesh } = run(subdivided, [{ op: 'unsubdivide' }]);
+  assert.deepEqual(tagCounts(mesh), tagCounts(tagged));
 });

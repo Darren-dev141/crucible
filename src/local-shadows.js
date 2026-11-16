@@ -22,7 +22,8 @@ function spotUp(direction) {
 
 // Writes the view-projection of one atlas tile and returns the angle one shadow texel covers, in radians.
 export function writeShadowTile({ light, face }, target) {
-  const far = light.range > 0 ? light.range : DEFAULT_SHADOW_DISTANCE;
+  // A range at or below the near plane would flip or collapse the depth range, so the far plane keeps a gap past it.
+  const far = Math.max(light.range > 0 ? light.range : DEFAULT_SHADOW_DISTANCE, NEAR_PLANE * 2);
   const isSpot = face === SPOT_FACE;
   const fieldOfView = isSpot
     ? Math.min(2 * (light.angle ?? Math.PI / 4) + SPOT_FIELD_OF_VIEW_MARGIN, MAXIMUM_SPOT_FIELD_OF_VIEW)

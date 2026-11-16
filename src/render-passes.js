@@ -168,8 +168,25 @@ export function installRenderPasses(renderer) {
   }
 
   // Part names by object ID minus one, in the order the object ID pass numbers them (draw order, grouped by geometry).
+  function objectParts() {
+    return renderer.batches.filter(batch => renderer.drawsInOpaqueLoop(batch)).flatMap(batch => batch.parts);
+  }
+
   function objectNames() {
-    return renderer.batches.filter(batch => renderer.drawsInOpaqueLoop(batch)).flatMap(batch => batch.parts.map(part => part.name));
+    return objectParts().map(part => part.name);
+  }
+
+  // Object IDs by owning node, so a prop made of several parts reads as one entry. A part of a placed asset names its
+  // placement in `group`; any other part is its own node.
+  function objectNodes() {
+    // No prototype, so a node named "constructor" or "__proto__" is an ordinary entry.
+    const nodes = Object.create(null);
+    objectParts().forEach((part, index) => {
+      const key = part.group ?? part.name;
+      if (!nodes[key]) nodes[key] = [];
+      nodes[key].push(index + 1);
+    });
+    return nodes;
   }
 
   function materialTable() {
@@ -280,6 +297,7 @@ export function installRenderPasses(renderer) {
     bindFrame,
     drawBatch,
     objectNames,
+    objectNodes,
     cryptomatteManifest,
     releaseTargets,
     dispose,

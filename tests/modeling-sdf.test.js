@@ -14,10 +14,10 @@ function hashOf(mesh) {
 function volumeOf({ positions, indices }) {
   let total = 0;
   for (let offset = 0; offset < indices.length; offset += 3) {
-    const [a, b, c] = [0, 1, 2].map(corner => indices[offset + corner] * 3);
-    total += (positions[a] * (positions[b + 1] * positions[c + 2] - positions[b + 2] * positions[c + 1])
-      - positions[a + 1] * (positions[b] * positions[c + 2] - positions[b + 2] * positions[c])
-      + positions[a + 2] * (positions[b] * positions[c + 1] - positions[b + 1] * positions[c])) / 6;
+    const [firstOffset, secondOffset, thirdOffset] = [0, 1, 2].map(corner => indices[offset + corner] * 3);
+    total += (positions[firstOffset] * (positions[secondOffset + 1] * positions[thirdOffset + 2] - positions[secondOffset + 2] * positions[thirdOffset + 1])
+      - positions[firstOffset + 1] * (positions[secondOffset] * positions[thirdOffset + 2] - positions[secondOffset + 2] * positions[thirdOffset])
+      + positions[firstOffset + 2] * (positions[secondOffset] * positions[thirdOffset + 1] - positions[secondOffset + 1] * positions[thirdOffset])) / 6;
   }
   return total;
 }

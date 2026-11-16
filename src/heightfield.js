@@ -156,13 +156,13 @@ export function createHeightfieldGeometry({ columns, rows, eastAt, northAt, heig
     for (let column = 0; column < columns - 1; column += 1) {
       if (!kept[row * (columns - 1) + column]) continue;
       const a = row * columns + column;
-      const c = a + columns;
+      const belowIndex = a + columns;
       indices[cursor] = a;
-      indices[cursor + 1] = c;
+      indices[cursor + 1] = belowIndex;
       indices[cursor + 2] = a + 1;
       indices[cursor + 3] = a + 1;
-      indices[cursor + 4] = c;
-      indices[cursor + 5] = c + 1;
+      indices[cursor + 4] = belowIndex;
+      indices[cursor + 5] = belowIndex + 1;
       cursor += 6;
     }
   }

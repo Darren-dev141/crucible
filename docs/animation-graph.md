@@ -156,8 +156,8 @@ const pose = createAssetPose(character, {
 });
 ```
 
-- `createFootPlacement({ root, middle, end, groundOffset, ankleHeight, liftHeight, maxAdjust, smoothSeconds, weight, pole, bendToward, groundNormal })`: `groundOffset(footPosition)` returns how far the ground under the animated foot is above (positive) or below the ground the clip was made for. A planted foot (near `ankleHeight`, within `liftHeight`, default 0.15) follows it by at most `maxAdjust` (default 0.4); a swinging foot is left alone. `smoothSeconds` (default 0.06) eases the correction.
-- `createLookAt({ joints, target, forward, worldForward, maxAngle, smoothSeconds, weight })`: turns the chain from its base to the aiming joint toward a point or a function `(time, current) => [x, y, z]`, by at most `maxAngle` degrees (default 70) from the animated direction.
+- `createFootPlacement({ root, middle, end, groundOffset, ankleHeight, liftHeight, maxAdjust, smoothSeconds, weight, pole, bendToward, groundNormal })`: `groundOffset(footPosition)` returns how far the ground under the animated foot is above (positive) or below the ground the clip was made for. A planted foot (near `ankleHeight`, within `liftHeight`, default 0.15) follows it by at most `maxAdjust` (default 0.4); a swinging foot is left alone. `smoothSeconds` (default 0.06) eases the correction. A non-finite offset keeps the last good one (none before the first) and warns once.
+- `createLookAt({ joints, target, forward, worldForward, maxAngle, smoothSeconds, weight })`: turns the chain from its base to the aiming joint toward a point or a function `(time, current) => [x, y, z]`, by at most `maxAngle` degrees (default 70) from the animated direction. A target that is not three finite numbers keeps the last good one and warns once.
 
 `weight` is a number or a function of the pose time from 0 to 1, so a graph parameter can fade a hook in and out. The positions are in the pose's space: the skeleton pose's model space, or the world space of the asset for `createAssetPose`.
 

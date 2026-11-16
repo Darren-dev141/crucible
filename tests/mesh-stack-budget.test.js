@@ -32,7 +32,7 @@ test('re-evaluating a 70k-vertex stack 10 times in one scene stays inside the de
 
 test('the vertex budget still rejects a stack that is over the limit by itself (#818)', () => {
   const scene = createAgentScene(seaRecipe(2), { maxVertices: 50_000 });
-  assert.throws(() => setStack(scene, 0, 38, 1), /maxVertices/);
+  assert.throws(() => setStack(scene, 0, 38, 1), /over the limit of 50000 vertices/);
 });
 
 test('releasing undo history keeps the newest revisions and reports the released count (#818)', () => {
@@ -52,4 +52,21 @@ test('an edit that releases nothing reports zero released revisions (#818)', () 
   const scene = createAgentScene(seaRecipe(2));
   setStack(scene, 0, 3, 1);
   assert.equal(scene.releasedRevisions, 0);
+});
+
+test('a cached stack result is checked again against smaller limits (#1545)', async () => {
+  const { meshFromGeometry, evaluateMeshStack } = await import('../src/mesh.js');
+  const { sphere } = await import('../src/geometry.js');
+  const store = new Map();
+  const cache = { get: key => store.get(key), set: (key, value) => store.set(key, value) };
+  const mesh = meshFromGeometry(sphere(16, 12));
+  const stack = [{ op: 'array', count: 8 }];
+  const large = evaluateMeshStack(mesh, stack, { maxVertices: 100_000, maxFaces: 100_000, cache, cacheKey: 'sphere' });
+  assert.ok(large.mesh.vertexCount > 500);
+  assert.throws(
+    () => evaluateMeshStack(mesh, stack, { maxVertices: 500, maxFaces: 500, cache, cacheKey: 'sphere' }),
+    /over the limit of 500 vertices/,
+  );
+  const again = evaluateMeshStack(mesh, stack, { maxVertices: 100_000, maxFaces: 100_000, cache, cacheKey: 'sphere' });
+  assert.equal(again.results[0].cached, true);
 });

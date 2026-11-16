@@ -212,10 +212,10 @@ function partVolumes(mesh, facePart, partCount) {
 // A slightly skewed ray direction avoids running exactly along axis-aligned edges and faces.
 const RAY_DIRECTION = [0.8017837, 0.5345225, 0.2672612];
 
-/** Whether the ray from origin along RAY_DIRECTION crosses triangle (a, b, c), by Moller-Trumbore. */
-function rayHitsTriangle(origin, positions, a, b, c) {
-  const edgeFirst = [positions[b] - positions[a], positions[b + 1] - positions[a + 1], positions[b + 2] - positions[a + 2]];
-  const edgeSecond = [positions[c] - positions[a], positions[c + 1] - positions[a + 1], positions[c + 2] - positions[a + 2]];
+/** Whether the ray from origin along RAY_DIRECTION crosses triangle (firstOffset, secondOffset, thirdOffset), by Moller-Trumbore. */
+function rayHitsTriangle(origin, positions, firstOffset, secondOffset, thirdOffset) {
+  const edgeFirst = [positions[secondOffset] - positions[firstOffset], positions[secondOffset + 1] - positions[firstOffset + 1], positions[secondOffset + 2] - positions[firstOffset + 2]];
+  const edgeSecond = [positions[thirdOffset] - positions[firstOffset], positions[thirdOffset + 1] - positions[firstOffset + 1], positions[thirdOffset + 2] - positions[firstOffset + 2]];
   const [directionX, directionY, directionZ] = RAY_DIRECTION;
   const perpendicular = [
     directionY * edgeSecond[2] - directionZ * edgeSecond[1],
@@ -225,7 +225,7 @@ function rayHitsTriangle(origin, positions, a, b, c) {
   const determinant = edgeFirst[0] * perpendicular[0] + edgeFirst[1] * perpendicular[1] + edgeFirst[2] * perpendicular[2];
   if (Math.abs(determinant) < 1e-12) return false;
   const inverse = 1 / determinant;
-  const toOrigin = [origin[0] - positions[a], origin[1] - positions[a + 1], origin[2] - positions[a + 2]];
+  const toOrigin = [origin[0] - positions[firstOffset], origin[1] - positions[firstOffset + 1], origin[2] - positions[firstOffset + 2]];
   const u = (toOrigin[0] * perpendicular[0] + toOrigin[1] * perpendicular[1] + toOrigin[2] * perpendicular[2]) * inverse;
   if (u < 0 || u > 1) return false;
   const cross = [

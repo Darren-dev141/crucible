@@ -13,8 +13,11 @@ function lightsOf(lighting) {
   return [...(lighting.pointLights ?? []), ...(lighting.spotLights ?? []), ...(lighting.areaLights ?? [])];
 }
 
-/** Whether a `lightBake` call can run on the GPU: the kernel has no light linking (`affects`). */
+/** Whether a `lightBake` call can run on the GPU: the kernel has no light linking (`affects` on a light, `keyAffects` on the sun). */
 export function canBakeOnGpu(lighting) {
+  if (lighting.keyAffects !== undefined && lighting.keyAffects !== null) {
+    return false;
+  }
   return lightsOf(lighting).every(light => light.affects === undefined || light.affects === null);
 }
 

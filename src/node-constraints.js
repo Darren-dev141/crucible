@@ -716,10 +716,10 @@ function armatureConstraint(ownerWorld, worlds, restWorlds, indexById, constrain
     totalWeight += entry.weight;
     vec3.scaleAndAdd(translations, translations, transformed.translation, entry.weight);
     vec3.scaleAndAdd(scales, scales, transformed.scale, entry.weight);
-    const q = transformed.rotation;
-    if (!firstQuat) firstQuat = q;
-    const sign = quat.dot(firstQuat, q) < 0 ? -entry.weight : entry.weight;
-    for (let i = 0; i < 4; i++) accumRotation[i] += q[i] * sign;
+    const transformedRotation = transformed.rotation;
+    if (!firstQuat) firstQuat = transformedRotation;
+    const sign = quat.dot(firstQuat, transformedRotation) < 0 ? -entry.weight : entry.weight;
+    for (let i = 0; i < 4; i++) accumRotation[i] += transformedRotation[i] * sign;
   }
   if (totalWeight <= NEAR_ZERO) return ownerWorld;
   vec3.scale(translations, translations, 1 / totalWeight);

@@ -77,7 +77,7 @@ def build_camera_entries(scene, width, height, report, camera_object=None, honor
         "up": to_yup(up_vector),
         "fov": vertical_fov_degrees(camera_data, width, height),
         "near": camera_data.clip_start,
-        "far": max(camera_data.clip_end, 1000.0),
+        "far": conversions.far_clip(camera_data.clip_start, camera_data.clip_end),
     }
     lens_entry = {"enabled": False}
     if camera_data.dof.use_dof:
@@ -94,25 +94,33 @@ def build_camera_entries(scene, width, height, report, camera_object=None, honor
             "apertureRatio": dof.aperture_ratio,
             "sensorWidth": effective_horizontal_sensor_width(camera_data, width, height),
         }
+        for note in conversions.lens_feature_notes(dof.aperture_ratio):
+            report["notes"].append(note)
     report["lens"] = lens_entry
     return camera_entry, lens_entry
 
 
 # ---- Lights ----
-
-def light_color_with_exposure(light_data):
+def light_color_with_exposure(light_data, report_notes=None):
+    """Colour and energy of a light as Cook reads them, with an Emission node's strength and colour folded in."""
     exposure_scale = 2.0 ** getattr(light_data, "exposure", 0.0)
-    return [float(channel) for channel in light_data.color], light_data.energy * exposure_scale
+    strength, colour_factor, node_notes = conversions.resolve_light_nodes(light_data.name, conversions.light_node_tree_summary(light_data))
+    if report_notes is not None:
+        for note in node_notes:
+            if note not in report_notes:
+                report_notes.append(note)
+    color = [float(channel) * factor for channel, factor in zip(light_data.color, colour_factor)]
+    return color, light_data.energy * strength * exposure_scale
 
 
 def add_light_entry(environment, light_object, light_matrix, report):
     light_data = light_object.data
-    color, energy = light_color_with_exposure(light_data)
+    color, energy = light_color_with_exposure(light_data, report["notes"])
     if energy <= 0.0:
         return
     for note in conversions.light_feature_notes(
         light_object.name, light_data.type, getattr(light_data, "use_temperature", False), getattr(light_data, "use_shadow", True),
-        getattr(light_data, "diffuse_factor", 1.0), getattr(light_data, "specular_factor", 1.0), bool(getattr(light_data, "node_tree", None)),
+        getattr(light_data, "diffuse_factor", 1.0), getattr(light_data, "specular_factor", 1.0),
     ):
         if note not in report["notes"]:
             report["notes"].append(note)
@@ -413,6 +421,8 @@ def collect_parts(depsgraph, materials, report):
             for slot, arrays in groups.items():
                 geometry_indices[key][slot] = len(geometries)
                 geometries.append(arrays)
+        if not geometry_indices[key]:
+            report["emptyMeshCount"] = report.get("emptyMeshCount", 0) + 1
         for slot, geometry_index in geometry_indices[key].items():
             part = {
                 "name": original_object.name if instance.parent is None else f"{instance.parent.original.name}/{original_object.name}",
@@ -445,7 +455,7 @@ def export_scene(depsgraph, width, height, work_directory):
     materials = MaterialExporter(work_directory)
     environment, geometries, parts = collect_parts(depsgraph, materials, report)
     if not parts:
-        raise ValueError("The scene has no visible mesh to render. Check that objects are enabled for rendering (the camera icon in the Outliner).")
+        raise ValueError(conversions.no_visible_mesh_message(report.get("emptyMeshCount", 0)))
     world_entry = export_world(scene.world, work_directory, report)
     for object_type, count in report["unsupportedObjects"].items():
         report["notes"].append(f"{count} {object_type} object(s) are not rendered: Cook draws triangle meshes only in this release")

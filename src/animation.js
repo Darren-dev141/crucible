@@ -192,12 +192,26 @@ export function bakeEasedKeyframes(track, stepsPerSegment) {
   return baked;
 }
 
+// A frame time such as 9 / 30 = 0.3 sits a hair under the third cycle of a 0.1 s clip; it belongs to the cycle that starts there.
+// Well under the 1e-9 s that rig.js reads before a loop end to bake the end pose.
+const CYCLE_EDGE_TOLERANCE = 1e-10;
+
+/** Splits a time offset into whole cycles and the time inside the cycle, snapping a time a hair before a cycle start to that start. */
+export function splitIntoCycles(offset, length) {
+  let cycle = Math.floor(offset / length);
+  let local = Math.max(0, offset - cycle * length);
+  if (length - local <= CYCLE_EDGE_TOLERANCE) {
+    cycle += 1;
+    local = 0;
+  }
+  return { cycle, local };
+}
+
 function normalizedTime(clip, time) {
   if (!Number.isFinite(time)) throw new TypeError('Animation time must be finite.');
   // A clip that does not loop passes the time through: keyframes lie within the duration, so tracks hold their ends anyway, and extrapolation and cycles need the time past them.
   if (!clip.loop) return time;
-  const remainder = time % clip.duration;
-  return remainder < 0 ? remainder + clip.duration : remainder;
+  return splitIntoCycles(time, clip.duration).local;
 }
 
 export function sampleAnimationClip(clip, time) {

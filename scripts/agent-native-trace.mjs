@@ -5,6 +5,8 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { clampLimitsByEngine, requireRenderEngine } from './render-engine.mjs';
+import { mapLookToCookPost } from './native-post-look.mjs';
+import { encodeOpaquePng } from './native-png.mjs';
 import { NATIVE_JOB_MAXIMUM_INSTANCES, NATIVE_JOB_MAXIMUM_TRIANGLES } from './native-bake-page.js';
 
 // The name sits in a variable so the bundler leaves the import alone; the package resolves from the user's node_modules.
@@ -278,19 +280,61 @@ function blendOverTime({ temporal, color, features, kernelParams, route, report 
 }
 
 /**
+ * Waits one macrotask. The native addon returns each frame plane as an external ArrayBuffer whose finalizer frees the Rust
+ * allocation, and V8 runs those finalizers from the event loop. A frame loop that only awaits promises never lets them
+ * run, so each frame's planes pile up (about 13 MB a frame at 480 x 270) until the loop yields (codepawl/cook#34, #1211).
+ */
+export function yieldToEventLoop() {
+  return new Promise(resolve => setImmediate(resolve));
+}
+
+/**
  * Traces one frame the page exported and returns the PNG (base64) with the job report. `denoise` is "none", "wavelet",
  * "atrous" (the tracer's GPU filter, which is also where a missing or failing OIDN lands) or "oidn"; `denoiser` is the
  * loaded OIDN package for "oidn". The result also holds `rawLinear`, the traced colour before any filter (three floats per
  * pixel), which equals `linear` when no filter ran. `sequence` (from createNativeSequence) renders a cycles kernel frame through the job's
  * persistent session and adds `report.nativeSession`, the route the frame took. `temporal` (from createTemporalAccumulator)
  * blends the filtered colour of a session frame into the frames before it and adds `report.temporal`; `linear` is the
- * blended colour and `rawLinear` stays the traced colour of this frame alone. Throws when the tracer cannot run, so the caller can fall back.
+ * blended colour and `rawLinear` stays the traced colour of this frame alone. `viewTransform` (aces, agx or neutral), `look` and
+ * `exposure` set the display look. A session frame with no JavaScript denoiser or temporal blend gets its 8-bit display bytes from
+ * Cook's GPU post stage (`nativePost: false` turns that off); any other frame, or a look Cook's post cannot say, uses the
+ * JavaScript helper, and `report.display` names the path and the reason. `report.encodeSeconds` is the display and PNG time. Throws when the tracer cannot run, so the caller can fall back.
  */
-export async function traceFrameNative({ tracer, exported, width, height, samples, bounces, seed, denoise, denoiser, maxSeconds, noiseThreshold = 0, kernel = chooseNativeKernel(), sequence, temporal }) {
+export async function traceFrameNative(frameOptions) {
+  const traced = await traceOneFrameNative(frameOptions);
+  // The frame's planes are unreferenced now, so the yield lets their finalizers run before the next frame is traced.
+  await yieldToEventLoop();
+  return traced;
+}
+
+/**
+ * The 8-bit display bytes of a frame. Cook's GPU post stage made them (`traced.display`) when the frame asked for it and the film it
+ * resolved is the film shown: no JavaScript denoiser or temporal blend changed `linear` afterwards. Otherwise the JavaScript helper
+ * makes them, and `report.display` says which path ran and why.
+ */
+async function displayBytes({ traced, linear, width, height, nativePost, postTrace, report, look }) {
+  const { toneMapToRgba8 } = await import('../src/path-tracer.js');
+  if (postTrace.post && traced.display) {
+    report.display = { path: 'cook-post', postSeconds: traced.postSeconds };
+    return traced.display;
+  }
+  const reason = nativePost === false ? 'native post was switched off for this frame'
+    : postTrace.reason ?? 'this frame did not render through a session';
+  report.display = { path: 'javascript', reason };
+  const scaled = look.exposure === 1 ? linear : linear.map(value => value * look.exposure);
+  return toneMapToRgba8(scaled, width, height, { viewTransform: look.viewTransform, look: look.look });
+}
+
+async function traceOneFrameNative({ tracer, exported, width, height, samples, bounces, seed, denoise, denoiser, maxSeconds, noiseThreshold = 0, kernel = chooseNativeKernel(), sequence, temporal,
+  nativePost = true, viewTransform = 'aces', look = null, exposure = 1 }) {
   const started = performance.now();
   const filtersInTrace = denoise === 'atrous' && kernel === 'cycles';
   const tables = decodeTables(exported);
-  const traceOptions = { width, height, samples, maxSeconds, kernel, noiseThreshold, ...(filtersInTrace ? { denoise: 'atrous' } : {}) };
+  // The GPU post stage reads the film the session resolved, so it fits only when no JavaScript step edits the film afterwards.
+  const jsEditsFilm = !(denoise === 'none' || filtersInTrace) || Boolean(temporal);
+  const postRequest = nativePost === false ? {} : jsEditsFilm ? { reason: 'a JavaScript denoiser or temporal blend edits the film after the trace' } : mapLookToCookPost({ viewTransform, look, exposure });
+  const traceOptions = { width, height, samples, maxSeconds, kernel, noiseThreshold, ...(filtersInTrace ? { denoise: 'atrous' } : {}),
+    ...(sequence && kernel === 'cycles' && postRequest.post ? { post: postRequest.post } : {}) };
   const { traced, route, kernelParams } = sequence && kernel === 'cycles'
     ? sequence.trace(tables, traceOptions)
     : { traced: tracer.traceNative(tables, traceOptions) };
@@ -338,8 +382,10 @@ export async function traceFrameNative({ tracer, exported, width, height, sample
   if (temporal) {
     linear = blendOverTime({ temporal, color: linear, features, kernelParams, route, report });
   }
-  const [{ toneMapToRgba8 }, { encodePng }] = await Promise.all([import('../src/path-tracer.js'), import('../src/export-png.js')]);
-  const png = encodePng(toneMapToRgba8(linear, width, height), width, height);
+  const encodeStarted = performance.now();
+  const rgba8 = await displayBytes({ traced, linear, width, height, nativePost, postTrace: postRequest, report, look: { viewTransform, look, exposure } });
+  const png = encodeOpaquePng(rgba8, width, height);
+  report.encodeSeconds = (performance.now() - encodeStarted) / 1000;
   report.seconds = (performance.now() - started) / 1000;
   return { data: Buffer.from(png).toString('base64'), report, linear, rawLinear };
 }

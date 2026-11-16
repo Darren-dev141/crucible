@@ -32,6 +32,7 @@ SCRIPT_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 REPOSITORY_ROOT = os.path.abspath(os.path.join(SCRIPT_DIRECTORY, "..", ".."))
 # The scene reading (camera, lights, world description, meshes) is shared with the Blender render add-on.
 sys.path.insert(0, os.path.join(REPOSITORY_ROOT, "packages", "blender-addon"))
+from cook_blender import blender_conversions as conversions  # noqa: E402
 from cook_blender.scene_export import add_light_entry, build_camera_entries, column_major_yup_matrix, describe_world, encode_array, geometry_key, mesh_to_arrays  # noqa: E402
 HDR_RADIANCE_LIMIT = 60000.0
 HDR_WIDTH = 2048
@@ -238,7 +239,7 @@ def prepare_scene(scene, keep_glass):
             hide_object_everywhere(scene_object)
         elif tags & {"transparent", "alpha"}:
             report["cutoutObjectCount"] += 1
-    sun_names = sorted(obj.name for obj in scene.objects if obj.type == "LIGHT" and obj.data.type == "SUN" and not obj.hide_render and obj.name in visible_names)
+    sun_names = sorted(scene_object.name for scene_object in scene.objects if scene_object.type == "LIGHT" and scene_object.data.type == "SUN" and not scene_object.hide_render and scene_object.name in visible_names)
     for extra_sun_name in sun_names[1:]:
         report["extraSunsDropped"].append(extra_sun_name)
         hide_object_everywhere(bpy.data.objects[extra_sun_name])
@@ -421,9 +422,9 @@ def collect_scene_content(scene, width, height, report, glass_names):
     report["negativeDeterminantParts"] = negative_parts
     exported_names = {part["name"].split("/")[-1] for part in parts}
     report["emptyMeshObjects"] = empty_mesh_names[:40]
-    report["renderableObjectsNotExported"] = [f"{obj.name} ({obj.type}, collections {[c.name for c in obj.users_collection][:2]})" for obj in bpy.data.objects if obj.type in MESH_LIKE_OBJECT_TYPES and not obj.hide_render and obj.name not in exported_names and obj.name not in glass_names][:60]
+    report["renderableObjectsNotExported"] = [f"{scene_object.name} ({scene_object.type}, collections {[collection.name for collection in scene_object.users_collection][:2]})" for scene_object in bpy.data.objects if scene_object.type in MESH_LIKE_OBJECT_TYPES and not scene_object.hide_render and scene_object.name not in exported_names and scene_object.name not in glass_names][:60]
     report["partsWithHiddenRayKinds"] = ray_visibility_counts
-    report["shadowCatcherOrHoldoutObjects"] = sum(1 for obj in bpy.data.objects if getattr(obj, "is_shadow_catcher", False) or getattr(obj, "is_holdout", False))
+    report["shadowCatcherOrHoldoutObjects"] = sum(1 for scene_object in bpy.data.objects if getattr(scene_object, "is_shadow_catcher", False) or getattr(scene_object, "is_holdout", False))
     return environment, geometries, parts
 
 
@@ -449,7 +450,7 @@ def collect_inspection(scene):
         "meshDatablocksUsedByMoreThanOneObject": sum(1 for count in shared_data.values() if count > 1),
         "materialCount": len(bpy.data.materials),
         "materialTags": node_types,
-        "collectionInstanceEmpties": sum(1 for obj in bpy.data.objects if obj.instance_type == "COLLECTION"),
+        "collectionInstanceEmpties": sum(1 for scene_object in bpy.data.objects if scene_object.instance_type == "COLLECTION"),
         "unitScale": scene.unit_settings.scale_length,
         "engine": scene.render.engine,
         "frame": scene.frame_current,
@@ -524,7 +525,7 @@ def describe_lights_and_film(scene):
             "color": list(light_data.color), "radius": getattr(light_data, "shadow_soft_size", None), "hideRender": light_object.hide_render,
             "shape": getattr(light_data, "shape", None), "size": getattr(light_data, "size", None), "sizeY": getattr(light_data, "size_y", None),
             "scale": list(light_object.matrix_world.to_scale()), "library": light_data.library.filepath if light_data.library else None,
-            "useShadow": getattr(light_data, "use_shadow", None), "normalize": getattr(light_data, "normalize", None),
+            "nodeTree": conversions.light_node_tree_summary(light_data), "useShadow": getattr(light_data, "use_shadow", None), "normalize": getattr(light_data, "normalize", None),
             "cyclesSettings": {name: getattr(light_data.cycles, name, None) for name in ("is_portal", "max_bounces", "cast_shadow")} if hasattr(light_data, "cycles") else None,
         })
     world = scene.world

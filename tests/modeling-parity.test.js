@@ -19,19 +19,19 @@ function hashOf(values) {
 function measure(mesh) {
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
-  const p = mesh.positions;
-  for (let offset = 0; offset < p.length; offset += 3) {
+  const positions = mesh.positions;
+  for (let offset = 0; offset < positions.length; offset += 3) {
     for (let axis = 0; axis < 3; axis++) {
-      min[axis] = Math.min(min[axis], p[offset + axis]);
-      max[axis] = Math.max(max[axis], p[offset + axis]);
+      min[axis] = Math.min(min[axis], positions[offset + axis]);
+      max[axis] = Math.max(max[axis], positions[offset + axis]);
     }
   }
   let volume = 0;
   for (let offset = 0; offset < mesh.indices.length; offset += 3) {
     const a = mesh.indices[offset] * 3;
     const b = mesh.indices[offset + 1] * 3;
-    const c = mesh.indices[offset + 2] * 3;
-    volume += (p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1]) + p[a + 1] * (p[b + 2] * p[c] - p[b] * p[c + 2]) + p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c])) / 6;
+    const thirdVertexOffset = mesh.indices[offset + 2] * 3;
+    volume += (positions[a] * (positions[b + 1] * positions[thirdVertexOffset + 2] - positions[b + 2] * positions[thirdVertexOffset + 1]) + positions[a + 1] * (positions[b + 2] * positions[thirdVertexOffset] - positions[b] * positions[thirdVertexOffset + 2]) + positions[a + 2] * (positions[b] * positions[thirdVertexOffset + 1] - positions[b + 1] * positions[thirdVertexOffset])) / 6;
   }
   return { min, max, volume };
 }

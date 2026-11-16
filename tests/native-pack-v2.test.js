@@ -56,12 +56,12 @@ function makeCheckerRgba8(width = 4, height = 4, cutoutLeftHalf = false, neutral
   const data = new Uint8Array(width * height * 4);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4;
+      const pixelOffset = (y * width + x) * 4;
       const bright = (x + y) % 2 === 0;
-      data[idx] = neutralWhite ? 255 : (bright ? 240 : 60);
-      data[idx + 1] = neutralWhite ? 255 : (bright ? 180 : 40);
-      data[idx + 2] = neutralWhite ? 255 : (bright ? 100 : 20);
-      data[idx + 3] = cutoutLeftHalf && x < width / 2 ? 0 : 255;
+      data[pixelOffset] = neutralWhite ? 255 : (bright ? 240 : 60);
+      data[pixelOffset + 1] = neutralWhite ? 255 : (bright ? 180 : 40);
+      data[pixelOffset + 2] = neutralWhite ? 255 : (bright ? 100 : 20);
+      data[pixelOffset + 3] = cutoutLeftHalf && x < width / 2 ? 0 : 255;
     }
   }
   return { width, height, data };
@@ -171,13 +171,13 @@ cookTest('buildNativeInputV2 deduplicates shared mesh BLASes, inverts 3x4 transf
   assert.equal(inst1.u32[32], 0, 'emissive inst1 emissive_base_offset');
 
   // Verify world_to_object * object_to_world == identity on arbitrary point p = [0.7, -1.3, 2.1].
-  const p = [0.7, -1.3, 2.1];
+  const probePoint = [0.7, -1.3, 2.1];
   const o2w = inst0.f32.subarray(0, 12);
   const w2o = inst0.f32.subarray(12, 24);
   const worldP = [
-    o2w[0] * p[0] + o2w[1] * p[1] + o2w[2] * p[2] + o2w[3],
-    o2w[4] * p[0] + o2w[5] * p[1] + o2w[6] * p[2] + o2w[7],
-    o2w[8] * p[0] + o2w[9] * p[1] + o2w[10] * p[2] + o2w[11],
+    o2w[0] * probePoint[0] + o2w[1] * probePoint[1] + o2w[2] * probePoint[2] + o2w[3],
+    o2w[4] * probePoint[0] + o2w[5] * probePoint[1] + o2w[6] * probePoint[2] + o2w[7],
+    o2w[8] * probePoint[0] + o2w[9] * probePoint[1] + o2w[10] * probePoint[2] + o2w[11],
   ];
   const roundTripP = [
     w2o[0] * worldP[0] + w2o[1] * worldP[1] + w2o[2] * worldP[2] + w2o[3],
@@ -185,7 +185,7 @@ cookTest('buildNativeInputV2 deduplicates shared mesh BLASes, inverts 3x4 transf
     w2o[8] * worldP[0] + w2o[9] * worldP[1] + w2o[10] * worldP[2] + w2o[11],
   ];
   for (let axis = 0; axis < 3; axis++) {
-    assert.ok(Math.abs(roundTripP[axis] - p[axis]) < 1e-5, `axis ${axis} round-trip mismatch`);
+    assert.ok(Math.abs(roundTripP[axis] - probePoint[axis]) < 1e-5, `axis ${axis} round-trip mismatch`);
   }
 
   // Mirrored quad across X originally faced +Z; true outward normal after X-mirror still faces +Z!

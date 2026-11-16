@@ -77,6 +77,9 @@ function normalizeEmitter(input, context, path) {
     halfExtents: input.halfExtents === undefined ? [0.5, 0.5, 0.5] : vectorOfThree(input.halfExtents, `${path}.halfExtents`, POSITION_LIMIT).map(Math.abs),
     radius: input.radius === undefined ? 0.5 : finiteNumber(input.radius, `${path}.radius`, 0, POSITION_LIMIT),
   };
+  if (shape === 'box' && input.radius !== undefined) {
+    throw invalidField(`${path}.radius`, input.radius, `left out on a box, sized by ${path}.halfExtents`);
+  }
   if (shape === 'mesh') {
     normalizeMeshEmitter(input, emitter, context, path);
   } else {
@@ -212,6 +215,9 @@ function normalizeHairSystem(input, context, path) {
     droop: finiteNumber(input.droop ?? 0.5, `${path}.droop`, 0, 10),
     lean: finiteNumber(input.lean ?? 0.2, `${path}.lean`, 0, 2),
   };
+  if (input.sway === undefined && input.swayRate !== undefined) {
+    throw invalidField(`${path}.swayRate`, input.swayRate, `left out unless ${path}.sway is set`);
+  }
   if (input.sway !== undefined) {
     system.sway = finiteNumber(input.sway, `${path}.sway`, 0, 10);
     system.swayRate = finiteNumber(input.swayRate ?? 0.5, `${path}.swayRate`, 0.01, 20);
@@ -304,6 +310,9 @@ function surfaceInWorld(geometry, matrix) {
       positions[offset + axis] = matrix[axis] * geometry.positions[offset] + matrix[4 + axis] * geometry.positions[offset + 1] + matrix[8 + axis] * geometry.positions[offset + 2] + matrix[12 + axis];
       normals[offset + axis] = normalMatrix[axis] * geometry.normals[offset] + normalMatrix[3 + axis] * geometry.normals[offset + 1] + normalMatrix[6 + axis] * geometry.normals[offset + 2];
     }
+    // A scaled node shrinks or stretches the inverse-transpose normal; callers need unit normals for speeds and orientation.
+    const length = Math.hypot(normals[offset], normals[offset + 1], normals[offset + 2]) || 1;
+    for (let axis = 0; axis < 3; axis++) normals[offset + axis] /= length;
   }
   return { positions, normals };
 }
@@ -339,30 +348,31 @@ function collisionSurfaceOf(system, nodes, geometries) {
 }
 
 // The emitter group's weight per render vertex. A name the mesh lacks is an error that lists the groups it has.
-function vertexGroupOf(emitter, geometry) {
+function vertexGroupOf(emitter, geometry, emitterPath) {
   const weights = geometry.vertexGroups?.[emitter.group];
   if (!weights) {
     const known = Object.keys(geometry.vertexGroups ?? {});
-    throw invalidField('particles.systems[].emitter.group', emitter.group, `a vertex group of node ${emitter.mesh} (known groups: ${known.join(', ') || 'none'}); make one with a vertex_group mesh edit`);
+    throw invalidField(`${emitterPath}.group`, emitter.group, `a vertex group of node ${emitter.mesh} (known groups: ${known.join(', ') || 'none'}); make one with a vertex_group mesh edit`);
   }
   return weights;
 }
 
-function meshSourceOf(system, nodes, geometries) {
+function meshSourceOf(system, nodes, geometries, systemIndex) {
+  const emitterPath = `particles.systems[${systemIndex}].emitter`;
   const emitter = system.emitter;
   if (emitter.shape !== 'mesh') return emitter;
   const sourceNode = nodes.get(emitter.mesh);
   const geometry = geometries.get(sourceNode.geometry);
   const world = surfaceInWorld(geometry, nodeMatrix(sourceNode));
-  const weights = emitter.group ? vertexGroupOf(emitter, geometry) : null;
+  const weights = emitter.group ? vertexGroupOf(emitter, geometry, emitterPath) : null;
   const sharpAngle = emitter.sharpAngle ?? null;
   const source = createMeshSource(world.positions, world.normals, geometry.indices, emitter.from, weights, sharpAngle);
   if (!source) {
     const groupNote = emitter.group ? ` and some weight in vertex group "${emitter.group}"` : '';
-    throw invalidField(`particles.systems[].emitter.mesh`, emitter.mesh, `a node whose mesh has triangles with some area${groupNote}, because emitter.from is "${emitter.from}"`);
+    throw invalidField(`${emitterPath}.mesh`, emitter.mesh, `a node whose mesh has triangles with some area${groupNote}, because emitter.from is "${emitter.from}"`);
   }
   if (source.triangleCount > PARTICLE_LIMITS.maxEmitterTriangles) {
-    throw invalidField('particles.systems[].emitter.mesh', `${source.triangleCount} triangles on node ${emitter.mesh}`, `a mesh with at most ${PARTICLE_LIMITS.maxEmitterTriangles} triangles, such as a simpler proxy mesh`);
+    throw invalidField(`${emitterPath}.mesh`, `${source.triangleCount} triangles on node ${emitter.mesh}`, `a mesh with at most ${PARTICLE_LIMITS.maxEmitterTriangles} triangles, such as a simpler proxy mesh`);
   }
   return { ...emitter, source };
 }
@@ -407,7 +417,7 @@ export function bakeAgentParticles(particles, recipe, geometries) {
   const nodes = new Map(recipe.nodes.map(node => [node.id, node]));
   const forces = { gravity: particles.gravity ?? DEFAULT_GRAVITY, wind: particles.wind ?? [0, 0, 0], fields: particles.fields ?? [] };
   let totalVertices = 0;
-  const prepared = particles.systems.map(system => {
+  const prepared = particles.systems.map((system, systemIndex) => {
     const node = nodes.get(system.node);
     const verticesPerItem = system.type === 'hair' ? (system.segments + 1) * HAIR_LIMITS.ringSides : Math.max(...templateNodeIds(system).map(nodeId => geometries.get(nodes.get(nodeId).geometry).positions.length / 3));
     totalVertices += verticesPerItem * system.count;
@@ -417,7 +427,7 @@ export function bakeAgentParticles(particles, recipe, geometries) {
       return prepareHair(system, node, surfaceNode, geometries.get(surfaceNode.geometry), forces);
     }
     const templates = templateNodeIds(system).map(nodeId => geometries.get(nodes.get(nodeId).geometry));
-    return prepareEmitter(system, node, templates, forces, collisionSurfaceOf(system, nodes, geometries), meshSourceOf(system, nodes, geometries));
+    return prepareEmitter(system, node, templates, forces, collisionSurfaceOf(system, nodes, geometries), meshSourceOf(system, nodes, geometries, systemIndex));
   });
   return Object.freeze({
     sample(time) {

@@ -79,11 +79,18 @@ export function neutralColor(rgb) {
   return shifted.map(channel => clampUnit(channel * newPeak / peak * (1 - mix) + newPeak * mix));
 }
 
+const LARGEST_RADIANCE = 1e30;
+
+// NaN reads as black and infinity as a very bright finite value, so one bad channel cannot turn the whole pixel into NaN
+// through the matrices and the neutral compression.
+const finiteChannel = value => (Number.isNaN(value) ? 0 : Math.min(LARGEST_RADIANCE, Math.max(-LARGEST_RADIANCE, value)));
+
 /** Linear sRGB in, display transform out, still linear: the part before the 1 / 2.2 power. */
 export function applyViewTransform(name, rgb) {
-  if (name === 'agx') return agxColor(rgb);
-  if (name === 'neutral') return neutralColor(rgb);
-  if (name === 'aces' || name === undefined) return rgb.map(acesChannel);
+  const finite = rgb.map(finiteChannel);
+  if (name === 'agx') return agxColor(finite);
+  if (name === 'neutral') return neutralColor(finite);
+  if (name === 'aces' || name === undefined) return finite.map(acesChannel);
   throw new RangeError(`viewTransform must be one of ${VIEW_TRANSFORM_NAMES.join(', ')}.`);
 }
 
@@ -91,6 +98,12 @@ export function applyViewTransform(name, rgb) {
 
 export const MAXIMUM_LOOK_SIZE = 65;
 const MAXIMUM_LOOK_TEXT = 16 * 1024 * 1024;
+
+function parseCubeTriple(keyword, rest) {
+  const triple = rest.map(Number);
+  if (triple.length !== 3 || !triple.every(Number.isFinite)) throw new RangeError(`${keyword} needs three finite numbers.`);
+  return triple;
+}
 
 /** A look is { size, data }: size cubed RGB triples in 0 to 1, red varying fastest, applied to display-encoded colour. */
 export function parseCube(text) {
@@ -103,20 +116,21 @@ export function parseCube(text) {
     const line = rawLine.replace(/#.*/, '').trim();
     if (line === '' || line.startsWith('TITLE')) continue;
     const [keyword, ...rest] = line.split(/\s+/);
-    if (keyword === 'LUT_3D_SIZE') size = Number(rest[0]);
+    if (keyword === 'LUT_3D_SIZE') size = rest.length === 1 && /^\d+$/.test(rest[0]) ? Number(rest[0]) : 0;
     else if (keyword === 'LUT_1D_SIZE') throw new RangeError('Only 3D .cube looks are supported (LUT_3D_SIZE).');
-    else if (keyword === 'DOMAIN_MIN') domainMinimum = rest.map(Number);
-    else if (keyword === 'DOMAIN_MAX') domainMaximum = rest.map(Number);
-    else if (/^[-+0-9.]/.test(keyword)) values.push(Number(keyword), Number(rest[0]), Number(rest[1]));
+    else if (keyword === 'DOMAIN_MIN') domainMinimum = parseCubeTriple(keyword, rest);
+    else if (keyword === 'DOMAIN_MAX') domainMaximum = parseCubeTriple(keyword, rest);
+    else if (/^[-+0-9.]/.test(keyword)) values.push(...parseCubeTriple('A .cube row', [keyword, ...rest]));
     else throw new RangeError(`Unknown .cube line: ${keyword}`);
   }
   if (!Number.isInteger(size) || size < 2 || size > MAXIMUM_LOOK_SIZE) throw new RangeError(`LUT_3D_SIZE must be an integer from 2 to ${MAXIMUM_LOOK_SIZE}.`);
+  if (domainMaximum.some((maximum, channel) => !(maximum > domainMinimum[channel]))) throw new RangeError('DOMAIN_MAX must be above DOMAIN_MIN in every channel.');
   if (values.length !== size ** 3 * 3 || values.some(value => !Number.isFinite(value))) throw new RangeError(`A ${size}x${size}x${size} .cube look needs ${size ** 3} finite RGB rows.`);
   const data = new Float32Array(values.length);
   for (let index = 0; index < values.length; index++) {
     const channel = index % 3;
     const range = domainMaximum[channel] - domainMinimum[channel];
-    data[index] = clampUnit((values[index] - domainMinimum[channel]) / (range || 1));
+    data[index] = clampUnit((values[index] - domainMinimum[channel]) / range);
   }
   return { size, data };
 }
@@ -155,7 +169,7 @@ export function namedLook(name) {
 /** Trilinear lookup of a display-encoded colour, as the GPU filters the 3D texture. */
 export function sampleLook(look, rgb) {
   const { size, data } = look;
-  const position = rgb.map(channel => clampUnit(channel) * (size - 1));
+  const position = rgb.map(channel => clampUnit(finiteChannel(channel)) * (size - 1));
   const base = position.map(value => Math.min(Math.floor(value), size - 2));
   const result = [0, 0, 0];
   for (let corner = 0; corner < 8; corner++) {

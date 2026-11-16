@@ -151,9 +151,9 @@ export function invertedTriangles(recipe, frameCount) {
     for (let corner = 0; corner < indices.length; corner += 3) {
       const a = indices[corner] * 3;
       const b = indices[corner + 1] * 3;
-      const c = indices[corner + 2] * 3;
+      const thirdVertexOffset = indices[corner + 2] * 3;
       const edgeOne = [positions[b] - positions[a], positions[b + 1] - positions[a + 1], positions[b + 2] - positions[a + 2]];
-      const edgeTwo = [positions[c] - positions[a], positions[c + 1] - positions[a + 1], positions[c + 2] - positions[a + 2]];
+      const edgeTwo = [positions[thirdVertexOffset] - positions[a], positions[thirdVertexOffset + 1] - positions[a + 1], positions[thirdVertexOffset + 2] - positions[a + 2]];
       normals.push([edgeOne[1] * edgeTwo[2] - edgeOne[2] * edgeTwo[1], edgeOne[2] * edgeTwo[0] - edgeOne[0] * edgeTwo[2], edgeOne[0] * edgeTwo[1] - edgeOne[1] * edgeTwo[0]]);
     }
     rest ??= normals;
@@ -182,9 +182,9 @@ export function foldedTriangles(recipe, frameCount) {
     for (let corner = 0; corner < indices.length; corner += 3) {
       const a = indices[corner] * 3;
       const b = indices[corner + 1] * 3;
-      const c = indices[corner + 2] * 3;
+      const thirdVertexOffset = indices[corner + 2] * 3;
       const edgeOne = [positions[b] - positions[a], positions[b + 1] - positions[a + 1], positions[b + 2] - positions[a + 2]];
-      const edgeTwo = [positions[c] - positions[a], positions[c + 1] - positions[a + 1], positions[c + 2] - positions[a + 2]];
+      const edgeTwo = [positions[thirdVertexOffset] - positions[a], positions[thirdVertexOffset + 1] - positions[a + 1], positions[thirdVertexOffset + 2] - positions[a + 2]];
       const facing = (edgeOne[1] * edgeTwo[2] - edgeOne[2] * edgeTwo[1]) * (positions[a] - center[0])
         + (edgeOne[2] * edgeTwo[0] - edgeOne[0] * edgeTwo[2]) * (positions[a + 1] - center[1])
         + (edgeOne[0] * edgeTwo[1] - edgeOne[1] * edgeTwo[0]) * (positions[a + 2] - center[2]);

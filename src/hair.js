@@ -6,7 +6,8 @@ import { addFieldAcceleration } from './force-fields.js';
 
 export const HAIR_LIMITS = Object.freeze({ maxSegments: 8, ringSides: 3, taperAtTip: 0.15 });
 
-// Triangles of a world-space surface with their areas, for area-weighted root sampling.
+// Triangles of a world-space surface with their areas, for area-weighted root sampling. Triangles with a NaN or
+// infinite position or normal are skipped, so one bad vertex cannot turn every root into NaN.
 function surfaceTriangles(positions, normals, indices) {
   const triangles = [];
   let totalArea = 0;
@@ -16,7 +17,8 @@ function surfaceTriangles(positions, normals, indices) {
     const edgeOne = points[1].map((value, axis) => value - points[0][axis]);
     const edgeTwo = points[2].map((value, axis) => value - points[0][axis]);
     const area = Math.hypot(...cross(edgeOne, edgeTwo)) / 2;
-    if (area > 0) {
+    const usable = points.every(point => point.every(Number.isFinite)) && vertices.every(vertex => [0, 1, 2].every(axis => Number.isFinite(normals[vertex * 3 + axis])));
+    if (usable && area > 0) {
       totalArea += area;
       triangles.push({ vertices, points, area, cumulativeArea: totalArea });
     }

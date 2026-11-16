@@ -289,3 +289,19 @@ test('variable mode advances the controller and rig from update', () => {
   assert.ok(player.state.position[2] < -1);
   assert.ok(rig.focus[2] < 0);
 });
+
+test('a camera rig ignores a variable update whose time step is zero, negative or not a number', () => {
+  const subject = { position: [1, 2, 3], yaw: 0.5 };
+  const rig = createFollowCamera({ subject, input: createScriptedInput(), distance: 5, pitch: 0.35 });
+  rig.init();
+  const before = JSON.stringify(rig.pose({ alpha: 1 }));
+  for (const deltaSeconds of [Number.NaN, -1, 0, -Infinity]) {
+    subject.position = [4, 2, 3];
+    rig.update(deltaSeconds, { mode: 'variable' });
+    assert.equal(JSON.stringify(rig.pose({ alpha: 1 })), before, `dt ${deltaSeconds} moved the camera`);
+  }
+  rig.update(1, { mode: 'variable' });
+  const after = rig.pose({ alpha: 1 });
+  assert.ok([...after.eye, ...after.target].every(Number.isFinite));
+  assert.notEqual(JSON.stringify(after), before, 'a real step still follows the subject');
+});

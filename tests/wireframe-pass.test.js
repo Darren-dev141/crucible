@@ -24,7 +24,7 @@ function recordingContext(calls) {
 function openBoxGeometry() {
   const positions = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1]);
   const quads = [[0, 3, 2, 1], [0, 1, 5, 4], [2, 3, 7, 6], [0, 4, 7, 3], [1, 2, 6, 5]];
-  const indices = quads.flatMap(([a, b, c, d]) => [a, b, c, a, c, d]);
+  const indices = quads.flatMap(([firstCorner, secondCorner, thirdCorner, fourthCorner]) => [firstCorner, secondCorner, thirdCorner, firstCorner, thirdCorner, fourthCorner]);
   return { positions, normals: new Float32Array(positions.length), indices: new Uint32Array(indices) };
 }
 

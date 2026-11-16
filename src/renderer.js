@@ -1,7 +1,8 @@
 import { resolveBackground, clearColourFor } from './clear-colour.js';
 import { materialTags } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
-import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
+import { BLEND_FACTORS } from './blend-output.js';
+import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
 import { postFragment, createPostFragment, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
 import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
@@ -22,7 +23,7 @@ import { MaterialSnapshot } from './material-snapshot.js';
 import { wearUniformValues } from './material-wear.js';
 import { fittedFogDensity } from './fog-fit.js';
 import { InstanceSelection, extractFrustumPlanes, geometryBoundingSphere, selectInstances } from './render-culling.js';
-import { resolveShadowLight, shadowBiasPerSlope } from './shadow-light.js';
+import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope } from './shadow-light.js';
 import { MAX_MORPH_TARGETS, requireFeatureCode, deformationSupport, requireDeformationSupport, texturedReplaceSupport, textureUpdateSupport } from './shader-registry.js';
 
 const SHADOW_MAP_SIZE = 2048;
@@ -168,7 +169,7 @@ const ALPHA_UNIFORMS = ['alphaMode', 'alphaCutoff', 'materialOpacity', 'alphaToC
 const DEPTH_ALPHA_UNIFORMS = ['alphaMasked', 'alphaCutoff', 'materialOpacity', 'hasBaseMap', 'baseMap', 'tintPass', 'tintTransmission', 'tintMapSize', 'tintBias', 'opaqueShadow'];
 const MORPH_UNIFORMS = ['morphEnabled', 'morphVertexCount', 'morphTargetCount', 'morphWeights[0]', 'morphSlotTargets[0]', 'morphTargets'];
 const ENVIRONMENT_LOOKUP_UNIFORMS = ['environmentSpecular', 'environmentEnabled', 'environmentIntensity', 'environmentRotation', 'environmentLevelMax'];
-const ENVIRONMENT_UNIFORMS = [...ENVIRONMENT_LOOKUP_UNIFORMS, 'environmentBrdf', 'environmentIrradiance[0]'];
+const ENVIRONMENT_UNIFORMS = [...ENVIRONMENT_LOOKUP_UNIFORMS, 'environmentBrdf', 'environmentIrradiance[0]', 'environmentBounce', 'environmentDiffuseFrame'];
 // Shares a unit with the skin influence texture, which no light-mapped (rigid) batch binds.
 const LIGHT_MAP_UNIT = 6;
 const ENVIRONMENT_SPECULAR_UNIT = 9;
@@ -382,6 +383,11 @@ function isCullable(parts) {
   if (DEFORMING_TAGS.has(first.material.tag) && !SWAYING_TAGS.has(first.material.tag)) return false;
   if (renderPass(first.material) !== 'opaque' || isTranslucentMode(materialAlphaState(first.material)[0])) return false;
   return parts.every(part => !part.assembly || part.crowd);
+}
+
+/** Whether a part may take `lods`: rigid or swaying and opaque, without assembly motion (the parts that culling can choose levels for). */
+export function partTakesLods(part) {
+  return isCullable([part]);
 }
 
 function validateLods(part, levels) {
@@ -688,8 +694,19 @@ function allFinite(values) {
   return true;
 }
 
+// Triangles per pixel above which `denseSamples` replaces `samples`: past one triangle per pixel every pixel is shaded about once per sample anyway, so the extra samples cost fragment work and buy little edge quality (#1163).
+export const DENSE_TRIANGLES_PER_PIXEL = 1;
+
+export function samplesForDensity(parts, canvas, pixelRatio, samples, denseSamples) {
+  if (!Number.isInteger(denseSamples) || denseSamples < 1) throw new Error('denseSamples must be a positive integer or null.');
+  let triangles = 0;
+  for (const part of parts) triangles += part.geometry.indices.length / 3;
+  const pixels = Math.max(1, canvas.clientWidth) * Math.max(1, canvas.clientHeight) * pixelRatio * pixelRatio;
+  return triangles / pixels > DENSE_TRIANGLES_PER_PIXEL ? Math.min(samples, denseSamples) : samples;
+}
+
 export class CrucibleRenderer {
-  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, hdr = false, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB } = {}) {
+  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, denseSamples = null, hdr = false, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB } = {}) {
     this.background = background ? resolveBackground(background) : null;
     this.canvas = canvas;
     this.sceneParts = parts;
@@ -746,7 +763,10 @@ export class CrucibleRenderer {
     this.selectViewTransform(viewTransform, look);
     this.hdr = Boolean(hdr && !benchmark && this.context.getExtension('EXT_color_buffer_float'));
     if (volume.density > 0 && !this.hdr) throw new Error('Volume fog requires EXT_color_buffer_float for HDR rendering');
-    this.multisampleSamples = benchmark ? 0 : sampleCount(this.context, this.hdr ? this.context.RGBA16F : this.context.RGBA8, Math.min(shading === 'light' ? Math.min(samples, LIGHT_SHADING_MAXIMUM_SAMPLES) : samples, this.context.getParameter(this.context.MAX_SAMPLES)));
+    this.baseSamples = samples;
+    this.denseSamples = denseSamples;
+    this.densityParts = parts;
+    this.multisampleSamples = this.chooseMultisampleSamples(this.densityParts);
     this.capabilities = { hdr: this.hdr, hdrRequested: Boolean(hdr), hdrFallbackReason: hdr && !this.hdr ? benchmark ? 'HDR is disabled in benchmark mode' : 'EXT_color_buffer_float is unavailable' : null, samples: this.multisampleSamples };
     this.geometryBytes = 0;
     this.geometryBuffers = new Map();
@@ -854,6 +874,7 @@ export class CrucibleRenderer {
     this.shaderFeatures.add(environment.map ? 'environmentMap' : 'studioLighting');
     shaderFeaturesOfLighting(this.lighting).forEach(feature => this.shaderFeatures.add(feature));
     if (shading === 'light') this.shaderFeatures.add(LIGHT_SHADING_FEATURE);
+    this.shaderFeatures.add(FRAGMENT_SHADOW_POSITION_FEATURE);
     if (shadowCascades) this.shaderFeatures.add(shadowCascades.shaderFeature);
     // Cascades replace the single map the tint is cut against, and the tint map is a half float render target.
     if (this.shaderFeatures.has('tintedShadows') && (shadowCascades || !this.context.getExtension('EXT_color_buffer_float'))) this.shaderFeatures.delete('tintedShadows');
@@ -1042,6 +1063,14 @@ export class CrucibleRenderer {
       const uniform = context.getActiveUniform(this.program, index);
       if (uniform.type === context.SAMPLER_2D) context.uniform1iv(context.getUniformLocation(this.program, uniform.name), new Int32Array(uniform.size).fill(1));
     }
+  }
+
+  /** The MSAA sample count for these parts at the canvas's current size: `samples`, or `denseSamples` when the scene is dense (#1163). */
+  chooseMultisampleSamples(parts) {
+    if (this.benchmark) return 0;
+    const requestedSamples = this.denseSamples == null ? this.baseSamples : samplesForDensity(parts, this.canvas, this.pixelRatio, this.baseSamples, this.denseSamples);
+    const shaded = this.shading === 'light' ? Math.min(requestedSamples, LIGHT_SHADING_MAXIMUM_SAMPLES) : requestedSamples;
+    return sampleCount(this.context, this.hdr ? this.context.RGBA16F : this.context.RGBA8, Math.min(shaded, this.context.getParameter(this.context.MAX_SAMPLES)));
   }
 
   get samples() {
@@ -1379,8 +1408,13 @@ export class CrucibleRenderer {
       throw new TypeError('Scene parts must be an array with distinct object identities.');
     }
     const renderParts = this.groundPart ? [...parts, this.groundPart] : parts;
+    // Local volumes bind to parts by name, so they must see the new list after a topology change.
+    this.sceneParts = parts;
     this.fitParts = renderParts;
     this.fitBounds = undefined;
+    this.densityParts = parts;
+    // A scene that gained or lost triangles can cross the density threshold with no size change; resize() judges it again and rebuilds the targets.
+    const resampled = this.denseSamples != null && this.chooseMultisampleSamples(this.densityParts) !== this.multisampleSamples;
     const grouped = groupWorld(retainedUnchanged ? this.incrementalGrouping : null, parts, this.groundPart, this.batching, retainedUnchanged);
     this.incrementalGrouping = grouped.state;
     const groups = grouped.batches;
@@ -1494,6 +1528,7 @@ export class CrucibleRenderer {
     this.shadowsDirty = true;
     // With retainedUnchanged the caller promises that parts of kept batches did not move, so only the new batches are re-synced.
     this.updateParts(retainedUnchanged ? renderParts.filter(part => !retained.has(this.partLocations.get(part)?.batch)) : renderParts);
+    if (resampled) this.resize();
     return parts.length;
   }
 
@@ -1695,7 +1730,7 @@ export class CrucibleRenderer {
       if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) throw new Error('Shadow framebuffer is incomplete.');
       this.shadowFramebufferCheckedSize = mapSize;
     }
-    const light = resolveShadowLight(this.world, this.activeLightDirection, this.shadowBounds);
+    const light = resolveShadowLight(this.world, this.activeLightDirection, this.shadowBounds, this.fittedWorldShadowView());
     const lightView = mat4.lookAt(mat4.create(), light.eye, light.target, light.up ?? [0, 1, 0]);
     mat4.ortho(this.lightProjection, -light.extent, light.extent, -light.extent, light.extent, light.near, light.far);
     mat4.multiply(this.lightProjection, this.lightProjection, lightView);
@@ -1821,6 +1856,15 @@ export class CrucibleRenderer {
 
   // `mainMap` is true for the sun's map, where blended and transmissive casters draw into the tint map instead. Elsewhere
   // (cascades, point and spot tiles) they draw as opaque casters, except a blended part that did not ask to cast.
+  // A world scene that sets neither shadowBounds.target nor extent gets a sun view fitted to its casters (issue #1695).
+  // Skinned, morphed or crowd casters can leave any box, so they keep the fixed view.
+  fittedWorldShadowView() {
+    if (!this.world || this.shadowBounds?.target !== undefined || this.shadowBounds?.extent !== undefined) return null;
+    const casters = this.batches.filter(batch => !batch.floor && batch.castShadow).flatMap(batch => batch.parts);
+    if (casters.length === 0) return null;
+    return fitWorldShadowView(sceneBoundsOfParts(casters));
+  }
+
   drawShadowCasters(lightMatrix = this.lightProjection, resolution = null, mainMap = false) {
     const context = this.context;
     context.useProgram(this.depthProgram);
@@ -1920,10 +1964,17 @@ export class CrucibleRenderer {
   resize() {
     // A lost context answers every parameter query with null, so there is no size limit to plan against. This class has no restore path: the caller disposes the renderer and builds a new one when the context comes back.
     if (this.context.isContextLost()) return;
+    // A canvas that grew or shrank changes the triangles per pixel, so denseSamples is judged again; a new count needs new render targets.
+    const previousSamples = this.multisampleSamples;
+    if (this.denseSamples != null) {
+      this.multisampleSamples = this.chooseMultisampleSamples(this.densityParts);
+      this.capabilities.samples = this.multisampleSamples;
+    }
     const plan = planRenderSize({ width: Math.max(1, this.canvas.clientWidth), height: Math.max(1, this.canvas.clientHeight), pixelRatio: this.pixelRatio, samples: this.samples, memoryBudgetMiB: this.memoryBudgetMiB, geometryBytes: this.geometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !this.benchmark, depth: this.depth, maximumSize: Math.min(this.context.getParameter(this.context.MAX_RENDERBUFFER_SIZE), this.context.getParameter(this.context.MAX_TEXTURE_SIZE)), maximumMemoryBudgetMiB: this.maximumMemoryBudgetMiB });
     const { width, height } = plan;
     this.memoryPlan = plan;
-    if (this.canvas.width !== width || this.canvas.height !== height) {
+    const sizeChanged = this.canvas.width !== width || this.canvas.height !== height;
+    if (sizeChanged || this.multisampleSamples !== previousSamples) {
       this.canvas.width = width;
       this.canvas.height = height;
       if (!this.benchmark) this.allocateFrameTargets(width, height);
@@ -2161,10 +2212,21 @@ export class CrucibleRenderer {
     const context = this.context;
     context.uniform1f(uniforms.environmentEnabled, map ? 1 : 0);
     if (!map) return;
-    if (uniforms['environmentIrradiance[0]']) context.uniform3fv(uniforms['environmentIrradiance[0]'], map.irradianceWithBounce?.(this.environmentResources.irradiance) ?? this.environmentResources.irradiance);
+    this.applyDiffuseUniforms(map, uniforms, true);
     context.uniform1f(uniforms.environmentIntensity, map.intensity);
     context.uniform2f(uniforms.environmentRotation, Math.cos(map.rotation), Math.sin(map.rotation));
     context.uniform1f(uniforms.environmentLevelMax, this.environmentResources.levelCount - 1);
+  }
+
+  // The diffuse light of the global map: the fitted coefficients (kept for the light shading preset), the map's rotation and intensity, and the
+  // constant bounce a room adds on top of the exact irradiance grid. A reflection probe passes withBounce false, as it never bounced.
+  applyDiffuseUniforms(map, uniforms, withBounce) {
+    const context = this.context;
+    const coefficients = this.environmentResources.irradiance;
+    const bounced = withBounce ? map.irradianceWithBounce?.(coefficients) : null;
+    if (uniforms['environmentIrradiance[0]']) context.uniform3fv(uniforms['environmentIrradiance[0]'], bounced ?? coefficients);
+    if (uniforms.environmentBounce) context.uniform3f(uniforms.environmentBounce, bounced ? bounced[0] - coefficients[0] : 0, bounced ? bounced[1] - coefficients[1] : 0, bounced ? bounced[2] - coefficients[2] : 0);
+    if (uniforms.environmentDiffuseFrame) context.uniform3f(uniforms.environmentDiffuseFrame, Math.cos(map.rotation), Math.sin(map.rotation), map.intensity);
   }
 
   drawEnvironmentBackground(map, frame, exposure) {
@@ -2509,7 +2571,8 @@ export class CrucibleRenderer {
       if (this.hasOpaqueInstance(batch)) this.drawAlphaBatch({ ...batch, alphaMode: 'mask', alphaCutoff: 0.999 }, true);
     }
     context.enable(context.BLEND);
-    context.blendFuncSeparate(context.SRC_ALPHA, context.ONE_MINUS_SRC_ALPHA, context.ONE, context.ONE_MINUS_SRC_ALPHA);
+    // The program writes a blended part premultiplied, so its specular is not faded by alpha (blend-output.js).
+    context.blendFuncSeparate(context[BLEND_FACTORS.sourceColor], context[BLEND_FACTORS.destinationColor], context[BLEND_FACTORS.sourceAlpha], context[BLEND_FACTORS.destinationAlpha]);
     context.depthMask(false);
     for (const { batch } of ordered) {
       this.uploadSortedInstances(batch, eye);

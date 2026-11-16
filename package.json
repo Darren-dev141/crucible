@@ -148,6 +148,10 @@
     "./addons/game-rules": "./build/game-rules.js",
     "./addons/game": "./build/game.js",
     "./addons/update-part-vertices": "./build/update-part-vertices.js",
+    "./addons/reflection-probes": "./build/reflection-probes.js",
+    "./addons/fracture": "./build/fracture.js",
+    "./addons/morph": "./build/morph.js",
+    "./addons/skinning": "./build/skinning.js",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -174,6 +178,7 @@
     "render:file-cook": "node scripts/render-file-native.mjs",
     "smoke": "node scripts/smoke.mjs",
     "smoke:scenes": "node scripts/smoke-scenes.mjs",
+    "smoke:line-art-nodes": "node scripts/smoke-line-art-nodes.mjs",
     "smoke:vegetation-impostors": "node scripts/smoke-vegetation-impostors.mjs",
     "smoke:transport": "node scripts/smoke-film-transport.mjs",
     "render": "node scripts/render-media.mjs",
@@ -214,6 +219,7 @@
     "smoke:film-physics": "node scripts/smoke-film-physics.mjs",
     "plugin:sync": "node scripts/sync-plugin-version.mjs",
     "publish:ci": "node scripts/publish-ci.mjs",
+    "publish:addons:ci": "node scripts/publish-addons-ci.mjs",
     "smoke:character": "node scripts/smoke-character.mjs",
     "smoke:modeling": "node scripts/smoke-modeling.mjs",
     "smoke:material-maps": "node scripts/smoke-material-maps.mjs",
@@ -240,6 +246,7 @@
     "check:tool-schemas": "node scripts/check-tool-schemas.mjs",
     "check:guide-fields": "node scripts/guide-fields.mjs check",
     "check:links": "node scripts/check-links.mjs",
+    "check:names": "node scripts/check-names.mjs",
     "changes": "node scripts/changelog-fragments.mjs",
     "changes:fold": "node scripts/changelog-fragments.mjs fold",
     "check:change-note": "node scripts/check-change-note.mjs",
@@ -250,6 +257,7 @@
   },
   "peerDependencies": {
     "@dimforge/rapier3d-compat": "0.21.0",
+    "draco3d": "1.5.9",
     "jolt-physics": "1.1.1",
     "manifold-3d": "3.5.4"
   },
@@ -258,6 +266,9 @@
   },
   "peerDependenciesMeta": {
     "@dimforge/rapier3d-compat": {
+      "optional": true
+    },
+    "draco3d": {
       "optional": true
     },
     "jolt-physics": {
@@ -269,12 +280,13 @@
   },
   "devDependencies": {
     "@codepawlhq/crucible-denoise-oidn": "file:packages/denoise-oidn",
-    "@codepawlhq/cook": "git+https://github.com/codepawl/cook.git#aec00c809ebbb315f2231933be10c2333af5bc50",
+    "@codepawlhq/cook": "git+https://github.com/codepawl/cook.git#2d6e7af518836f07ea17477e5bcd7673318a9b1b",
     "@dimforge/rapier3d-compat": "0.21.0",
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
+    "draco3d": "1.5.9",
     "esbuild": "0.28.2",
     "gl-matrix": "3.4.4",
     "highlight.js": "11.12.0",

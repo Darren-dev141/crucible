@@ -14,7 +14,7 @@ import { installCoplanarDiagnostics } from '../src/coplanar-overlap.js';
 import { applyProjection } from '../src/camera.js';
 import { mat4 } from 'gl-matrix';
 import { listAddedControllerKinds, listAddedCameraRigKinds, listControllerKinds, listCameraRigKinds, unregisterControllerKind, unregisterCameraRigKind } from '../src/player.js';
-import { resolveAgentShadow, agentEnvironmentMap } from '../src/agent-look.js';
+import { fitAgentShadow, resolveAgentShadow, agentEnvironmentMap } from '../src/agent-look.js';
 import { agentSceneModule, agentSceneModuleLoaded } from '../src/agent-scene-modules.js';
 import { agentGroundPlacement, createAgentGround, placeAgentGround, FLOOR_COLOR } from '../src/agent-ground.js';
 import { groundBounceEnvironment } from '../src/ground-bounce.js';
@@ -215,6 +215,7 @@ function renderInfo(renderer, viewWarnings = []) {
   return {
     graphics: context.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : context.RENDERER),
     estimatedBytes: renderer.memoryPlan.estimatedBytes,
+    bloom: renderer.memoryPlan.bloom,
     requiredMemoryMiB: renderer.memoryPlan.requiredMemoryMiB,
     width: canvas.width,
     height: canvas.height,
@@ -404,7 +405,7 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   syncSequenceTextures(record);
   const environment = record.scene.environment;
   const effects = record.scene.effects;
-  const shadow = record.scene.shadow;
+  const shadow = fitAgentShadow(record.scene.shadow, record.scene.parts);
   const shadowKey = JSON.stringify([environment.lightDirection, shadow]);
   if (record.shadowKey !== shadowKey) {
     record.renderer.shadowBounds = resolveAgentShadow(shadow, environment.lightDirection);
@@ -524,7 +525,7 @@ function resetCanvas() {
 
 // The cascade code is a loaded module, so a scene with one shadow map never runs it.
 function cascadeCountFor(scene) {
-  return agentSceneModule('cascades').effectiveShadowCascades(scene.environment, scene.shadow);
+  return agentSceneModule('cascades').effectiveShadowCascades(scene.environment, fitAgentShadow(scene.shadow, scene.parts));
 }
 
 // Wind strength of the recipe; absent keeps the renderer default. The heading is applied by applyRecipeWindHeading.
@@ -553,7 +554,7 @@ function initializeRenderer(scene, { memoryBudgetMiB, backend, transparent = fal
     depth: true,
     world: scene.environment.world,
     environment: litEnvironment(scene.parts, scene.environment, Boolean(placement)),
-    shadowBounds: resolveAgentShadow(scene.shadow, scene.environment.lightDirection),
+    shadowBounds: resolveAgentShadow(fitAgentShadow(scene.shadow, scene.parts), scene.environment.lightDirection),
     shadowCascades: cascadesFor(scene),
     skyOpenness,
     fogSkyVisibility,
@@ -1019,7 +1020,7 @@ window.__agentPreview = {
     const checkLitFrame = diagnose && !pass && !floatOutput && brightness === 1;
     const info = renderInfo(record.renderer, pass ? [] : viewProblems(record, shotCamera ?? record.scene.camera, checkLitFrame ? record.scene.effects.exposure : undefined));
     return pass === 'wireframe' ? { ...info, wireframe }
-      : pass === 'objectId' ? { ...info, objectNames: record.renderer.passSupport.objectNames() }
+      : pass === 'objectId' ? { ...info, objectNames: record.renderer.passSupport.objectNames(), objectNodes: record.renderer.passSupport.objectNodes() }
       : pass === 'cryptomatte' ? { ...info, cryptomatte: record.renderer.passSupport.cryptomatteManifest() }
       : info;
   },
@@ -1094,7 +1095,7 @@ window.__agentPreview = {
       heldNativeExportTables = split.tables;
       exported = split.manifest;
     }
-    return { ...exported, ignored: describeIgnoredFeatures(record.scene.parts, environment, 'cpu', { kernelMaterials: exported.wholeMaterials }) };
+    return { ...exported, ignored: describeIgnoredFeatures(record.scene.parts, environment, 'cpu', { kernelMaterials: exported.wholeMaterials, clipStart: camera.clipStart }) };
   },
   // One chunk (base64) of a table of the chunked export that exportNativeScene holds.
   readNativeExportChunk({ name, offset }) {

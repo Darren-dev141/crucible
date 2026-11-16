@@ -1,0 +1,1 @@
+- `bevelEdges` profile, `subdivideMesh` sharpness and `loopCut` factor refuse NaN and out-of-range values when called directly, with an error that names the parameter and the range, as the recipe layer does (#1405)

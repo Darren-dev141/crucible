@@ -79,9 +79,9 @@ test('house faces point outward and normals are unit length', () => {
     for (let triangle = 0; triangle < bucket.triangleCount; triangle++) {
       const [first, second, third] = [0, 1, 2].map((corner) => bucket.indices[triangle * 3 + corner]);
       const point = (vertex) => [0, 1, 2].map((axis) => bucket.positions[vertex * 3 + axis]);
-      const [a, b, c] = [first, second, third].map(point);
-      const edgeOne = b.map((value, axis) => value - a[axis]);
-      const edgeTwo = c.map((value, axis) => value - a[axis]);
+      const [firstPoint, secondPoint, thirdPoint] = [first, second, third].map(point);
+      const edgeOne = secondPoint.map((value, axis) => value - firstPoint[axis]);
+      const edgeTwo = thirdPoint.map((value, axis) => value - firstPoint[axis]);
       const faceNormal = [edgeOne[1] * edgeTwo[2] - edgeOne[2] * edgeTwo[1], edgeOne[2] * edgeTwo[0] - edgeOne[0] * edgeTwo[2], edgeOne[0] * edgeTwo[1] - edgeOne[1] * edgeTwo[0]];
       const stored = [0, 1, 2].map((axis) => bucket.normals[first * 3 + axis]);
       assert.ok(Math.abs(Math.hypot(...stored) - 1) < 1e-6);

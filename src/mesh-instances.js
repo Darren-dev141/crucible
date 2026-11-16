@@ -53,6 +53,32 @@ function storeRealizedGeometry(key, geometry) {
   }
 }
 
+const REALIZED_FIELDS = Object.freeze(['positions', 'normals', 'indices', 'uvs', 'colors']);
+
+function sameRealizedGeometry(stored, merged) {
+  return REALIZED_FIELDS.every(field => stored[field]?.length === merged[field]?.length
+    && (merged[field] ?? []).every((value, index) => value === stored[field][index]));
+}
+
+/**
+ * The placeholder box record a realized geometry is stored under. The same merged geometry always gets the same record, so
+ * building a scene again gives the same recipe; a different geometry takes the first free slot, or the oldest slot when all
+ * of them are taken, and never a record that is still in use for other content.
+ */
+function realizedBase(merged) {
+  let freeBase = null;
+  for (let subdivisions = 1; subdivisions <= REALIZED_MAX_ENTRIES; subdivisions++) {
+    const base = { type: 'box', bevel: 0, subdivisions };
+    const stored = realizedGeometries.get(JSON.stringify(base));
+    if (!stored) {
+      freeBase ??= base;
+    } else if (sameRealizedGeometry(stored, merged)) {
+      return base;
+    }
+  }
+  return freeBase ?? JSON.parse(realizedGeometries.keys().next().value);
+}
+
 const CHANNEL_SCATTER = 20;
 const CHANNEL_YAW = 10;
 const CHANNEL_SCALE = 11;
@@ -334,9 +360,7 @@ export function expandInstancedNodes(nodes, { resolveSurface, maxNodes, maxVerti
         const merged = mergeRealizedInstances(entries, maxVertices);
         const childId = `${node.id}.${groupIndex}`;
         const geometryId = `${node.id}.realized.${groupIndex}`;
-        let subdivisions = 1;
-        while (subdivisions <= 128 && realizedGeometries.has(JSON.stringify({ type: 'box', bevel: 0, subdivisions }))) subdivisions++;
-        const base = { type: 'box', bevel: 0, subdivisions };
+        const base = realizedBase(merged);
         storeRealizedGeometry(JSON.stringify(base), merged);
         const registered = geometries?.push({ id: geometryId, type: 'mesh', base });
         expanded.push({
