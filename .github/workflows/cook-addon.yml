@@ -58,6 +58,7 @@ jobs:
           {
             echo '### Vulkan adapter'
             echo '```'
+            grep -m1 'model name' /proc/cpuinfo || true
             vulkaninfo --summary 2>&1 | grep -E 'deviceName|driverInfo|apiVersion|deviceType' || true
             echo
             vulkaninfo 2>&1 | grep -E 'VK_KHR_(ray_query|acceleration_structure)' | sort -u || echo 'no VK_KHR_ray_query or VK_KHR_acceleration_structure'
