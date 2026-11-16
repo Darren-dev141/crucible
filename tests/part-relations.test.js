@@ -171,7 +171,7 @@ test('group nodes, group targets and two relations on one axis are rejected', ()
 test('hostile relation input is rejected without leaking or hanging', () => {
   const attach = { kind: 'attach', to: 'a', side: '+x' };
   const cases = [
-    [{ ...attach, kind: 'weld' }, /relations\[0\]\.kind: got "weld"; expected one of attach, flush, align, centered, gap/],
+    [{ ...attach, kind: 'weld' }, /relations\[0\]\.kind: got "weld"; expected one of attach, flush, align, centered, gap, level/],
     [{ ...attach, side: '+w' }, /relations\[0\]\.side: got "\+w"; expected one of \+x, -x/],
     [{ ...attach, offset: Infinity }, /Copy|finite|JSON/],
     [{ ...attach, offset: 1e12 }, /finite number of metres/],
@@ -231,4 +231,40 @@ test('relations on a rejected edit leave the scene unchanged', () => {
   const revision = scene.revision;
   assert.throws(() => scene.apply([{ type: 'set-node', id: 'body', relations: [{ kind: 'attach', to: 'handle', side: '+x' }] }], { expectedRevision: revision }), /expected relations that form no loop/);
   assert.equal(scene.revision, revision);
+});
+
+test('level puts the bottom, centre or top face of a part at a world height', () => {
+  const scene = createAgentScene(recipeWith([
+    { id: 'seat', scale: [1, 0.1, 1], translation: [0, 9, 0], relations: [{ kind: 'level', at: 'top', y: 0.5 }] },
+    { id: 'foot', scale: [1, 0.1, 1], translation: [2, 9, 0], relations: [{ kind: 'level', at: 'bottom', y: 0.5 }] },
+    { id: 'mid', scale: [1, 0.1, 1], translation: [4, 9, 0], relations: [{ kind: 'level', at: 'center', y: 0.5 }] },
+  ]));
+  near(worldBounds(scene, 'seat').max[1], 0.5, 'top face');
+  near(worldBounds(scene, 'foot').min[1], 0.5, 'bottom face');
+  near((worldBounds(scene, 'mid').min[1] + worldBounds(scene, 'mid').max[1]) / 2, 0.5, 'centre');
+  near(worldBounds(scene, 'seat').min[0], -0.5, 'x and z keep the authored values');
+});
+
+test('level follows a resize and uses the rotated extent of a turned part', () => {
+  const scene = createAgentScene(recipeWith([
+    { id: 'slab', scale: [1, 0.1, 1], relations: [{ kind: 'level', at: 'top', y: 0.5 }] },
+    { id: 'turned', scale: [1, 0.1, 1], translation: [3, 0, 0], rotation: [0, 0, 0.7071068, 0.7071068], relations: [{ kind: 'level', at: 'bottom', y: 0 }] },
+  ]));
+  scene.apply([{ type: 'set-node', id: 'slab', scale: [1, 0.3, 1] }], { expectedRevision: scene.revision });
+  near(worldBounds(scene, 'slab').max[1], 0.5, 'top stays put after the slab gets thicker');
+  near(worldBounds(scene, 'slab').min[1], 0.2, 'the slab grows downward');
+  near(worldBounds(scene, 'turned').min[1], 0, 'a part turned 90 degrees about z rests on its rotated extent');
+  near(worldBounds(scene, 'turned').max[1], 1, 'world bounds, not local ones');
+});
+
+test('a recipe without level is unchanged and bad level input is rejected', () => {
+  const plain = recipeWith([{ id: 'seat', scale: [1, 0.1, 1], translation: [0, 0.45, 0] }]);
+  const exported = JSON.stringify(createAgentScene(plain).exportRecipe());
+  assert.equal(JSON.stringify(createAgentScene(structuredClone(plain)).exportRecipe()), exported);
+  assert.equal(exported.includes('relations'), false);
+  const rejected = (relation, pattern) => assert.throws(() => createAgentScene(recipeWith([{ id: 'seat', relations: [relation] }])), pattern);
+  rejected({ kind: 'level', at: 'middle', y: 0.5 }, /relations\[0\]\.at: got "middle"; expected one of bottom, center, top/);
+  rejected({ kind: 'level', at: 'top' }, /relations\[0\]\.y: got undefined; expected a finite world height/);
+  rejected({ kind: 'level', at: 'top', y: '0.5' }, /relations\[0\]\.y: got "0\.5"; expected a finite world height/);
+  rejected({ kind: 'level', at: 'top', y: 0.5, to: 'seat' }, /relations\[0\]\.to: got "seat"; expected a field a level relation takes: at, y/);
 });

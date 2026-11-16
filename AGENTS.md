@@ -30,6 +30,8 @@ Node 20.19 or later, Node 24 on CI. Chrome is needed for the smoke scripts and t
 
 ## Before you open a pull request
 
+Open the pull request with `node scripts/open-pr.mjs --title ... --body-file ... [--labels ...] [--milestone ...] [--evidence <files>]` ([CONTRIBUTING.md](CONTRIBUTING.md#open-the-pull-request)). It runs the metadata checks locally, creates the PR with its labels and milestone, pushes evidence and verifies the stored description; `--dry-run` shows what it would do.
+
 ```sh
 npm run preflight
 ```
@@ -80,6 +82,6 @@ ran and what you saw. If you cannot run one, say that instead.
 
 ## Working etiquette
 
-- One change per pull request, on a branch from `main`. Merge `main` into it before you push again.
+- One change per pull request, on a branch from `main`. Merge `main` into it only when `git merge-tree --write-tree origin/main HEAD` reports a conflict, or `main` changed a file your branch touches (commands in [CONTRIBUTING.md](CONTRIBUTING.md#checks)). `Test` also runs on every push to `main`.
 - Stop only processes you started, by their PID. Other jobs may share the machine.
 - Issues and pull requests are public. Keep local paths, tokens and personal data out of them.

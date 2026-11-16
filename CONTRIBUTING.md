@@ -23,9 +23,18 @@ The tests are in `tests/` and the guides are in `docs/`.
 3. Fork the repository (`gh repo fork codepawl/crucible --clone`) and create a branch from `main` named `<issue>-<short-slug>`, such as `412-mesh-bevel`.
 4. Write the change and its tests in the same commit, and update the guide in `docs/` that describes the feature.
 5. Add a change note (see [Change notes](#change-notes)). Do not edit `CHANGELOG.md`: two pull requests that edit it conflict on GitHub.
-6. Run `npm run preflight`, then push and open a pull request. The template asks what changed and how you checked it.
+6. Run `npm run preflight`, then open the pull request with `node scripts/open-pr.mjs` (see [Open the pull request](#open-the-pull-request)). The template asks what changed and how you checked it.
 
 Name the pull request `<imperative sentence> (#<issue>)`, such as `Add mesh bevel to scene_edit_mesh (#412)`. Keep one change in each pull request.
+
+### Open the pull request
+One command opens a pull request that passes the `PR metadata` check on its first run. Write the description to a file first (what changed, `Closes #N`, `## How I checked it`, `## Evidence`):
+
+```sh
+node scripts/open-pr.mjs --title "Add mesh bevel to scene_edit_mesh (#412)" --body-file artifacts/pr-body.md --labels enhancement,goal:capable --milestone "0 Measure" --evidence artifacts/before.png artifacts/after.png
+```
+
+It runs the metadata checks locally on the description and the files changed against `origin/main` (pictures passed with `--evidence` count as evidence) and stops with every finding and its fix. It refuses an empty description or `-`. Then it pushes the branch if needed, runs one `gh pr create`, pushes the evidence with `push-evidence.mjs`, adds the pictures under `## Evidence` and reads the stored description back to check it. `--base <branch>` changes the base, and `--dry-run` prints the commands and the final description without writing anything on GitHub.
 
 ### Link the issue
 
@@ -49,7 +58,13 @@ Under **Evidence**, show what changed from old to new. This applies to every pul
 - For a change that can be measured, give the numbers before and after: frame time, load time, bundle bytes, memory, a quality score or the bench table.
 - If nothing can be seen or measured, write one line that says so, such as "Nothing to see or measure: an internal rename."
 
-Drag pictures and clips into the description box on GitHub. A coding agent that cannot upload pushes them to a branch named `evidence-pr-<number>` and links the raw file URLs. Put the same picture or clip in the change note when the change is visible.
+Drag pictures and clips into the description box on GitHub. A coding agent that cannot upload pushes them to a branch named `evidence-pr-<number>` and links the raw file URLs. One command does it without touching your working tree, index or branch, and prints the Markdown image lines to paste:
+
+```sh
+node scripts/push-evidence.mjs 1234 artifacts/before.png artifacts/after.png
+```
+
+Files land at `pr-1234/<name>` on `evidence-pr-1234`; files already there stay. Pictures and clips (png, jpg, gif, webp, mp4, webm) up to 20 MB, from inside the repository or the temp folder. Add `--dry-run` to see the links first. Put the same picture or clip in the change note when the change is visible.
 
 ### Keep private data out
 
@@ -86,10 +101,21 @@ Every pull request runs `npm audit`, `npm run size`, `npm run tool-cost`, `npm t
 
 Branch protection on `main` requires the `test` check to pass before a merge. `GitGuardian Security Checks` is an external check that must also pass.
 
+Main is tested after every push to it, so a branch does not need the newest `main` to merge. Merge `main` into your branch only when `git merge-tree` reports a conflict, or when `main` changed a file your branch also changes:
+
+```sh
+git fetch origin
+git merge-tree --write-tree origin/main HEAD >/dev/null || echo "conflict: merge origin/main"
+comm -12 <(git diff --name-only HEAD...origin/main | sort) <(git diff --name-only origin/main...HEAD | sort)   # files both sides changed
+```
+
+`merge-tree` exits 1 on a conflict, and the last command prints nothing when the two sets of files are apart. If either shows something, run `git merge origin/main`, fix it and push. Otherwise push without merging.
+
 These checks need a GPU or a person's eyes, so they do not run on a pull request. The author runs each one that applies:
 
 | Check | Run it when you change |
 | --- | --- |
+| `Cook addon` workflow | Native code: it runs on a pull request only when `package.json`, the lock file or a file the addon tests import changes (`node scripts/addon-job-paths.mjs` lists them), and nightly on `main` |
 | `npm run smoke:mcp` | MCP tools or the preview, on a GPU |
 | `npm run smoke:character` | Skinning, glTF loading, poses or IK |
 | `npm run smoke:line-art-nodes` | Outlines or `environment.lines.nodes`, on a GPU |

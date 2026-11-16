@@ -22,7 +22,7 @@ test('with no selection every task runs, in suite order', () => {
 
 test('--kinds selects by kind and --topics by topic tag', () => {
   assert.deepEqual(selectTasks({ kinds: 'light' }, BENCH_TASKS), ['render-pick', 'light-pick-hard', 'light-key-fill', 'light-spot-shadow']);
-  assert.deepEqual(selectTasks({ topics: 'relations' }, BENCH_TASKS), ['kettle-resize', 'desk-resize']);
+  assert.deepEqual(selectTasks({ topics: 'relations' }, BENCH_TASKS), ['kettle-resize', 'shelf-faces', 'desk-resize']);
   assert.ok(selectTasks({ topics: 'explosion' }, BENCH_TASKS).includes('explosion-blast'));
 });
 

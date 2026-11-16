@@ -54,6 +54,7 @@ Variants: `scene_apply` with a `branch` name, compare in one `scene_review` (a `
 - Stack parts from numbers: write each part's bottom and top Y first, adding the Y of the surface it stands on (a height "above
   the slab" is measured from the slab's top, not from Y = 0). After building, compare `scene_inspect` bounds with the task's numbers.
 - Reuse one geometry ID for repeated parts and move them with node transforms.
+- To place a part by a face height ("upper surface at 0.5"), use `relations: [{ "kind": "level", "at": "top", "y": 0.5 }]` (`bottom` or `center` too) instead of adding half the thickness to a centre; Y is where that face lands, in world metres.
 - Put parts against each other with node `relations` (`attach`, `gap`, `flush`, `align`, `centered`) so one `set-node`
   resizes the body and the handle follows.
 - Surfaces without UVs: material `pattern` (wood, bricks, marble, metal, fabric). Glass: `transmission` with a nonzero

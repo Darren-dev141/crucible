@@ -195,6 +195,27 @@ on the table top at X = 0.3, Z = -0.05. Every object rests on what is below it, 
     ],
   },
   {
+    id: 'shelf-faces',
+    prompt: `A bookcase with two side panels, three boards and a mug. Each side panel is 0.02 m thick (X), 0.3 m deep (Z) and 1.2 m
+tall, standing on the ground, with its outer face 0.5 m from X = 0, one on each side. The three boards are 0.96 m wide (X),
+0.3 m deep (Z) and 0.02 m thick, and fit between the panels: the lowest board has its underside 0.1 m above the ground, the
+middle board has its upper surface 0.6 m above the ground, and the top board has its upper surface level with the top of the
+panels. All parts are centred on Z = 0. The mug is a closed solid cylinder 0.08 m in diameter and 0.1 m tall, standing on
+the middle board at X = 0.`,
+    checks: [
+      { kind: 'lint' },
+      { kind: 'parts', min: 6 },
+      { kind: 'size', expected: [1, 1.2, 0.3] },
+      { kind: 'ground' },
+      { kind: 'section', axis: 'y', at: 0.3, equals: 2, label: 'only the two side panels' },
+      { kind: 'section', axis: 'y', at: 0.095, equals: 2, label: 'just under the lowest board: only the two side panels' },
+      { kind: 'section', axis: 'y', at: 0.105, equals: 1, label: 'lowest board joins the panels, underside at 0.1' },
+      { kind: 'section', axis: 'y', at: 0.595, equals: 1, label: 'middle board joins the panels, upper surface at 0.6' },
+      { kind: 'section', axis: 'y', at: 0.605, equals: 3, label: 'panels and the mug on the middle board' },
+      { kind: 'section', axis: 'y', at: 1.195, equals: 1, label: 'top board joins the panels, upper surface at 1.2' },
+    ],
+  },
+  {
     id: 'robot-shot',
     assets: true,
     prompt: `The asset catalog holds an imported robot character. Create a scene from it with its Idle clip selected at
