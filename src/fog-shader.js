@@ -1,5 +1,5 @@
 import { registerShaderFeatureCode } from './shader-registry.js';
-import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_GRID_SHADOW_TAPS, LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY, MAX_LOCAL_VOLUMES } from './local-volumes.js';
+import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_GRID_SHADOW_TAPS, LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES, LOCAL_VOLUME_MAXIMUM_NOISE_OCTAVES, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY, MAX_LOCAL_VOLUMES } from './local-volumes.js';
 import { createLocalVolumeCompositeFragment } from './post.js';
 import { compileProgram, fullscreenVertex } from './gl-program.js';
 import { LOCAL_VOLUME_RAMP_STOPS } from './local-volume-ramp.js';
@@ -113,7 +113,8 @@ function compositeLocalVolumes(renderer, frame, environment, sourceTexture) {
   const composite = (renderer.localVolumeComposite ??= { program: null, uniforms: {}, target: null, motion: false, kind: 'both' });
   const motion = renderer.localVolumeBuffers.gridShutter > 0;
   const kind = renderer.localVolumeBuffers.kind;
-  if (composite.program && (composite.motion !== motion || composite.kind !== kind)) {
+  const noiseOctaves = renderer.localVolumeBuffers.noiseOctaves;
+  if (composite.program && (composite.motion !== motion || composite.kind !== kind || composite.noiseOctaves !== noiseOctaves)) {
     context.deleteProgram(composite.program);
     composite.program = null;
     composite.uniforms = {};
@@ -121,7 +122,8 @@ function compositeLocalVolumes(renderer, frame, environment, sourceTexture) {
   if (!composite.program) {
     composite.motion = motion;
     composite.kind = kind;
-    composite.program = compileProgram(context, fullscreenVertex, createLocalVolumeCompositeFragment(motion, kind));
+    composite.noiseOctaves = noiseOctaves;
+    composite.program = compileProgram(context, fullscreenVertex, createLocalVolumeCompositeFragment(motion, kind, noiseOctaves));
     for (const name of ['frameTexture', 'sceneDepth', 'resolution', 'inverseViewProjection', 'eye']) composite.uniforms[name] = context.getUniformLocation(composite.program, name);
   }
   if (!composite.target) composite.target = createCompositeTarget(renderer);
@@ -426,7 +428,7 @@ const LOCAL_MOTION_SAMPLE_POSITION = `vec3 samplePosition = localGridMotionPosit
 // Each volume is marched on its own between its entry and exit (cut at the first surface) and composited nearest first: the colour
 // behind it is dimmed by exp(-absorption * profile * step) and its emission is added, both per colour channel.
 // With `motion` the grid march reads the point its shutter time selects; without it the source is exactly what it was before the blur existed.
-const localVolumeFunctions = (motion, kind = 'both') => {
+const localVolumeFunctions = (motion, kind = 'both', noiseOctaves = false) => {
   const withGrid = kind !== 'shape';
   const withShape = kind !== 'grid';
   const profileSelection = withGrid && withShape
@@ -453,7 +455,22 @@ float localVolumeNoise(vec3 position) {
   float upper = mix(mix(localVolumeCellHash(cell + vec3(0,0,1)), localVolumeCellHash(cell + vec3(1,0,1)), fraction.x), mix(localVolumeCellHash(cell + vec3(0,1,1)), localVolumeCellHash(cell + vec3(1,1,1)), fraction.x), fraction.y);
   return mix(lower, upper, fraction.z);
 }
-` : ''}vec3 localVolumeLocal(int index, vec3 vector) {
+${noiseOctaves ? `// Fractal value noise for a volume with noiseOctaves above 1 (local-volume-noise.js localVolumeFractalNoise repeats it): lacunarity 2, gain 0.5, divided by the weights.
+float localVolumeFractalNoise(vec3 position, int octaves) {
+  float sum = 0.0;
+  float weight = 1.0;
+  float weightSum = 0.0;
+  float frequency = 1.0;
+  for (int octave = 0; octave < ${LOCAL_VOLUME_MAXIMUM_NOISE_OCTAVES}; octave++) {
+    if (octave >= octaves) break;
+    sum += weight * localVolumeNoise(position * frequency);
+    weightSum += weight;
+    weight *= 0.5;
+    frequency *= 2.0;
+  }
+  return sum / weightSum;
+}
+` : ''}` : ''}vec3 localVolumeLocal(int index, vec3 vector) {
   return vec3(dot(localVolumeAxes[index * 3].xyz, vector), dot(localVolumeAxes[index * 3 + 1].xyz, vector), dot(localVolumeAxes[index * 3 + 2].xyz, vector));
 }
 vec2 localVolumeInterval(int index, vec3 origin, vec3 direction) {
@@ -526,7 +543,7 @@ ${withGrid ? `float localVolumeGridProfile(int index, vec3 position) {
   vec3 halfSize = localVolumeExtents[index].xyz;
   float falloff = localVolumeExtents[index].w;
   float noiseAmount = withNoise ? localVolumeAbsorption[index].w : 0.0;
-  float noise = noiseAmount > 0.0 ? localVolumeNoise(position * localVolumeEmission[index].w) : 0.5;
+  float noise = noiseAmount > 0.0 ? ${noiseOctaves ? 'localVolumeFractalNoise(position * localVolumeEmission[index].w, 1 + int(localVolumeAxes[index * 3 + 1].w + 0.5))' : 'localVolumeNoise(position * localVolumeEmission[index].w)'} : 0.5;
   float profile;
   if (localVolumeCenters[index].w > 0.5) {
     float distanceRatio = length(offset) / halfSize.x;

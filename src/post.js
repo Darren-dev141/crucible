@@ -200,6 +200,8 @@ export const GRID_MOTION_STEP = 'gridMotion';
 // the code. A frame with both kinds has neither marker and the program it had before. Mesh volumes use neither march, so they do not count toward either kind.
 export const GRID_ONLY_STEP = 'localGridOnly';
 export const SHAPE_ONLY_STEP = 'localShapeOnly';
+// A marker step like the two below: a frame with a box or sphere volume that asks for noise octaves compiles the fractal noise in. Every other program keeps the source it had.
+export const NOISE_OCTAVES_STEP = 'localNoiseOctaves';
 const LOCAL_VOLUME_KIND_STEPS = { grid: GRID_ONLY_STEP, shape: SHAPE_ONLY_STEP };
 
 /** The marker step for the kind of volume a frame draws ('grid', 'shape' or 'both'), or an empty list for 'both'. */
@@ -232,7 +234,7 @@ function fogCodeFor(enabledSteps) {
     const code = requireFeatureCode('volumeFog');
     const motion = enabledSteps.has(GRID_MOTION_STEP);
     declarations += code.localDeclarations + (motion ? code.localMotionDeclarations : '');
-    functions += code.localFunctions(motion, localVolumeKindOf(enabledSteps));
+    functions += code.localFunctions(motion, localVolumeKindOf(enabledSteps), enabledSteps.has(NOISE_OCTAVES_STEP));
   } else {
     functions += LOCAL_VOLUMES_STUB;
   }
@@ -246,8 +248,8 @@ const LOCAL_VOLUME_COMPOSITE_MAIN = `void main() {
 }`;
 
 /** The fragment shader that composites the local volumes over the frame and nothing else (no anti-aliasing, bloom, fog or tone map). */
-export function createLocalVolumeCompositeFragment(motion = false, kind = 'both') {
-  const enabled = new Set(['local', ...(motion ? [GRID_MOTION_STEP] : []), ...localVolumeKindSteps(kind)]);
+export function createLocalVolumeCompositeFragment(motion = false, kind = 'both', noiseOctaves = false) {
+  const enabled = new Set(['local', ...(motion ? [GRID_MOTION_STEP] : []), ...localVolumeKindSteps(kind), ...(noiseOctaves ? [NOISE_OCTAVES_STEP] : [])]);
   const definitions = Object.entries(POST_STEP_CONDITIONS)
     .map(([step, [macro, condition]]) => `#define ${macro} ${enabled.has(step) ? `(${condition})` : 'false'}`)
     .join('\n');

@@ -3,7 +3,7 @@ import { materialTags } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { BLEND_FACTORS } from './blend-output.js';
 import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
-import { postFragment, createPostFragment, GRID_MOTION_STEP, localVolumeKindSteps, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
+import { postFragment, createPostFragment, GRID_MOTION_STEP, NOISE_OCTAVES_STEP, localVolumeKindSteps, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
 import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
 import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError } from './budget.js';
@@ -2296,6 +2296,7 @@ export class CrucibleRenderer {
     if (localVolumes) steps.push('local');
     if (localVolumes && this.localVolumeBuffers.gridShutter > 0) steps.push(GRID_MOTION_STEP);
     if (localVolumes) steps.push(...localVolumeKindSteps(this.localVolumeBuffers.kind));
+    if (localVolumes && this.localVolumeBuffers.noiseOctaves) steps.push(NOISE_OCTAVES_STEP);
     if (fogSky) steps.push('sky');
     if (frame.volumeExplosion) steps.push('explosion');
     const gradesColor = effects.saturation !== 1 || effects.contrast !== 1 || effects.temperature !== 0;

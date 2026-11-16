@@ -50,8 +50,30 @@ export function localVolumeNoise(x, y, z) {
   return mix(lower, upper, fractionZ);
 }
 
+const NOISE_LACUNARITY = 2;
+const NOISE_GAIN = 0.5;
+
+/**
+ * Fractal value noise: `octaves` copies of localVolumeNoise, each at twice the frequency and half the weight of the one before, divided by the weights so the mean stays
+ * near 0.5. One octave (or no count) is localVolumeNoise itself. The shader's localVolumeFractalNoise repeats it.
+ */
+export function localVolumeFractalNoise(x, y, z, octaves) {
+  if (!(octaves > 1)) return localVolumeNoise(x, y, z);
+  let sum = 0;
+  let weight = 1;
+  let weightSum = 0;
+  let frequency = 1;
+  for (let octave = 0; octave < octaves; octave++) {
+    sum = round(sum + round(weight * localVolumeNoise(x * frequency, y * frequency, z * frequency)));
+    weightSum = round(weightSum + weight);
+    weight = round(weight * NOISE_GAIN);
+    frequency *= NOISE_LACUNARITY;
+  }
+  return round(sum / weightSum);
+}
+
 /** The factor the shader multiplies the profile by: mix(1, 2 * noise(position * scale), amount). */
 export function localVolumeNoiseFactor(volume, x, y, z) {
-  const noise = localVolumeNoise(x * volume.noiseScale, y * volume.noiseScale, z * volume.noiseScale);
+  const noise = localVolumeFractalNoise(x * volume.noiseScale, y * volume.noiseScale, z * volume.noiseScale, volume.noiseOctaves);
   return 1 + (2 * noise - 1) * volume.noiseAmount;
 }
