@@ -33,6 +33,10 @@ jobs:
   addon:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # Six tests failed on Intel AVX-512 runners and passed on AMD (#1760). Keep lavapipe's JIT on 256-bit vectors so every runner
+      # compiles the Cook kernel the same way, as the AVX-512 path miscompiled it before (cook#45).
+      LP_NATIVE_VECTOR_WIDTH: '256'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
@@ -54,6 +58,7 @@ jobs:
             echo '### Vulkan adapter'
             echo '```'
             grep -m1 'model name' /proc/cpuinfo || true
+            echo "avx512f: $(grep -o -m1 avx512f /proc/cpuinfo | head -1 | grep . || echo no), LP_NATIVE_VECTOR_WIDTH=$LP_NATIVE_VECTOR_WIDTH"
             vulkaninfo --summary 2>&1 | grep -E 'deviceName|driverInfo|apiVersion|deviceType' || true
             echo
             vulkaninfo 2>&1 | grep -E 'VK_KHR_(ray_query|acceleration_structure)' | sort -u || echo 'no VK_KHR_ray_query or VK_KHR_acceleration_structure'
