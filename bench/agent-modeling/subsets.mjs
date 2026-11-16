@@ -12,7 +12,7 @@ export const FULL_BENCH_PATHS = [/^skills\//, /^scripts\/mcp-server\.mjs$/, /^\.
 export const PATH_RULES = [
   { pattern: /^src\/(agent-explosion|explosion-[a-z-]+)\.js$/, topics: ['explosion'] },
   { pattern: /^src\/(agent-particles|particles|particle-[a-z-]+)\.js$/, topics: ['particles'] },
-  { pattern: /^src\/(volume-grid[a-z-]*|volumetric)\.js$/, topics: ['localVolumes'] },
+  { pattern: /^src\/(volume-grid[a-z-]*|volumetric|local-volume[a-z-]*)\.js$/, topics: ['localVolumes'] },
   { pattern: /^src\/agent-relations\.js$/, topics: ['relations'] },
   { pattern: /^src\/(agent-terrain|terrain[a-z-]*)\.js$/, topics: ['terrain'] },
   { pattern: /^src\/(agent-motion|motion[a-z-]*|agent-clip-layers)\.js$/, kinds: ['animation', 'film', 'camera'] },
