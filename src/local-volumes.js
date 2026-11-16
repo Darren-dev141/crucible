@@ -68,7 +68,7 @@ export function packLocalVolumes(volumes, buffers) {
     if (volume.shape === 'grid') {
       if (buffers.gridVolume) throw new RangeError(ONE_GRID_VOLUME_MESSAGE);
       buffers.gridVolume = volume;
-      buffers.grid.set([1, volume.temperatureScale, volume.blackbodyIntensity * volume.emissionStrength, volume.anisotropy], at);
+      buffers.grid.set([volume.castShadow === true ? 2 : 1, volume.temperatureScale, volume.blackbodyIntensity * volume.emissionStrength, volume.anisotropy], at);
     }
     const axes = volume.axes ?? IDENTITY_AXES;
     // The free fourth component of the first axis row carries the number of scatter octaves.
@@ -261,3 +261,6 @@ export function localVolumeInterval(volume, originX, originY, originZ, direction
   out[1] = exit;
   return true;
 }
+
+/** How many taps along the key light measure the optical depth a grid volume puts between a surface and the sun: more than a box takes, because a simulated density has structure along the ray that a smooth profile does not. */
+export const LOCAL_VOLUME_GRID_SHADOW_TAPS = 16;

@@ -1,5 +1,5 @@
 import { resolveVolumeFog } from './volumetric.js';
-import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY } from './local-volumes.js';
+import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_GRID_SHADOW_TAPS, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY } from './local-volumes.js';
 import { countOpenEdges } from './local-volume-parts.js';
 import { blackbodyRadiance } from './volume-grid.js';
 import { bakeEmissionRamp, emissionRampPosition, sampleBakedRamp } from './local-volume-ramp-bake.js';
@@ -355,25 +355,29 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
  * (its post pass scales the surface colour by mix(1, exp(-depth), sun visibility): the sky and fill light reach the frame after it and stay as they were).
  */
 export function createLocalVolumeSurfaceShadow(volumes) {
-  const casters = volumes.filter(volume => volume.castShadow === true && !volume.mesh && !volume.gridData && volume.shape !== 'grid' && volume.shape !== 'mesh');
+  const casters = volumes.filter(volume => volume.castShadow === true && !volume.mesh && volume.shape !== 'mesh' && (volume.shape !== 'grid' || volume.gridData));
   if (casters.length === 0) return null;
   const span = new Float64Array(2);
+  const depth = new Float64Array(3);
   return function writeSurfaceShadow(x, y, z, directionX, directionY, directionZ, out) {
-    out[0] = 0;
-    out[1] = 0;
-    out[2] = 0;
+    depth.fill(0);
     for (const volume of casters) {
       if (!localVolumeInterval(volume, x, y, z, directionX, directionY, directionZ, Infinity, span)) continue;
       const entry = Math.max(span[0], 0);
       const length = span[1] - entry;
       if (length <= 0) continue;
+      // A grid reads its simulated density as it is, at its own tap count and strength; a box or sphere saturates its faded skin and counts its depth LOCAL_VOLUME_SHADOW_STRENGTH times.
+      const isGrid = volume.shape === 'grid';
+      const taps = isGrid ? LOCAL_VOLUME_GRID_SHADOW_TAPS : LOCAL_VOLUME_SURFACE_SHADOW_TAPS;
+      const strength = isGrid ? 1 : LOCAL_VOLUME_SHADOW_STRENGTH;
       let profileSum = 0;
-      for (let tap = 0; tap < LOCAL_VOLUME_SURFACE_SHADOW_TAPS; tap++) {
-        const distance = entry + length * (tap + 0.5) / LOCAL_VOLUME_SURFACE_SHADOW_TAPS;
-        profileSum += Math.min(localVolumeProfile(volume, x + directionX * distance, y + directionY * distance, z + directionZ * distance, true) * LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, 1);
+      for (let tap = 0; tap < taps; tap++) {
+        const distance = entry + length * (tap + 0.5) / taps;
+        const profile = localVolumeProfile(volume, x + directionX * distance, y + directionY * distance, z + directionZ * distance, true);
+        profileSum += isGrid ? profile : Math.min(profile * LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, 1);
       }
-      for (let channel = 0; channel < 3; channel++) out[channel] += volume.absorption[channel] * volume.density * profileSum * length / LOCAL_VOLUME_SURFACE_SHADOW_TAPS;
+      for (let channel = 0; channel < 3; channel++) depth[channel] += strength * volume.absorption[channel] * volume.density * profileSum * length / taps;
     }
-    for (let channel = 0; channel < 3; channel++) out[channel] = Math.exp(-out[channel] * LOCAL_VOLUME_SHADOW_STRENGTH);
+    for (let channel = 0; channel < 3; channel++) out[channel] = Math.exp(-depth[channel]);
   };
 }
