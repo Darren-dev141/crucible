@@ -48,6 +48,7 @@ own mesh report:
 | crate-uv | The crate with even UVs |
 | desk-resize, desk-resize-plain | A 12-part desk (legs, drawers with handles, lamp, book) resized in three inspected steps, graded on contact for every attached pair and on where parts end up. Relations against absolute positions |
 | kettle-resize, kettle-resize-plain | Resize a kettle body so the lid, handle and spout stay against it. The first start recipe holds `relations`, the second absolute positions; the difference in tool calls is what relations are worth |
+| explosion-blast | A courtyard and a request for a blast with no operation name: graded on one `explosion-` grid volume between the pillars and a `scene_look` call (`add-explosion`) |
 | crate-wood | The crate with a wood material pattern, to see whether agents find `pattern` |
 | arm-reach | A jointed arm whose tip moves between two points, to see whether agents find `motion.ik` |
 | leg-plant | A leg that plants its foot on two points with the knee bending forward: `motion.ik` with `bendToward`, `pole` and `limits` |
@@ -90,9 +91,17 @@ the session, goes to `results/<run>.json`. Grade one recipe by hand with
 Compare runs only when they use the same model and suite version. A single run per task is noisy, so read differences
 of one or two tasks as noise.
 
+### Run only what changed
+
+Bench what changed, not everything again and again. `bench.mjs` takes `--tasks <ids>`, `--kinds <list>` (modeling, revision, scene, look, light, camera, animation, film) and `--topics <list>`. A topic is a `scene_capabilities` topic name that `suite.mjs` tags on a task only where the task clearly exercises it (relations, terrain, meshUv, explosion, particles, localVolumes, filmTimeline, motionIk, placedAssets, meshEdits). The three flags add up: a task runs when it is named, has a listed kind or carries a listed topic; with none of them every task runs. An unknown task, kind or topic is an error that lists the valid ones. `--dry-run` prints the selected tasks and stops.
+
+`--suggest <base ref>` reads the branch's diff against that ref and prints the command (`subsets.mjs` holds the map from paths to kinds and topics). A change to `scripts/mcp-server.mjs` (tool schemas and server instructions) or to `skills/` maps to the full bench, since every task reads them. `compare-bench.mjs` compares a subset run on its tasks only: the baseline is cut down to the same tasks, the baseline tasks that did not run are listed as skipped and never count as failures, and a task with no baseline is marked new.
+
+In a pull request, write the task ids you ran (the `--dry-run` line) next to the table. Run the full bench before each release cut.
+
 ### The agent bench
 
-`bench.mjs` is the whole bench in one command. It runs the 28 tasks of `suite.mjs` (8 modeling, 3 revision, 3 scene,
+`bench.mjs` is the whole bench in one command. It runs the 29 tasks of `suite.mjs` (8 modeling, 3 revision, 4 scene,
 3 look, 4 light, 3 camera, 2 animation, 2 film), k times each, on each model, through headless `claude -p` with the Crucible
 MCP config. It calls `run.mjs` once per model, so every run is a fresh session in its own empty temp folder with only the
 Crucible tools, and the grader reads the exported recipe, never the transcript. Graders are the checks above plus the state

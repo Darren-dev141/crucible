@@ -178,7 +178,15 @@ function trackLower(check, recipe) {
   return { pass: slope(last) < slope(first) * 0.6, detail: `steepness ${round(slope(first))} to ${round(slope(last))}` };
 }
 
-const SCENE_CHECKS = { cameraAims, cameraOrbit, cameraDolly, lights, sunLight, restsOnSupport, litRange, materialOf, track, trackRedder, trackLower,
+/** A grid volume of the explosion-... frames add-explosion writes, centred within halfWidth metres of the origin on X and Z. */
+function blastInside(check, recipe) {
+  const blasts = (recipe.environment?.localVolumes ?? []).filter(volume => volume.shape === 'grid' && (volume.frames ?? []).some(frame => frame.startsWith('explosion-')));
+  if (blasts.length !== 1) return { pass: false, detail: `${blasts.length} explosion grid volumes, expected 1` };
+  const [x, , z] = blasts[0].center;
+  return { pass: Math.abs(x) <= check.halfWidth && Math.abs(z) <= check.halfWidth, detail: `blast centred at X ${round(x)}, Z ${round(z)}` };
+}
+
+const SCENE_CHECKS = { blastInside, cameraAims, cameraOrbit, cameraDolly, lights, sunLight, restsOnSupport, litRange, materialOf, track, trackRedder, trackLower,
   environmentValue: (check, recipe) => fieldValue(check, recipe.environment, 'environment'),
   effectsValue: (check, recipe) => fieldValue(check, recipe.effects, 'effects') };
 
