@@ -7,3 +7,6 @@
 - scene:gltf-box+lazy: the same markers
 - scene:agent-scene: the same markers
 - scene:agent-scene+lazy: the same markers and the split march, for a build that is about half as long on one kind of volume
+- goal:lit-box: the program markers add about 110 bytes gzip so a scene with one kind of volume builds half the shader, which is what keeps a grid volume under the preview limit
+- goal:gltf-box: the same markers, about 100 bytes gzip
+- goal:agent-scene: the same markers, about 155 bytes gzip
