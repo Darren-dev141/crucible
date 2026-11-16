@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Traces which files can change what the Cook addon job tests, so the workflow runs only for those (#1796).
-// It starts at every test that loads tests/support/cook.js, follows relative static imports and `import('./literal')` calls,
+// It starts at every test whose import statements load tests/support/cook.js (not a mention in text, #1830), follows relative static imports and `import('./literal')` calls,
 // and prints the files it reaches as workflow path lines. tests/addon-job-paths.test.js fails when the workflow misses one.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { importsFile } from './import-specifiers.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COOK_SUPPORT_FILE = 'tests/support/cook.js';
@@ -22,9 +23,14 @@ function gitLines(args) {
     .filter((line) => line.length > 0);
 }
 
-export function addonTestFiles() {
-  return gitLines(['grep', '-l', 'support/cook.js', '--', 'tests'])
+/** Test files whose real import statements load the Cook helper; a mention in a string or comment does not count. */
+export function addonTestFiles(
+  testFiles = gitLines(['ls-files', 'tests']).filter((file) => /\.(m?js|cjs)$/.test(file)),
+  readSource = (file) => readFileSync(join(repositoryRoot, file), 'utf8'),
+) {
+  return testFiles
     .filter((file) => file !== COOK_SUPPORT_FILE)
+    .filter((file) => importsFile(readSource(file), file, COOK_SUPPORT_FILE))
     .sort();
 }
 

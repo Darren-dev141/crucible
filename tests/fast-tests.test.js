@@ -25,12 +25,9 @@ test('the budget keeps the fastest files and drops the rest', () => {
   assert.equal(recordedMilliseconds, 150);
 });
 
-// The helper's path is built from two parts so scripts/addon-job-paths.mjs, which finds addon tests by that literal path,
-// does not count this file as one.
-const NATIVE_HELPER_IMPORT = `import { x } from './support/${'cook'}.js';`;
-
 test('a test that loads the native Cook helper is recognised', () => {
-  assert.equal(usesNativeAddon(NATIVE_HELPER_IMPORT), true);
+  assert.equal(usesNativeAddon("import { x } from './support/cook.js';"), true);
+  assert.equal(usesNativeAddon("const note = './support/cook.js';"), false);
   assert.equal(usesNativeAddon("import { x } from './support/scene.js';"), false);
 });
 

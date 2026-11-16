@@ -16,6 +16,7 @@ on:
       - 'scripts/agent-memory-guard.mjs'
       - 'scripts/check-first-native-job.mjs'
       - 'scripts/addon-job-paths.mjs'
+      - 'scripts/import-specifiers.mjs'
       - 'scripts/cook-addon-cache-key.mjs'
       - 'tests/cook-addon-cache-key.test.js'
       - 'tests/addon-job-paths.test.js'
