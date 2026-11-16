@@ -37,8 +37,7 @@ How the shading maps (measured with a probe cube in Blender 5.3):
 - Flame: an Attribute node reads `flame` (or `density` without a flame channel) times emissionStrength into Emission Strength, colour `emission`.
   Principled Volume's emission is per unit length and not scaled by density, which is how Crucible emits too.
 - Temperature: Temperature = temperatureScale (multiplies the temperature attribute) and Blackbody Intensity = blackbodyIntensity * emissionStrength.
-  Cycles' blackbody is a physical, normalised colour; Crucible's is Tanner Helland's fit with a (kelvin / 1500)^4 gain (BLACKBODY_REFERENCE_KELVIN), so
-  a grid with a temperature channel will not match in brightness: that gap is part of what the reference measures.
+  Cycles' blackbody is Stefan-Boltzmann brightness in a colour of luminance 1; Crucible's grid blackbody follows it (#1733, volume-grid.js).
 """
 import json
 import math

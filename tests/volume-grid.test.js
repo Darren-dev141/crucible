@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { encodeVolumeGrid, decodeVolumeGrid, registerVolumeGrid, setVolumeGridLoader, findVolumeGrid, volumeGridFloats, sampleVolumeGrid, bakedGridEmission, GRID_BORDER_VOXELS, BLACKBODY_MAXIMUM_GAIN, blackbodyRadiance, halfToFloat, floatToHalf, VOLUME_GRID_MAX_AXIS, VOLUME_GRID_MAX_BYTES } from '../src/volume-grid.js';
+import { encodeVolumeGrid, decodeVolumeGrid, registerVolumeGrid, setVolumeGridLoader, findVolumeGrid, volumeGridFloats, sampleVolumeGrid, bakedGridEmission, GRID_BORDER_VOXELS, HALF_FLOAT_MAXIMUM, blackbodyRadiance, halfToFloat, floatToHalf, VOLUME_GRID_MAX_AXIS, VOLUME_GRID_MAX_BYTES } from '../src/volume-grid.js';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, localVolumeProfile } from '../src/local-volumes.js';
 import { bindLocalVolumeParts } from '../src/local-volume-parts.js';
 import { createLocalVolumeCrossing } from '../src/path-tracer-volume.js';
@@ -73,9 +73,9 @@ test('the baked emission is the blackbody of each voxel, scaled once, and always
   const doubled = bakedGridEmission(grid, 2);
   assert.notEqual(doubled, baked);
   assert.equal(doubled.red[1], Math.fround(blackbodyRadiance(3000, [0, 0, 0])[0]), 'the temperature scale is part of the bake');
-  const hottest = bakedGridEmission(grid, 1e5);
-  assert.ok(Math.max(...hottest.red, ...hottest.green, ...hottest.blue) <= BLACKBODY_MAXIMUM_GAIN, 'the gain cap keeps the bake far under 65504');
-  assert.ok(BLACKBODY_MAXIMUM_GAIN < 65504);
+  const fire = bakedGridEmission(grid, 0.2);
+  assert.ok(Math.max(...fire.red, ...fire.green, ...fire.blue) < HALF_FLOAT_MAXIMUM, 'a 12,000 K voxel is far under the half float limit');
+  assert.ok(Math.max(...blackbodyRadiance(30000, [0, 0, 0])) < HALF_FLOAT_MAXIMUM && Math.max(...blackbodyRadiance(40000, [0, 0, 0])) > HALF_FLOAT_MAXIMUM, 'sigma * T^4 / pi times the blue hue passes 65504 near 35,000 K, where the rasterizer upload clamps');
   assert.deepEqual(Array.from(bakedGridEmission(decodeVolumeGrid(encodeVolumeGrid({ resolution: [1, 1, 1], channels: { density: Float32Array.of(1) } })), 1).red), [0], 'no temperature channel bakes to 0');
 });
 
@@ -90,7 +90,7 @@ test('the emission is interpolated after the blackbody, not the temperature befo
   const flame = blackbodyRadiance(3000, [0, 0, 0]);
   assert.ok(Math.abs(out[3] - (ember[0] + flame[0]) / 2) < 1e-6, 'halfway between two voxels is the mean of their two blackbodies');
   assert.ok(out[3] > blackbodyRadiance(2250, [0, 0, 0])[0], 'and that is above the blackbody of the mean temperature, so nothing is amplified');
-  assert.equal(sampleVolumeGrid(floats, resolution, 1, 0.5, 0.5, out, baked)[3], flame[0] / 2, 'the face reads half of the last voxel, as the density does');
+  assert.ok(Math.abs(sampleVolumeGrid(floats, resolution, 1, 0.5, 0.5, out, baked)[3] - flame[0] / 2) < 1e-6 * flame[0], 'the face reads half of the last voxel, as the density does');
 });
 
 test('blackbody radiance is dark when cold, red then white as it heats, and brighter with the fourth power', () => {
@@ -100,7 +100,8 @@ test('blackbody radiance is dark when cold, red then white as it heats, and brig
   const flame = blackbodyRadiance(3000, [0, 0, 0]);
   assert.ok(ember[0] > ember[1] && ember[1] > ember[2], 'an ember is red');
   assert.ok(flame[2] / flame[0] > ember[2] / ember[0], 'a hotter body is whiter');
-  assert.ok(flame[0] > ember[0] * 15, 'brightness grows with (kelvin / 1500)^4');
+  const luminance = radiance => radiance[0] * 0.2126 + radiance[1] * 0.7152 + radiance[2] * 0.0722;
+  assert.ok(Math.abs(luminance(flame) / luminance(ember) - 16) < 1e-3, 'brightness grows with (kelvin / 1500)^4');
 });
 
 test('a grid volume resolves with its fields and refuses what only the other shapes take', () => {
@@ -175,16 +176,19 @@ test('the path tracer attenuates by the grid density and adds the flame and the 
   const [flameRed, flameGreen] = await centerRadiance(ground(0), [{ ...slab, grid: 'slab-flame', emission: [0.5, 0.25, 0], emissionStrength: 2 }]);
   assert.ok(Math.abs(flameRed - 1) < 2e-3, `red ${flameRed}`);
   assert.ok(Math.abs(flameGreen - 0.5) < 2e-3, `green ${flameGreen}`);
-  const [glowRed] = await centerRadiance(ground(0), [{ ...slab, grid: 'slab-flame', emissionStrength: 1, blackbodyIntensity: 1, temperatureScale: 0.5 }]);
+  const glow = await centerRadiance(ground(0), [{ ...slab, grid: 'slab-flame', emissionStrength: 1, blackbodyIntensity: 1, temperatureScale: 0.5 }]);
   // The emission ramps to 0 across the faces (#1752), so the glow is the integral of the baked blackbody down the slab, not one value.
   const slabGrid = findVolumeGrid('slab-flame');
   const baked = bakedGridEmission(slabGrid, 0.5);
   const floats = volumeGridFloats(slabGrid);
   const radiance = [0, 0, 0, 0, 0, 0];
-  let expected = 0;
+  const expected = [0, 0, 0];
   const samples = 4096;
-  for (let sample = 0; sample < samples; sample++) expected += sampleVolumeGrid(floats, resolution, 0.5, (sample + 0.5) / samples, 0.5, radiance, baked)[3] / samples;
-  assert.ok(Math.abs(glowRed - expected) < 2e-3 * expected, `blackbody red ${glowRed}, expected ${expected}`);
+  for (let sample = 0; sample < samples; sample++) {
+    sampleVolumeGrid(floats, resolution, 0.5, (sample + 0.5) / samples, 0.5, radiance, baked);
+    for (let channel = 0; channel < 3; channel++) expected[channel] += radiance[3 + channel] / samples;
+  }
+  expected.forEach((value, channel) => assert.ok(Math.abs(glow[channel] - value) <= 2e-3 * value, `blackbody channel ${channel} ${glow[channel]}, expected ${value}`));
 });
 
 test('a grid volume is zero outside its box and takes the profile from the density', () => {

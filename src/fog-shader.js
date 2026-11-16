@@ -6,7 +6,7 @@ import { LOCAL_VOLUME_RAMP_STOPS } from './local-volume-ramp.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
-import { GRID_BORDER_VOXELS, bakedGridEmission, floatToHalf } from './volume-grid.js';
+import { GRID_BORDER_VOXELS, HALF_FLOAT_MAXIMUM, bakedGridEmission, floatToHalf } from './volume-grid.js';
 import { drawMeshVolumes } from './mesh-volume-pass.js';
 import { FogFieldTexture, createFogLightBuffers, packFogLights, volumeShadowAmbient, DEFAULT_FLOW_STRENGTH, DEFAULT_FLOW_PERIOD, resolveFogDetail, fogUsesDetail } from './fog-field.js';
 
@@ -225,9 +225,9 @@ function localGridEmissionTexture(renderer, volume) {
   const grid = volume?.gridData ?? null;
   const baked = grid ? bakedGridEmission(grid, volume.temperatureScale) : null;
   return uploadGridTexture(renderer, 'localGridEmissionCache', grid, volume?.temperatureScale ?? 0, (texels, voxel, texel) => {
-    texels[texel] = floatToHalf(baked.red[voxel]);
-    texels[texel + 1] = floatToHalf(baked.green[voxel]);
-    texels[texel + 2] = floatToHalf(baked.blue[voxel]);
+    texels[texel] = floatToHalf(Math.min(baked.red[voxel], HALF_FLOAT_MAXIMUM));
+    texels[texel + 1] = floatToHalf(Math.min(baked.green[voxel], HALF_FLOAT_MAXIMUM));
+    texels[texel + 2] = floatToHalf(Math.min(baked.blue[voxel], HALF_FLOAT_MAXIMUM));
   });
 }
 
