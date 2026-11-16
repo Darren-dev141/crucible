@@ -30,6 +30,8 @@ Node 20.19 or later, Node 24 on CI. Chrome is needed for the smoke scripts and t
 
 ## Before you open a pull request
 
+Open the pull request with `node scripts/open-pr.mjs --title ... --body-file ... [--labels ...] [--milestone ...] [--evidence <files>]` ([CONTRIBUTING.md](CONTRIBUTING.md#open-the-pull-request)). It runs the metadata checks locally, creates the PR with its labels and milestone, pushes evidence and verifies the stored description; `--dry-run` shows what it would do.
+
 ```sh
 npm run preflight
 ```
