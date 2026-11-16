@@ -26,7 +26,7 @@ test('the raised count stops at the maximum', () => {
 
 test('the post shader and the path tracer use the same rule', () => {
   const shader = readFileSync(new URL('../src/fog-shader.js', import.meta.url), 'utf8');
-  assert.match(shader, /if \(noiseAmount > 0\.0\) steps = min\(\$\{LOCAL_VOLUME_MAXIMUM_STEPS\}, max\(steps, int\(ceil\(\(exitDistance - entry\) \* localVolumeEmission\[nearest\]\.w \* \$\{LOCAL_VOLUME_STEPS_PER_NOISE_CELL\.toFixed\(1\)\}\)\)\)\);/);
+  assert.match(shader, /if \(localVolumeAbsorption\[index\]\.w > 0\.0\) steps = min\(\$\{LOCAL_VOLUME_MAXIMUM_STEPS\}, max\(steps, int\(ceil\(length \* localVolumeEmission\[index\]\.w \* \$\{LOCAL_VOLUME_STEPS_PER_NOISE_CELL\.toFixed\(1\)\}\)\)\)\);/);
   const tracer = readFileSync(new URL('../src/path-tracer-volume.js', import.meta.url), 'utf8');
-  assert.match(tracer, /const stepCount = localVolumeStepCount\(volume, exits\[order\[rank\]\] - entry\);/);
+  assert.match(tracer, /let stepCount = localVolumeStepCount\(volume, segmentEnd - entry\);/);
 });
