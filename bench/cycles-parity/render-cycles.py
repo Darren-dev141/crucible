@@ -321,6 +321,16 @@ def connect_normal_map(material, principled_node, material_entry, image_entries,
     links.new(separate_node.outputs["Blue"], combine_node.inputs["Blue"])
     links.new(combine_node.outputs["Color"], normal_map_node.inputs["Color"])
     links.new(normal_map_node.outputs["Normal"], principled_node.inputs["Normal"])
+    if os.environ.get("CYCLES_PARITY_DEBUG_NORMAL"):
+        # Shows the world-space normal Cycles builds, as an emission colour of normal * 0.5 + 0.5, to compare it with Cook's.
+        encode_node = nodes.new("ShaderNodeVectorMath")
+        encode_node.operation = "MULTIPLY_ADD"
+        encode_node.inputs[1].default_value = (0.5, 0.5, 0.5)
+        encode_node.inputs[2].default_value = (0.5, 0.5, 0.5)
+        emission_node = nodes.new("ShaderNodeEmission")
+        links.new(normal_map_node.outputs["Normal"], encode_node.inputs[0])
+        links.new(encode_node.outputs["Vector"], emission_node.inputs["Color"])
+        links.new(emission_node.outputs["Emission"], nodes["Material Output"].inputs["Surface"])
 
 
 def configure_anisotropy(principled_node, material_entry):
@@ -488,6 +498,9 @@ def build_scene_objects(scene, description):
         mesh_object.matrix_world = Y_UP_TO_Z_UP @ local_matrix
         for ray_kind, is_visible in part_entry.get("rayVisibility", {}).items():
             setattr(mesh_object, RAY_VISIBILITY_ATTRIBUTES[ray_kind], is_visible)
+        terminator_geometry_offset = os.environ.get("CYCLES_PARITY_TERMINATOR_GEOMETRY_OFFSET")
+        if terminator_geometry_offset is not None:
+            mesh_object.cycles.shadow_terminator_geometry_offset = float(terminator_geometry_offset)
         scene.collection.objects.link(mesh_object)
 
 
