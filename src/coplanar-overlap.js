@@ -98,47 +98,93 @@ function planeKeysOf(part, tolerance, region) {
   return keys;
 }
 
-// The part's world-space triangles grouped by plane bucket, each as corners (9 numbers), a unit normal (3) and its box (6).
-// A bucket keeps its triangles sorted by their lowest x and the widest triangle, so a small region of a big part is found by
-// bisection instead of a scan. Built once per part, and only for parts that share a bucket with another part.
+// The part's world-space triangles grouped by plane bucket. Each triangle is 18 numbers in one flat array: its corners (9), a
+// unit normal (3) and its box (6). The triangles are ordered by plane bucket and then by their lowest x, and each run of one
+// bucket keeps its widest triangle, so a small region of a big part is found by bisection instead of a scan. Flat arrays, not
+// one object per triangle: a 200k triangle part cost about 90 MiB of short-lived objects before (#1343). Built once per part,
+// and only for parts that share a bucket with another part.
+const TRIANGLE_STRIDE = 18;
+const NORMAL_OFFSET = 9;
+const BOX_OFFSET = 12;
+
 function worldTrianglesByPlane(part, tolerance) {
-  const byPlane = new Map();
+  const triangleCapacity = Math.floor(part.geometry.indices.length / 3);
+  const data = new Float64Array(triangleCapacity * TRIANGLE_STRIDE);
+  const keys = new Float64Array(triangleCapacity);
+  let count = 0;
   forEachWorldTriangle(part, (corners, normalX, normalY, normalZ) => {
-    const key = planeKey(normalX, normalY, normalZ, corners[0], corners[1], corners[2], tolerance);
-    const box = [
-      Math.min(corners[0], corners[3], corners[6]), Math.min(corners[1], corners[4], corners[7]), Math.min(corners[2], corners[5], corners[8]),
-      Math.max(corners[0], corners[3], corners[6]), Math.max(corners[1], corners[4], corners[7]), Math.max(corners[2], corners[5], corners[8]),
-    ];
-    const triangle = { corners: Float64Array.from(corners), normal: [normalX, normalY, normalZ], box };
-    const bucket = byPlane.get(key);
-    if (bucket) bucket.triangles.push(triangle);
-    else byPlane.set(key, { triangles: [triangle], widest: 0 });
+    const base = count * TRIANGLE_STRIDE;
+    keys[count] = planeKey(normalX, normalY, normalZ, corners[0], corners[1], corners[2], tolerance);
+    data.set(corners, base);
+    data[base + NORMAL_OFFSET] = normalX;
+    data[base + NORMAL_OFFSET + 1] = normalY;
+    data[base + NORMAL_OFFSET + 2] = normalZ;
+    for (let axis = 0; axis < 3; axis++) {
+      data[base + BOX_OFFSET + axis] = Math.min(corners[axis], corners[3 + axis], corners[6 + axis]);
+      data[base + BOX_OFFSET + 3 + axis] = Math.max(corners[axis], corners[3 + axis], corners[6 + axis]);
+    }
+    count++;
   });
-  for (const bucket of byPlane.values()) {
-    bucket.triangles.sort((first, second) => first.box[0] - second.box[0]);
-    for (const { box } of bucket.triangles) bucket.widest = Math.max(bucket.widest, box[3] - box[0]);
+  const order = new Uint32Array(count);
+  for (let index = 0; index < count; index++) order[index] = index;
+  order.sort((first, second) => keys[first] - keys[second] || data[first * TRIANGLE_STRIDE + BOX_OFFSET] - data[second * TRIANGLE_STRIDE + BOX_OFFSET] || first - second);
+  const runKeys = [];
+  const runStarts = [];
+  const runWidest = [];
+  for (let position = 0; position < count; position++) {
+    const triangle = order[position];
+    if (position === 0 || keys[triangle] !== runKeys[runKeys.length - 1]) {
+      runKeys.push(keys[triangle]);
+      runStarts.push(position);
+      runWidest.push(0);
+    }
+    const width = data[triangle * TRIANGLE_STRIDE + BOX_OFFSET + 3] - data[triangle * TRIANGLE_STRIDE + BOX_OFFSET];
+    runWidest[runWidest.length - 1] = Math.max(runWidest[runWidest.length - 1], width);
   }
-  return byPlane;
+  runStarts.push(count);
+  return { data, order, runKeys: Float64Array.from(runKeys), runStarts: Uint32Array.from(runStarts), runWidest: Float64Array.from(runWidest) };
 }
 
-function trianglesTouching(bucket, region, tolerance) {
-  const { triangles, widest } = bucket;
+function bucketAtRun(planes, run) {
+  const start = planes.runStarts[run];
+  const end = planes.runStarts[run + 1];
+  return { planes, start, end, widest: planes.runWidest[run], count: end - start };
+}
+
+// The bucket with this plane key, or null: the keys are sorted, so it is found by bisection.
+function bucketOfKey(planes, key) {
+  const { runKeys } = planes;
   let low = 0;
-  let high = triangles.length;
+  let high = runKeys.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (runKeys[middle] < key) low = middle + 1;
+    else high = middle;
+  }
+  return low < runKeys.length && runKeys[low] === key ? bucketAtRun(planes, low) : null;
+}
+
+// The triangles of a bucket whose box touches `region`, as small objects: only these few are ever turned into objects.
+function trianglesTouching(bucket, region, tolerance) {
+  const { planes, start, end, widest } = bucket;
+  const { data, order } = planes;
+  let low = start;
+  let high = end;
   const earliest = region[0] - tolerance - widest;
   while (low < high) {
     const middle = (low + high) >> 1;
-    if (triangles[middle].box[0] < earliest) low = middle + 1;
+    if (data[order[middle] * TRIANGLE_STRIDE + BOX_OFFSET] < earliest) low = middle + 1;
     else high = middle;
   }
   const touching = [];
-  for (let index = low; index < triangles.length; index++) {
-    const { box } = triangles[index];
-    if (box[0] > region[3] + tolerance) break;
-    if (box[3] < region[0] - tolerance) continue;
-    if (box[4] < region[1] - tolerance || box[1] > region[4] + tolerance) continue;
-    if (box[5] < region[2] - tolerance || box[2] > region[5] + tolerance) continue;
-    touching.push(triangles[index]);
+  for (let position = low; position < end; position++) {
+    const base = order[position] * TRIANGLE_STRIDE;
+    const box = base + BOX_OFFSET;
+    if (data[box] > region[3] + tolerance) break;
+    if (data[box + 3] < region[0] - tolerance) continue;
+    if (data[box + 4] < region[1] - tolerance || data[box + 1] > region[4] + tolerance) continue;
+    if (data[box + 5] < region[2] - tolerance || data[box + 2] > region[5] + tolerance) continue;
+    touching.push({ corners: data.subarray(base, base + 9), normal: [data[base + NORMAL_OFFSET], data[base + NORMAL_OFFSET + 1], data[base + NORMAL_OFFSET + 2]] });
   }
   return touching;
 }
@@ -225,11 +271,13 @@ function pairOverlap(first, second, region, tolerance, budget) {
   let normal = null;
   let largestPiece = 0;
   // Only triangles in the same or a neighbouring plane bucket can be flush, so a big part is never scanned whole.
-  for (const [key, firstBucket] of first.planes) {
+  for (let run = 0; run < first.planes.runKeys.length; run++) {
+    const key = first.planes.runKeys[run];
+    const firstBucket = bucketAtRun(first.planes, run);
     for (const neighbour of [key - 1, key, key + 1]) {
-      const secondBucket = second.planes.get(neighbour);
+      const secondBucket = bucketOfKey(second.planes, neighbour);
       if (!secondBucket) continue;
-      budget.work += Math.log2(firstBucket.triangles.length + secondBucket.triangles.length + 2) / 4;
+      budget.work += Math.log2(firstBucket.count + secondBucket.count + 2) / 4;
       const firstTriangles = trianglesTouching(firstBucket, region, tolerance);
       const secondTriangles = trianglesTouching(secondBucket, region, tolerance);
       for (const firstTriangle of firstTriangles) {

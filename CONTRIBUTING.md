@@ -109,6 +109,15 @@ node bench/agent-modeling/compare-bench.mjs bench/agent-modeling/results/bench-b
 
 Paste the table into the pull request. The bench runs through a Claude Code login. Without one, write "I have no Claude Code login; a maintainer runs the bench." in the pull request and a maintainer runs it. If the tool schemas did not change, write "The tool schemas are unchanged." Only `skills/` and `scripts/mcp-server.mjs` trigger this check. [bench/agent-modeling/README.md](bench/agent-modeling/README.md) has the details.
 
+**Bench what changed, not everything again and again.** A change to one topic (relations, particles, an explosion, the terrain) runs only the tasks that exercise it, by kind or by topic, and compares on those tasks alone:
+
+```sh
+node bench/agent-modeling/bench.mjs --suggest origin/main     # prints the command for this branch's diff
+node bench/agent-modeling/bench.mjs --kinds light --topics relations --models haiku --runs 3 --label <branch> --backend cpu
+```
+
+Name the task ids you ran in the pull request (`--dry-run` lists them). Skipped baseline tasks are listed by `compare-bench.mjs` and never count as failures. The full bench runs for a change every task reads (the tool schemas and server instructions in `scripts/mcp-server.mjs`, or a skill), and once before each release cut.
+
 ### Look changes
 
 A change to shaders, lighting, materials, the default render or a post step changes how every scene looks. Add a before and an after picture to the pull request. A bot adds the label `hold:look-approval`. Only the owner removes it, and nothing with that label merges. Once the owner removes it, the check counts the look as approved and stops asking for pictures.
