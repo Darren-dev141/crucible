@@ -1,0 +1,67 @@
+{
+  "options": {
+    "runs": 3,
+    "duration": 8,
+    "width": 1920,
+    "height": 1080,
+    "fps": 24,
+    "size": 4,
+    "seed": 1,
+    "backend": "gpu",
+    "out": "C:/Users/nxan2/Documents/crucible/artifacts/1050/timing",
+    "maxSeconds": 170
+  },
+  "runs": [
+    {
+      "run": 1,
+      "frames": 192,
+      "size": "1920x1080",
+      "buildSeconds": 25.56,
+      "submitSeconds": 0.03,
+      "jobSeconds": 9.32,
+      "jobReportSeconds": 9.13,
+      "totalSeconds": 34.91,
+      "phases": {
+        "drawSeconds": 0.71,
+        "captureSeconds": 4.92,
+        "encoderBackpressureSeconds": 0.71,
+        "encoderFinishSeconds": 0.2
+      },
+      "meetsThirtySeconds": false
+    },
+    {
+      "run": 2,
+      "frames": 192,
+      "size": "1920x1080",
+      "buildSeconds": 11.76,
+      "submitSeconds": 0.02,
+      "jobSeconds": 20.13,
+      "jobReportSeconds": 19.69,
+      "totalSeconds": 31.91,
+      "phases": {
+        "drawSeconds": 0.95,
+        "captureSeconds": 5.54,
+        "encoderBackpressureSeconds": 0.41,
+        "encoderFinishSeconds": 6.61
+      },
+      "meetsThirtySeconds": false
+    },
+    {
+      "run": 3,
+      "frames": 192,
+      "size": "1920x1080",
+      "buildSeconds": 13.77,
+      "submitSeconds": 0.03,
+      "jobSeconds": 9.19,
+      "jobReportSeconds": 8.84,
+      "totalSeconds": 23,
+      "phases": {
+        "drawSeconds": 0.73,
+        "captureSeconds": 4.98,
+        "encoderBackpressureSeconds": 0.42,
+        "encoderFinishSeconds": 0.32
+      },
+      "meetsThirtySeconds": true
+    }
+  ]
+}
