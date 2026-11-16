@@ -151,8 +151,10 @@ def write_radiance_hdr(path, linear_rgb_top_first):
         handle.write(rgbe_bytes(linear_rgb_top_first))
 
 
-def light_feature_notes(light_name, light_type, use_temperature, use_shadow, diffuse_factor, specular_factor):
-    """What a light carries that Cook does not read, one sentence each. Node trees are handled by `resolve_light_nodes`."""
+def light_feature_notes(light_name, light_type, use_temperature, use_shadow, diffuse_factor, specular_factor, light_max_bounces=None, scene_max_bounces=None):
+    """What a light carries that Cook does not read, one sentence each. Node trees are handled by `resolve_light_nodes`.
+
+    `light_max_bounces` is the light's own Cycles limit and `scene_max_bounces` the scene's; either is None when unreadable."""
     notes = []
     if use_temperature:
         notes.append(f"light {light_name} uses a blackbody temperature; Cook uses its plain colour")
@@ -160,6 +162,8 @@ def light_feature_notes(light_name, light_type, use_temperature, use_shadow, dif
         notes.append(f"light {light_name} has shadows off; Cook casts them")
     if abs(diffuse_factor - 1.0) > 1e-6 or abs(specular_factor - 1.0) > 1e-6:
         notes.append(f"light {light_name} has a diffuse or specular factor other than 1; Cook ignores the factors")
+    if light_max_bounces is not None and scene_max_bounces is not None and light_max_bounces < scene_max_bounces:
+        notes.append(f"light {light_name} has max bounces {light_max_bounces}, below the scene's {scene_max_bounces}; not reproduced, Cook applies one bounce limit to every light")
     return notes
 
 
