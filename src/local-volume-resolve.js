@@ -8,7 +8,7 @@ import { finiteRange, vectorField } from './volumetric.js';
 export const MAX_LOCAL_VOLUMES = 8;
 export const LOCAL_VOLUME_SHAPES = Object.freeze(['box', 'sphere', 'mesh', 'grid']);
 export const LOCAL_VOLUME_FIT = Object.freeze(['bounds', 'mesh']);
-export const LOCAL_VOLUME_FIELDS = Object.freeze(['shape', 'part', 'fit', 'center', 'size', 'radius', 'density', 'falloff', 'absorption', 'emission', 'emissionStrength', 'scatter', 'blur', 'noiseAmount', 'noiseScale', 'steps', 'grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy', 'lightsScene', 'shadowDetail', 'castShadow', 'scatterOctaves']);
+export const LOCAL_VOLUME_FIELDS = Object.freeze(['shape', 'part', 'fit', 'center', 'size', 'radius', 'density', 'falloff', 'absorption', 'emission', 'emissionStrength', 'scatter', 'blur', 'noiseAmount', 'noiseScale', 'steps', 'grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy', 'lightsScene', 'shadowDetail', 'castShadow', 'scatterOctaves', 'emissionRamp']);
 // The fields only a grid volume takes (#1045), and the steps its denser march may take (the shader's grid loop is bounded by the same number).
 export const LOCAL_VOLUME_GRID_FIELDS = Object.freeze(['grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy']);
 export const LOCAL_VOLUME_MAXIMUM_STEPS = 32;
@@ -28,7 +28,7 @@ function resolveFlag(value, label) {
   return value;
 }
 
-function resolveLocalVolume(input, label, resolveGrid) {
+function resolveLocalVolume(input, label, resolveGrid, resolveRamp) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError(`${label} must be an object`);
   for (const field of Object.keys(input)) {
     if (!LOCAL_VOLUME_FIELDS.includes(field)) throw new TypeError(`${label} has no field "${field}"; use ${LOCAL_VOLUME_FIELDS.join(', ')}`);
@@ -53,6 +53,7 @@ function resolveLocalVolume(input, label, resolveGrid) {
     noiseScale: finiteRange(input.noiseScale ?? 1, 0.001, 100, `${label}.noiseScale`),
     steps: shape === 'grid' ? 0 : finiteRange(input.steps ?? 16, 4, LOCAL_VOLUME_MAXIMUM_STEPS, `${label}.steps`),
   };
+  if (input.emissionRamp !== undefined) resolved.emissionRamp = resolveRamp(input.emissionRamp, shape, `${label}.emissionRamp`);
   if (shape === 'grid') return resolveGrid(input, resolved, label);
   const gridField = LOCAL_VOLUME_GRID_FIELDS.find(field => input[field] !== undefined);
   if (gridField) throw new TypeError(`${label}.${gridField} belongs to shape "grid"`);
@@ -80,10 +81,10 @@ function resolveLocalVolume(input, label, resolveGrid) {
 }
 
 /** As resolveLocalVolumes, with the function that resolves a volume of shape "grid" passed in. */
-export function resolveLocalVolumesWith(resolveGrid, input, label = 'localVolumes') {
+export function resolveLocalVolumesWith(resolveGrid, input, label = 'localVolumes', resolveRamp) {
   if (!Array.isArray(input)) throw new TypeError(`${label} must be an array of volumes`);
   if (input.length > MAX_LOCAL_VOLUMES) throw new RangeError(`${label} holds at most ${MAX_LOCAL_VOLUMES} volumes, got ${input.length}`);
-  const volumes = input.map((volume, index) => resolveLocalVolume(volume, `${label}[${index}]`, resolveGrid));
+  const volumes = input.map((volume, index) => resolveLocalVolume(volume, `${label}[${index}]`, resolveGrid, resolveRamp));
   const gridVolumeCount = volumes.filter(volume => volume.shape === 'grid').length;
   if (gridVolumeCount > 1) {
     throw new RangeError(ONE_GRID_VOLUME_MESSAGE);

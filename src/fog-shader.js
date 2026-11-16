@@ -1,7 +1,8 @@
 import { registerShaderFeatureCode } from './shader-registry.js';
-import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY } from './local-volumes.js';
+import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY, MAX_LOCAL_VOLUMES } from './local-volumes.js';
 import { createLocalVolumeCompositeFragment } from './post.js';
 import { compileProgram, fullscreenVertex } from './gl-program.js';
+import { LOCAL_VOLUME_RAMP_STOPS } from './local-volume-ramp.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
@@ -197,6 +198,8 @@ function bindLocalVolumes(renderer, post, frame, environment) {
   context.bindTexture(context.TEXTURE_2D, buffers.meshParts.length > 0 ? renderer.meshVolumePass.target.texture : renderer.whiteTexture);
   context.uniform1i(locate('localMeshVolumes'), 7);
   context.uniform4fv(locate('localVolumeGrid[0]'), buffers.grid);
+  context.uniform4fv(locate('localVolumeRampSetup[0]'), buffers.rampSetup);
+  context.uniform4fv(locate('localVolumeRamp[0]'), buffers.rampColors);
   context.activeTexture(context.TEXTURE8);
   context.bindTexture(context.TEXTURE_3D, localGridTexture(renderer, buffers.gridVolume?.gridData ?? null));
   context.uniform1i(locate('localGridTexture'), 8);
@@ -277,6 +280,8 @@ uniform vec4 localVolumeAxes[24];
 uniform vec3 localSkyAmbient;
 uniform highp sampler2D localMeshVolumes;
 uniform vec4 localVolumeGrid[8];
+uniform vec4 localVolumeRampSetup[8];
+uniform vec4 localVolumeRamp[${MAX_LOCAL_VOLUMES * LOCAL_VOLUME_RAMP_STOPS}];
 uniform highp sampler3D localGridTexture;
 `;
 
@@ -353,6 +358,18 @@ vec3 localGridBlackbody(float kelvin) {
   float blue = hundreds >= 66.0 ? 255.0 : (hundreds <= 19.0 ? 0.0 : 138.5177312231 * log(hundreds - 10.0) - 305.0447927307);
   float gain = min(pow(kelvin / ${BLACKBODY_REFERENCE_KELVIN.toFixed(1)}, 4.0), ${BLACKBODY_MAXIMUM_GAIN.toFixed(1)});
   return pow(clamp(vec3(red, green, blue), 0.0, 255.0) / 255.0, vec3(2.2)) * gain;
+}
+// The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
+// code (0 none, 1 density, 2 temperature, 3 flame), y the stop count and z, w the source range; the stops are baked in local-volume-ramp.js with the exposure and
+// the emission strength applied. The light fades to nothing with the source, so a cold cell gives none.
+vec3 localVolumeRampLight(int index, float value) {
+  vec4 setup = localVolumeRampSetup[index];
+  if (setup.y < 0.5) return vec3(0.0);
+  float position = clamp((value - setup.z) / (setup.w - setup.z), 0.0, 1.0);
+  float scaled = position * (setup.y - 1.0);
+  int lower = int(floor(scaled));
+  int upper = min(lower + 1, int(setup.y) - 1);
+  return mix(localVolumeRamp[index * ${LOCAL_VOLUME_RAMP_STOPS} + lower].rgb, localVolumeRamp[index * ${LOCAL_VOLUME_RAMP_STOPS} + upper].rgb, scaled - float(lower)) * position;
 }
 float localVolumeProfile(int index, vec3 position, bool withNoise) {
   if (localVolumeGrid[index].x > 0.5) {
@@ -550,6 +567,7 @@ vec3 localVolumes(vec3 background) {
         vec3 cell = localGridSample(nearest, position);
         vec3 extinction = localVolumeAbsorption[nearest].rgb * (cell.x * gridStepSize);
         radiance += transmittance * (localVolumeEmission[nearest].rgb * cell.z + localGridBlackbody(cell.y * localVolumeGrid[nearest].y) * localVolumeGrid[nearest].z) * gridStepSize;
+        if (localVolumeRampSetup[nearest].y > 0.5) radiance += transmittance * localVolumeRampLight(nearest, localVolumeRampSetup[nearest].x < 1.5 ? cell.x : (localVolumeRampSetup[nearest].x < 2.5 ? cell.y : cell.z)) * gridStepSize;
         if (gridScatter > 0.0 && cell.x > 0.0) radiance += transmittance * (gridScatter * (1.0 - exp(-extinction))) * localVolumeInScatter(nearest, position, direction);
         transmittance *= exp(-extinction);
         blurDepth += localVolumeSteps[nearest].w * dot(extinction, vec3(0.3333));
@@ -568,6 +586,7 @@ vec3 localVolumes(vec3 background) {
       vec3 position = origin + direction * (entry + (float(step) + jitter) * stepSize);
       float profile = localVolumeProfile(nearest, position, true);
       radiance += transmittance * localVolumeEmission[nearest].rgb * (profile * stepSize);
+      if (localVolumeRampSetup[nearest].y > 0.5) radiance += transmittance * localVolumeRampLight(nearest, profile) * stepSize;
       vec3 extinction = localVolumeAbsorption[nearest].rgb * (profile * stepSize);
       if (scatterAlbedo > 0.0 && profile > 0.0) radiance += transmittance * (scatterAlbedo * (1.0 - exp(-extinction))) * localVolumeInScatter(nearest, position, direction);
       transmittance *= exp(-extinction);

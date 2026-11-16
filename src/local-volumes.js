@@ -1,6 +1,8 @@
 import { MAX_LOCAL_VOLUMES, LOCAL_VOLUME_MAXIMUM_STEPS, ONE_GRID_VOLUME_MESSAGE, resolveLocalVolumesWith } from './local-volume-resolve.js';
 import { localVolumeNoise } from './local-volume-noise.js';
 import { sampleVolumeGrid, volumeGridFloats } from './volume-grid.js';
+import { LOCAL_VOLUME_RAMP_STOPS, rampSourceCode, resolveEmissionRamp } from './local-volume-ramp.js';
+import { bakeEmissionRamp } from './local-volume-ramp-bake.js';
 import { resolveGridVolume, LOCAL_VOLUME_GRID_MAXIMUM_STEPS } from './local-volume-grid.js';
 
 export * from './local-volume-resolve.js';
@@ -11,13 +13,25 @@ export { LOCAL_VOLUME_GRID_MAXIMUM_STEPS };
  * The scene entry calls resolveLocalVolumesWith instead, so the grid resolver loads with the grid module and not with every scene.
  */
 export function resolveLocalVolumes(input, label = 'localVolumes') {
-  return resolveLocalVolumesWith(resolveGridVolume, input, label);
+  return resolveLocalVolumesWith(resolveGridVolume, input, label, resolveEmissionRamp);
 }
 
 /** The uniform arrays the post shader reads, one vec4 per volume. Pass resolved volumes. */
 export function createLocalVolumeBuffers() {
   const size = MAX_LOCAL_VOLUMES * 4;
-  return { count: 0, blurred: false, meshParts: [], grid: new Float32Array(size), gridVolume: null, centers: new Float32Array(size), extents: new Float32Array(size), absorption: new Float32Array(size), emission: new Float32Array(size), steps: new Float32Array(size), axes: new Float32Array(size * 3) };
+  return { count: 0, blurred: false, meshParts: [], grid: new Float32Array(size), gridVolume: null, centers: new Float32Array(size), extents: new Float32Array(size), absorption: new Float32Array(size), emission: new Float32Array(size), steps: new Float32Array(size), axes: new Float32Array(size * 3), rampSetup: new Float32Array(size), rampColors: new Float32Array(size * LOCAL_VOLUME_RAMP_STOPS) };
+}
+
+// The emission ramp of volume `index` (#1046): rampSetup holds x the source code (0 none), y the stop count and z, w the source range; rampColors
+// holds the baked stops, one vec4 each, with the exposure and the emission strength already applied.
+function packEmissionRamp(volume, index, buffers) {
+  const { emissionRamp } = volume;
+  const baked = bakeEmissionRamp(emissionRamp);
+  buffers.rampSetup.set([rampSourceCode(emissionRamp.source), baked.count, ...emissionRamp.range], index * 4);
+  for (let stop = 0; stop < baked.count; stop++) {
+    const at = (index * LOCAL_VOLUME_RAMP_STOPS + stop) * 4;
+    for (let channel = 0; channel < 3; channel++) buffers.rampColors[at + channel] = baked.colors[stop * 3 + channel] * volume.emissionStrength;
+  }
 }
 
 const IDENTITY_AXES = Object.freeze([1, 0, 0, 0, 1, 0, 0, 0, 1]);
@@ -32,6 +46,7 @@ export function packLocalVolumes(volumes, buffers) {
   buffers.meshParts = [];
   buffers.gridVolume = null;
   buffers.grid.fill(0);
+  buffers.rampSetup.fill(0);
   buffers.blurred = volumes.some(volume => volume.blur > 0 && volume.density > 0);
   // A volume that glows is composited before bloom extraction, so its glow blooms (#1046).
   buffers.emissive = volumes.some(volume => volume.emissionStrength > 0 && (volume.shape === 'grid' || volume.emission.some(channel => channel > 0)));
@@ -44,6 +59,7 @@ export function packLocalVolumes(volumes, buffers) {
     buffers.absorption.set([...volume.absorption.map(channel => channel * volume.density), volume.noiseAmount], at);
     buffers.emission.set([...volume.emission.map(channel => channel * volume.emissionStrength), volume.noiseScale], at);
     buffers.steps.set([volume.steps, packedShape === PACKED_SHAPE_MESH ? buffers.meshParts.length : 0, volume.scatter ?? 0, volume.blur ?? 0], at);
+    if (volume.emissionRamp) packEmissionRamp(volume, index, buffers);
     if (packedShape === PACKED_SHAPE_MESH) buffers.meshParts.push({ part: volume.part, label: `environment.localVolumes[${index}]` });
     if (volume.shape !== 'grid') {
       buffers.grid[at + 1] = volume.shadowDetail ? 1 : 0;
