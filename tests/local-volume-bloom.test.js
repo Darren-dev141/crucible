@@ -64,17 +64,27 @@ async function drawRaster(page, volumes, effects = {}) {
     const pixels = Array.from(readFloatPixels(renderer.context, output.framebuffer, size, size));
     const glError = renderer.context.getError();
     const bloomTargetCount = renderer.bloomTargets.length;
+    let sourcePeak = 0;
+    if (bloomTargetCount === 3) {
+      const gl = renderer.context;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, renderer.bloomTargets[2].framebuffer);
+      const source = new Float32Array(renderer.bloomWidth * renderer.bloomHeight * 4);
+      gl.readPixels(0, 0, renderer.bloomWidth, renderer.bloomHeight, gl.RGBA, gl.FLOAT, source);
+      for (let index = 0; index < source.length; index += 4) sourcePeak = Math.max(sourcePeak, source[index]);
+    }
     output.dispose();
     renderer.dispose?.();
-    return { pixels, glError, bloomTargetCount };
+    return { pixels, glError, bloomTargetCount, sourcePeak };
   };
   const drawn = await page.evaluate(task, { size: SIZE, camera: LOOKING_DOWN, volumes, effects });
   assert.equal(drawn.glError, 0);
   lastBloomTargetCount = drawn.bloomTargetCount;
+  lastSourcePeak = drawn.sourcePeak;
   return drawn.pixels;
 }
 
 let lastBloomTargetCount = 0;
+let lastSourcePeak = 0;
 
 function regionMean(pixels, columns, rows) {
   let total = 0;
@@ -119,6 +129,7 @@ test('bloom lifts the ground around a glowing volume, and the third bloom target
     const withBloom = regionMean(await drawRaster(page, [FIREBALL], bloom), ...RING);
     assert.equal(lastBloomTargetCount, 3, 'a glow with bloom on adds the volume source target');
     assert.ok(withBloom > withoutBloom * 1.05 + 0.01, `bloom lifts the ring around a glowing volume: ${withoutBloom} to ${withBloom}`);
+    assert.ok(lastSourcePeak > 10, `the bloom source keeps the volume's linear value above the threshold of 1: peak ${lastSourcePeak}`);
     const noGlow = regionMean(await drawRaster(page, [{ ...FIREBALL, emission: [0, 0, 0] }], bloom), ...RING);
     assert.equal(lastBloomTargetCount, 2, 'a volume that does not emit leaves the two bloom targets');
     assert.ok(noGlow < withBloom / 2, `a volume that does not emit adds no bloom: ${noGlow}`);
