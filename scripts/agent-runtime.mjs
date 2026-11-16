@@ -797,7 +797,6 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             } catch (error) {
               // Past maxSeconds the job fails as it does on every backend; falling back would only run it twice as long.
               if (isNativeTimeLimitError(error)) throw error;
-              console.error(`TEMPORARY #1186 native attempt failed (exported ${exportedScene}): ${error.stack}`);
               nativeSequence?.close();
               nativeSequence = undefined;
               nativeTemporal?.restart('a frame rendered on another backend');
