@@ -2354,7 +2354,7 @@ export class CrucibleRenderer {
     const occluded = effects.ambientOcclusion > 0 && Boolean(this.depthTexture);
     if (occluded) this.drawAmbientOcclusion(frame, effects);
     if (frame.linearOutput && (!this.hdr || !frame.outputFramebuffer)) {
-      throw new Error('linearOutput writes scene radiance above 1, so it needs a renderer made with hdr: true and an outputFramebuffer from createFloatOutput (src/float-output.js). Pass both, or drop linearOutput for the display image.');
+      throw new Error('linearOutput needs hdr: true and an outputFramebuffer from createFloatOutput; pass both or drop linearOutput.');
     }
     // A frame that names an outputFramebuffer (src/float-output.js) draws its final pass there, not on the canvas.
     context.bindFramebuffer(context.FRAMEBUFFER, frame.outputFramebuffer ?? null);
