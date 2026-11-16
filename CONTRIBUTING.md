@@ -92,6 +92,16 @@ Every pull request runs `npm audit`, `npm run size`, `npm run tool-cost`, `npm t
 
 Branch protection on `main` requires the `test` check to pass before a merge. `GitGuardian Security Checks` is an external check that must also pass.
 
+Main is tested after every push to it, so a branch does not need the newest `main` to merge. Merge `main` into your branch only when `git merge-tree` reports a conflict, or when `main` changed a file your branch also changes:
+
+```sh
+git fetch origin
+git merge-tree --write-tree origin/main HEAD >/dev/null || echo "conflict: merge origin/main"
+comm -12 <(git diff --name-only HEAD...origin/main | sort) <(git diff --name-only origin/main...HEAD | sort)   # files both sides changed
+```
+
+`merge-tree` exits 1 on a conflict, and the last command prints nothing when the two sets of files are apart. If either shows something, run `git merge origin/main`, fix it and push. Otherwise push without merging.
+
 These checks need a GPU or a person's eyes, so they do not run on a pull request. The author runs each one that applies:
 
 | Check | Run it when you change |
