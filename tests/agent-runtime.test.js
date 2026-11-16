@@ -763,6 +763,54 @@ runTest('one asset placed many times counts once in the scene total (#1771)', as
   assert.ok(events.includes('source:apply'));
 });
 
+runTest('grid files the scene already holds count toward the combined limit in scene_apply (#1848)', async () => {
+  const gridDirectory = await mkdtemp(join(tmpdir(), 'crucible-scene-grid-'));
+  const previousDirectory = process.env.JS67_GRID_DIRECTORY;
+  process.env.JS67_GRID_DIRECTORY = gridDirectory;
+  after(async () => {
+    if (previousDirectory === undefined) delete process.env.JS67_GRID_DIRECTORY;
+    else process.env.JS67_GRID_DIRECTORY = previousDirectory;
+    await rm(gridDirectory, { recursive: true, force: true });
+  });
+  const gridBytes = 40 * 1024 * 1024;
+  await writeFile(join(gridDirectory, 'held.67vg'), '');
+  await truncate(join(gridDirectory, 'held.67vg'), gridBytes);
+  const sceneWithGrid = { ...sceneHolding(), environment: { localVolumes: [{ shape: 'grid', grid: 'held.67vg' }] } };
+  const sizeEach = 30 * 1024 * 1024;
+  const { runtime, sessionId, events } = await catalogLimitHarness(sizeEach, sceneWithGrid);
+  await assert.rejects(runtime.apply({ sessionId, operations: addNodes(catalogAssetIds[0], 1) }), refusedAtTotal(gridBytes + sizeEach));
+  assert.equal(events.includes('source:apply'), false);
+});
+
+// A scene over the cap reaches a render job through an export or an older edit. The job must refuse it before the scene page is
+// suspended, because recovery would reload every asset into the page and crash it (#1848).
+async function overCapJobHarness() {
+  const sizeEach = 30 * 1024 * 1024;
+  const catalog = countingCatalog(Object.fromEntries(catalogAssetIds.map(assetId => [assetId, sizeEach])));
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const harness = await reviewRuntimeHarness({
+    runtimeOptions: { assets: join(tmpdir(), 'crucible-counting-catalog'), jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentAssetCatalog: async () => catalog, createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } },
+  });
+  await harness.runtime.submitJob({ sessionId: harness.sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+  const runOverCapJob = () => runJob({ jobId: randomUUID(), sessionId: harness.sessionId, directory: tmpdir(),
+    snapshot: { recipe: sceneHolding(...catalogAssetIds) }, settings: { kind: 'image', width: 64, height: 64 },
+    signal: new AbortController().signal, progress: async () => {} });
+  return { ...harness, catalog, runOverCapJob, sizeEach };
+}
+
+runTest('a render job of a scene over the combined limit fails with the cap message and leaves the scene page alone (#1848)', async () => {
+  const { runtime, events, catalog, runOverCapJob, sizeEach } = await overCapJobHarness();
+  try {
+    await assert.rejects(runOverCapJob(), error => refusedAtTotal(3 * sizeEach)(error) && error.message.includes('scene'));
+    assert.equal(events.includes('source:suspend'), false, 'the scene page keeps its renderer');
+    assert.equal(events.includes('source:resume'), false, 'no recovery reload of the over-cap scene');
+    assert.equal(catalog.counts.reads, 0);
+    assert.equal((await runtime.capabilities()).phase, 'ready');
+  } finally { await runtime.close(); }
+});
+
 // The same GLB with one extra field in its JSON chunk, so the catalog gives it another asset id.
 function withDistinctDocument(bytes, marker) {
   const jsonLength = bytes.readUInt32LE(12);
