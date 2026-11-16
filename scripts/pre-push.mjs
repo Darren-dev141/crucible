@@ -27,6 +27,28 @@ export function shouldRunPreflight(pushedRefsText, environment = {}) {
   return { run: true, reason: null };
 }
 
+// Git runs the hook with variables that point at this repository (GIT_DIR, GIT_INDEX_FILE and others). A test that runs
+// git in a temporary folder would inherit them and act on this repository instead: one ran `git init --bare` and set
+// core.bare=true on the real repository, which broke every worktree (#1837). The preflight finds the repository from
+// its working folder, so it needs none of them.
+const repositoryLocationVariables = new Set([
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_PREFIX',
+  'GIT_COMMON_DIR',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_QUARANTINE_PATH',
+  'GIT_NAMESPACE',
+]);
+
+// Returns a copy of the environment without git's repository location variables. Pure, so tests can call it.
+export function preflightEnvironment(environment) {
+  const kept = Object.entries(environment).filter(([name]) => !repositoryLocationVariables.has(name.toUpperCase()));
+  return Object.fromEntries(kept);
+}
+
 function main() {
   const pushedRefsText = readFileSync(0, 'utf8');
   const decision = shouldRunPreflight(pushedRefsText, process.env);
@@ -35,7 +57,7 @@ function main() {
     return 0;
   }
   console.log('pre-push: running npm run preflight -- --skip-tests. Skip once with SKIP_PREFLIGHT=1 git push.');
-  const result = spawnSync('node', ['scripts/preflight.mjs', '--skip-tests'], { cwd: root, stdio: 'inherit' });
+  const result = spawnSync('node', ['scripts/preflight.mjs', '--skip-tests'], { cwd: root, stdio: 'inherit', env: preflightEnvironment(process.env) });
   if (result.status !== 0) {
     console.error('pre-push: push stopped. Fix the checks above, or push anyway with SKIP_PREFLIGHT=1 git push.');
   }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldRunPreflight } from '../scripts/pre-push.mjs';
+import { preflightEnvironment, shouldRunPreflight } from '../scripts/pre-push.mjs';
 import { planHooksInstall } from '../scripts/install-git-hooks.mjs';
 
 const someSha = 'a'.repeat(40);
@@ -27,6 +27,23 @@ test('deleting a branch or pushing only a tag skips the preflight', () => {
 test('SKIP_PREFLIGHT=1 skips the preflight', () => {
   const pushed = `refs/heads/main ${someSha} refs/heads/main ${someSha}\r\n`;
   assert.deepEqual(shouldRunPreflight(pushed, { SKIP_PREFLIGHT: '1' }), { run: false, reason: 'SKIP_PREFLIGHT=1' });
+});
+
+test('the preflight runs without the hook variables that point git at this repository', () => {
+  const hookEnvironment = {
+    PATH: '/usr/bin',
+    GIT_DIR: '/repo/.git',
+    GIT_INDEX_FILE: '/repo/.git/index',
+    GIT_WORK_TREE: '/repo',
+    GIT_QUARANTINE_PATH: '/repo/.git/objects/incoming',
+    GIT_SSH_COMMAND: 'ssh -i key',
+    SKIP_PREFLIGHT: '0',
+  };
+  assert.deepEqual(preflightEnvironment(hookEnvironment), {
+    PATH: '/usr/bin',
+    GIT_SSH_COMMAND: 'ssh -i key',
+    SKIP_PREFLIGHT: '0',
+  });
 });
 
 test('hooks install only in a local git checkout without another hooks folder', () => {
