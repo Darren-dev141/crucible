@@ -1,6 +1,6 @@
 """Blender-side check for tests/grid-to-vdb.test.js: converts a .67vg with scripts/grid-to-vdb.py, reads the VDB back with Blender's openvdb and prints
 one JSON line: the largest density error and the largest distance between a voxel centre in the VDB and where Crucible puts that texel.
-(scripts/vdb-to-grid.py cannot read this file back: openvdb's Python write is Blosc compressed and that reader decodes zip only.)
+(scripts/vdb-to-grid.py reads this Blosc file too when run with `--with blosc`: tests/vdb-to-grid-blosc.test.js.)
 
     blender -b --factory-startup --python tests/fixtures/grid_vdb_roundtrip.py -- in.67vg out_folder
 """

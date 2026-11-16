@@ -14,7 +14,8 @@ volume. Frame size at 128 cubed is 4 MiB per channel and at 256 cubed 32 MiB; a 
 
 The reader is written here, so no OpenVDB build or wheel is needed (none is published for Windows). It reads OpenVDB file
 versions 222 and later with float grids of tree shape 5-4-3 (the shape every DCC tool writes), stored as full or half floats,
-uncompressed or zip compressed. A Blosc compressed file stops with an error that says how to re-export it.
+uncompressed, zip or Blosc compressed. Blosc (openvdb's default) needs the optional `blosc` package, added per run with `uv run --no-project --with blosc
+scripts/vdb-to-grid.py ...`; without it the error prints that command.
 
 Output (docs/volumetric.md, "Grid volumes"): the bytes "67VG", a uint32 version (1), a uint32 header length, a JSON header padded
 to 4 bytes, then each channel as half floats with x fastest, then y, then z. The axes are y up: a Z up VDB (Blender, EmberGen)
@@ -22,6 +23,7 @@ is turned so its z becomes y.
 """
 import argparse
 import glob
+import importlib
 import json
 import re
 import struct
@@ -40,6 +42,7 @@ COMPRESS_ZIP = 0x1
 COMPRESS_ACTIVE_MASK = 0x2
 COMPRESS_BLOSC = 0x4
 MAXIMUM_AXIS = 256
+blosc_decoder = None  # loaded on the first Blosc block, so zip and uncompressed files never import it
 CHANNEL_NAMES = ("density", "temperature", "flame")
 DEFAULT_SOURCE_NAMES = {
     "density": ("density",),
@@ -96,17 +99,32 @@ def read_mask(reader, bit_count):
     return numpy.unpackbits(words.view(numpy.uint8), bitorder="little")[:bit_count].astype(bool)
 
 
+def load_blosc_decoder():
+    """Returns a function that decodes one Blosc frame, from the optional `blosc` or `blosc2` package, or raises with the command that adds one."""
+    for module_name in ("blosc", "blosc2"):
+        try:
+            return importlib.import_module(module_name).decompress
+        except ImportError:
+            continue
+    raise ValueError("this VDB uses Blosc compression (openvdb's default) and no Blosc decoder is installed; run the script with one added: "
+                     "uv run --no-project --with blosc scripts/vdb-to-grid.py <the same arguments>")
+
+
+def decompress_blosc(frame):
+    global blosc_decoder
+    if blosc_decoder is None:
+        blosc_decoder = load_blosc_decoder()
+    return bytes(blosc_decoder(frame))
+
+
 def read_values(reader, count, compression, from_half, bytes_per_value=None):
     width = 2 if from_half else 4
     expected = count * width
-    if compression & COMPRESS_BLOSC:
-        raise ValueError("this VDB uses Blosc compression, which this reader does not decode; re-export it with zip or no compression, "
-                         "or convert it with Blender (File > Export is not needed: save the volume as .vdb with 'Compression: Zip')")
-    if compression & COMPRESS_ZIP:
+    if compression & (COMPRESS_ZIP | COMPRESS_BLOSC):
         (stored,) = reader.unpack("q")
         raw = bytes(reader.take(stored)) if stored > 0 else bytes(reader.take(expected))
         if stored > 0:
-            raw = zlib.decompress(raw)
+            raw = decompress_blosc(raw) if compression & COMPRESS_BLOSC else zlib.decompress(raw)
     else:
         raw = bytes(reader.take(expected))
     if len(raw) != expected:
