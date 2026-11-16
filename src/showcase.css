@@ -73,6 +73,18 @@
 .showcase-credits summary { cursor: pointer; width: max-content; }
 .showcase-credits ul { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 4px; }
 .showcase-credits a { color: var(--text); text-decoration: underline; }
+body.site.showcase > main { grid-template-columns: minmax(0, 1fr); }
+.showcase-cook { display: grid; gap: 20px; }
+.showcase-cook-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.showcase-cook figure { margin: 0; display: grid; gap: 12px; }
+.showcase-cook img { display: block; width: 100%; height: auto; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line, transparent); }
+.showcase-cook figcaption { display: grid; gap: 4px; color: var(--muted); font-size: 14px; }
+.showcase-cook figcaption strong { color: var(--text); font-weight: 600; }
+.showcase-cook figcaption small { font-size: 13px; }
+.showcase-cook figcaption a { color: var(--text); text-decoration: underline; }
+@media (max-width: 900px) {
+  .showcase-cook-grid { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 600px) {
   .showcase-frame { border-radius: 12px; }
 }

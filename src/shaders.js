@@ -818,7 +818,7 @@ ${featureCode("emissionHook")}  if (USES_RENDER_PASS) {
 ${featureCode("worldSurface")}  vec3 specularNormal = normal;
   vec3 baseReflectance = mix(materialDielectric, color, metallic);
 ${featureCode("mainSetup")}  if (ENVIRONMENT_ENABLED && !LIGHT_SHADING) {
-    vec2 brdfLookup = texture(environmentBrdf, vec2(clamp(dot(normal, viewDirection), 0.001, 1.0), roughness)).rg;
+    vec2 brdfLookup = environmentBrdfLookup(clamp(dot(normal, viewDirection), 0.001, 1.0), roughness);
     directSpecularGain = multipleScatterGain(brdfLookup, baseReflectance);
   }
   float visibility = shadowBlind > 0.5 ? 1.0 : shadowVisibility(normal);
@@ -1005,6 +1005,7 @@ uniform float environmentEnabled;
 uniform float environmentLevelMax;
 vec3 environmentRadiance(vec3 direction, float level) { return vec3(0.0); }
 vec3 environmentDiffuse(vec3 normal) { return vec3(0.0); }
+vec2 environmentBrdfLookup(float normalView, float roughness) { return vec2(0.0); }
 vec3 multipleScatterGain(vec2 lookup, vec3 baseReflectance) { return vec3(1.0); }
 vec3 environmentLighting(vec3 normal, vec3 specularNormal, vec3 baseReflectance, vec3 viewDirection, vec3 reflected, vec3 color, float metallic, float roughness, float occlusion, float ambient, float specularWeight) { return vec3(0.0); }
 `,
