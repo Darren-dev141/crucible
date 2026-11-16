@@ -1,5 +1,6 @@
 import { answerCapabilities } from './capabilities-topics.mjs';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
+import { readEnvironmentVariable } from '../src/environment-variable.js';
 import { McpServer } from '@modelcontextprotocol/server';
 import { resolveJobRoot } from './agent-job-root.mjs';
 import { createGpuQueueFromFlags } from './agent-gpu-queue.mjs';
@@ -957,7 +958,7 @@ function jsonResult(value) {
   return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value };
 }
 
-export function createAgentMcpServer(runtime, { version = packageMetadata.version, branches = true, relations = true, findings = true, callLogPath = process.env[CALL_LOG_ENVIRONMENT_VARIABLE], updateAvailable = () => null } = {}) {
+export function createAgentMcpServer(runtime, { version = packageMetadata.version, branches = true, relations = true, findings = true, callLogPath = readEnvironmentVariable(CALL_LOG_ENVIRONMENT_VARIABLE), updateAvailable = () => null } = {}) {
   const newerVersion = updateAvailable();
   let updateReported = false;
   const logCall = createCallLogger(callLogPath);
