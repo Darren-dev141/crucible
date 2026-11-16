@@ -47,9 +47,11 @@ test('withInjectedLatency drops sends still waiting when the transport closes, a
   assert.equal(withInjectedLatency(fake.transport, 0), fake.transport);
 });
 
-test('the relay must be a ws: or wss: URL', () => {
+test('the relay must be a ws: or wss: URL on this machine', () => {
   assert.equal(relaySocketUrl('ws://127.0.0.1:8787/', 'bob'), 'ws://127.0.0.1:8787/?id=bob');
-  assert.equal(relaySocketUrl('wss://relay.example.com/play?room=1', 'a b'), 'wss://relay.example.com/play?room=1&id=a+b');
+  assert.equal(relaySocketUrl('wss://localhost:9000/play?room=1', 'a b'), 'wss://localhost:9000/?id=a%20b');
+  assert.throws(() => relaySocketUrl('ws://relay.example.com:8787/', 'bob'), /must run on this machine/);
+  assert.throws(() => relaySocketUrl('ws://127.0.0.1.example.com/', 'bob'), /must run on this machine/);
   assert.throws(() => relaySocketUrl('https://example.com/', 'bob'), /must use ws: or wss:/);
   assert.throws(() => relaySocketUrl('javascript:alert(1)', 'bob'), /must use ws: or wss:/);
   assert.throws(() => relaySocketUrl('127.0.0.1:8787', 'bob'), /must use ws: or wss:|full WebSocket URL/);

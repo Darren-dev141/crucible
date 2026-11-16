@@ -21,7 +21,10 @@ const KEY_DIRECTIONS = {
   ArrowDown: [0, 1], KeyS: [0, 1],
 };
 
-// The relay address comes from the page's ?relay= query, so only a WebSocket URL is accepted.
+// The relay address comes from the page's ?relay= query. The sample is for one machine, so the socket URL is rebuilt from
+// fixed parts: a loopback host from this list, the port as a number and the scheme. Nothing else from the query is used.
+const LOOPBACK_RELAY_HOSTS = ['127.0.0.1', 'localhost', '[::1]'];
+
 export function relaySocketUrl(relayUrl, playerId) {
   let parsed;
   try {
@@ -32,8 +35,13 @@ export function relaySocketUrl(relayUrl, playerId) {
   if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
     throw new TypeError(`The relay must use ws: or wss:, got ${JSON.stringify(parsed.protocol)}. Pass ?relay=ws://127.0.0.1:8787/.`);
   }
-  parsed.searchParams.set('id', playerId);
-  return parsed.href;
+  const host = LOOPBACK_RELAY_HOSTS.find(candidate => candidate === parsed.hostname);
+  if (host === undefined) {
+    throw new TypeError(`The sample relay must run on this machine (${LOOPBACK_RELAY_HOSTS.join(', ')}), got ${JSON.stringify(parsed.hostname)}.`);
+  }
+  const scheme = parsed.protocol === 'wss:' ? 'wss' : 'ws';
+  const port = parsed.port === '' ? '' : `:${Number(parsed.port)}`;
+  return `${scheme}://${host}${port}/?id=${encodeURIComponent(playerId)}`;
 }
 
 function openWebSocket(relayUrl, playerId) {
