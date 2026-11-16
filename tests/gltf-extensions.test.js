@@ -205,6 +205,7 @@ const LAYER_MATERIAL_EXTENSIONS = {
   KHR_materials_clearcoat: { clearcoatFactor: 1, clearcoatRoughnessFactor: 0.1 },
   KHR_materials_transmission: { transmissionFactor: 0.6 },
   KHR_materials_ior: { ior: 1.4 },
+  KHR_materials_dispersion: { dispersion: 0.36 },
   KHR_materials_specular: { specularFactor: 0.5, specularColorFactor: [1, 0.9, 0.8] },
   KHR_materials_sheen: { sheenColorFactor: [0.5, 0.4, 0.3], sheenRoughnessFactor: 0.3 },
   KHR_materials_volume: { thicknessFactor: 0.1, attenuationDistance: 2, attenuationColor: [0.8, 0.9, 1] },
@@ -226,6 +227,7 @@ test('KHR_materials layer extensions import as material layers', async () => {
   assert.equal(material.clearcoatRoughness, 0.1);
   assert.equal(material.transmission, 0.6);
   assert.equal(material.ior, 1.4);
+  assert.equal(material.dispersion, 0.36);
   assert.equal(material.specular, 0.5);
   assert.deepEqual(material.specularColor, [1, 0.9, 0.8]);
   assert.deepEqual(material.sheenColor, [0.5, 0.4, 0.3]);
@@ -237,6 +239,12 @@ test('KHR_materials layer extensions import as material layers', async () => {
   const plain = await parseGltf(triangleDocument());
   assert.deepEqual(plain.warnings, []);
   assert.equal('transmission' in plain.parts[0].material, false);
+  assert.equal('dispersion' in plain.parts[0].material, false);
+});
+
+test('an out of range KHR_materials_dispersion is refused with the range', async () => {
+  const tooStrong = triangleDocument({ edit: document => { document.materials[0].extensions = { KHR_materials_dispersion: { dispersion: 11 } }; } });
+  await assert.rejects(parseGltf(tooStrong), /dispersion must be between 0 and 10, got 11/);
 });
 
 test('anisotropy and iridescence import as material layers without a warning', async () => {
