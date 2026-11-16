@@ -68,14 +68,41 @@ test('the plume rises over the first second', () => {
   assert.deepEqual(bake.size, [4, 4, 4]);
 });
 
-test('smoke mass is kept without dissipation or burning and falls with dissipation', () => {
-  const quiet = { ...SMALL, frames: 10, burstFuel: 0 };
-  const kept = bakeGasSim({ ...quiet, dissipation: 0 });
-  const afterBurst = totalDensity(kept.frames[5]);
-  const later = totalDensity(kept.frames[9]);
-  assert.ok(Math.abs(later - afterBurst) / afterBurst < 0.03, `mass went from ${afterBurst.toFixed(1)} to ${later.toFixed(1)}`);
-  const faded = bakeGasSim({ ...quiet, dissipation: 1 });
-  assert.ok(totalDensity(faded.frames[9]) < later * 0.85, 'dissipation 1 per second keeps less smoke than none');
+// A burst, then 3 s with the source off: no fuel to burn, so the only thing that can change the smoke mass is the solver. The 8 m box keeps
+// the plume inside, so nothing leaves through the open sides or the top.
+const NO_SOURCE = { ...SMALL, frames: 72, burstFuel: 0, cellSize: 0.25 };
+const FIRST_QUIET_FRAME = 10;
+
+for (const advection of ['maccormack', 'semi-lagrangian']) {
+  test(`smoke mass stays constant for 72 frames with no source and no dissipation (${advection})`, () => {
+    const bake = bakeGasSim({ ...NO_SOURCE, dissipation: 0, advection });
+    const afterBurst = totalDensity(bake.frames[FIRST_QUIET_FRAME]);
+    for (const frame of [20, 40, 71]) {
+      const drift = totalDensity(bake.frames[frame]) / afterBurst - 1;
+      assert.ok(Math.abs(drift) < 0.02, `mass drifted ${(drift * 100).toFixed(2)}% by frame ${frame}`);
+    }
+  });
+}
+
+test('smoke mass decays by the dissipation factor and by nothing else', () => {
+  const rate = 0.4;
+  const bake = bakeGasSim({ ...NO_SOURCE, dissipation: rate });
+  const seconds = (71 - FIRST_QUIET_FRAME) / bake.fps;
+  const expected = Math.exp(-rate * seconds);
+  const measured = totalDensity(bake.frames[71]) / totalDensity(bake.frames[FIRST_QUIET_FRAME]);
+  assert.ok(Math.abs(measured / expected - 1) < 0.02, `mass fell to ${measured.toFixed(4)} of its value, expected ${expected.toFixed(4)}`);
+});
+
+test('smoke that rises out of a small box only ever leaves, it is never made', () => {
+  const bake = bakeGasSim({ ...SMALL, frames: 72, burstFuel: 0, dissipation: 0 });
+  const afterBurst = totalDensity(bake.frames[FIRST_QUIET_FRAME]);
+  let previous = afterBurst;
+  bake.frames.slice(FIRST_QUIET_FRAME).forEach((frame, index) => {
+    const mass = totalDensity(frame);
+    assert.ok(mass <= previous * 1.005, `mass grew from ${previous.toFixed(2)} to ${mass.toFixed(2)} at frame ${FIRST_QUIET_FRAME + index}`);
+    previous = mass;
+  });
+  assert.ok(previous < afterBurst * 0.98, 'the plume should have left the 4 m box by the end');
 });
 
 test('vorticity confinement makes the silhouette more ragged', () => {
