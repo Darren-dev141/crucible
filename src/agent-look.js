@@ -1,3 +1,4 @@
+import { lightLimitAdvice } from './light-limit-advice.js';
 import { invalidField, withFieldPrefix } from './field-error.js';
 import { mat4 } from 'gl-matrix';
 import { sceneBoundsOfParts } from './near-plane-fit.js';
@@ -177,7 +178,8 @@ function directionFrom(value, label = 'lightDirection') {
 function lightListFrom(value, maximum, name) {
   const lights = fallback(value, []);
   if (!Array.isArray(lights) || lights.length > maximum) {
-    throw invalidField(name, Array.isArray(lights) ? `${lights.length} entries` : lights, `an array of at most ${maximum} lights, such as []`);
+    const advice = Array.isArray(lights) ? `; ${lightLimitAdvice(name.split('.').pop())}` : '';
+    throw invalidField(name, Array.isArray(lights) ? `${lights.length} entries` : lights, `an array of at most ${maximum} lights, such as []${advice}`);
   }
   return lights;
 }
