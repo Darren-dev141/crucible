@@ -504,12 +504,12 @@ cookTest('a frame with another sample count or image size equals the one-shot re
     assert.equal(moreSamples.filmReused, true);
     assert.equal(moreSamples.pipelineReused, true);
 
-    const larger = session.render({ ...options, width: 32, height: 20 });
-    assertSameBytes(traceNative(input, { ...options, width: 32, height: 20 }), larger, 'another image size');
+    const larger = session.render({ ...options, width: 36, height: 24 });
+    assertSameBytes(traceNative(input, { ...options, width: 36, height: 24 }), larger, 'another image size');
     assert.equal(larger.filmReused, false);
     assert.equal(larger.pipelineReused, true);
     assert.equal(larger.accelerationReused, true);
-    assert.equal(larger.rgba.length, 32 * 20 * 4);
+    assert.equal(larger.rgba.length, 36 * 24 * 4);
   } finally {
     session.close();
   }
@@ -664,7 +664,7 @@ cookTest('a call that does not belong to the film is refused and leaves the film
     session.render({ ...options, accumulate: true, targetSamples: FILM_SAMPLES });
     assert.throws(() => session.render({ ...options, accumulate: true, kernelParams: movedCamera.kernelParams }), { message: /kernel parameters.*reset\(\)/ });
     assert.throws(() => session.render({ ...options, samples: 20, accumulate: true }), { message: /Ask for 16 or fewer/ });
-    assert.throws(() => session.render({ ...options, width: 32, height: 20, accumulate: true }), { message: /24x16.*32x20/ });
+    assert.throws(() => session.render({ ...options, width: 36, height: 24, accumulate: true }), { message: /24x16.*36x24/ });
     assert.throws(() => session.render({ ...options, accumulate: true, targetSamples: 64 }), { message: /started for 32/ });
     const finished = session.render({ ...options, accumulate: true });
     assert.equal(finished.firstSample, 16);
