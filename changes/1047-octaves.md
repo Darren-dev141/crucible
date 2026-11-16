@@ -1,0 +1,1 @@
+- A scattering local volume takes `scatterOctaves` from 1 to 4, the octave sum of `volumeFog` for the key light, in the rasterizer and the CPU path tracer; 1 draws as before (#1047).
