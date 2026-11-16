@@ -124,6 +124,7 @@ In a scene with an irradiance grid (`bake.irradianceGrid`) the bounce term is th
 | `density` | `1` | `0` to `100`. Extinction per unit length at the core |
 | `absorption` | `[1, 1, 1]` | Per colour channel share of the density, `0` to `1`. A larger value dims that channel more, so `[0.1, 0.6, 1]` removes blue first and leaves a warm tint |
 | `emission`, `emissionStrength` | `[0, 0, 0]`, `1` | Glow colour and its radiance per unit length at the core, `0` to `1000`. Emission does not depend on `density`, so `density: 0` is a pure glow |
+| `emissionRamp` | none | A glow that grades with the density, from a blackbody curve or a colour ramp (see "Emission ramp"). Not for `mesh` |
 | `falloff` | `0.5` | `0` to `1`. The outer share of the volume over which the density fades to zero (`0` is a hard edge) |
 | `blur` | `1` | `0` to `1`. How much the light seen through the volume is blurred, by its optical depth (see Thick smoke and thin haze). `0` keeps it sharp |
 | `scatter` | `0` | `0` to `1`. The share of the light the volume extinguishes that it scatters back instead of absorbing, lit by the key light and the sky (see "Lit volumes"). `0` draws exactly as before. Not allowed with `fit: "mesh"` |
@@ -155,6 +156,24 @@ A volume with `scatter` above `0` returns, in each step, `scatter * (1 - exp(-ex
 - The CPU path tracer uses the same model on `backend: "cpu"`: the sky term, a shadow ray toward the sun, and the same three taps. The sun's colour is `keyColor` there.
 - A scene with a lit volume draws the key light's shadow map for the post pass, as a fog does. A volume with `scatter: 0` pays nothing extra per step.
 - Measured (`tests/local-volume-scatter.test.js`, a density 1.2 smoke box under a side sun over an even grey sky, seen from above; 64 px rasterizer on SwiftShader against the 32 px, 16 sample CPU tracer): the worst of 64 regions differed by 0.0001 of linear radiance and the whole frame matched to four places (0.3351 both), inside the 0.01 and 0.005 tolerances. The half toward the sun read 0.341 and the shaded half 0.329 in both renderers. On the 960 x 540 smoke still (sun from the right, a 3.2 x 2.4 x 3.2 box) the right third of the smoke is about 14 to 17 percent brighter than the left third in displayed luma; the sun sits in front of the box, so no setting of the two factors takes that far past 20 percent without clipping the sunlit side. The volume pass costs about 2 ms a frame at scatter 0.8 against 0.7 ms at scatter 0. Round 3 (#859): the depth the light crosses counts the faded skin at up to three times its density (`LOCAL_VOLUME_LIGHT_DEPTH_SATURATION`), because a sun ray running along the faded top skin met almost no density and lit it far above the core, which drew a bright rim; the key gain is 3 (a thin smoke returns at most what a sunlit surface of the same albedo does), the shadow strength 3 and the sky gain 0.5. The fade of a box is measured past its core box, so it is round at the corners; the largest-ratio fade drew mitred creases along the box diagonals. A smoke with `falloff` 0.7 and `noiseAmount` 0.5 has no visible box outline.
+
+### Emission ramp
+
+`emission` is one colour. `emissionRamp` makes the glow depend on how much of a source is at each point, so one volume grades from a white-hot core to an orange edge, as a fireball does.
+
+```json
+{ "shape": "sphere", "center": [0, 1.2, 0], "radius": 1.2, "falloff": 0.9, "density": 1, "absorption": [0.2, 0.3, 0.4], "emissionRamp": { "kelvin": [1000, 3000], "exposure": 6 } }
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `kelvin` | one of `kelvin` or `stops` | `[cool, hot]`, 300 to 30000. The blackbody temperatures at the low and high end of the source. The colour is the hue of a blackbody at that temperature (Planck's law against the CIE 1931 colour matching functions; 1000 K to 3000 K stays within 2 percent of full scale of Mitchell Charity's blackbody table, `tests/local-volume-ramp.test.js`), and the brightness falls with `(kelvin / hot)^4` |
+| `stops` | one of `kelvin` or `stops` | 2 to 8 colours `[red, green, blue]` (each 0 to 100) spaced evenly from the low end of the source to the high end |
+| `source` | `density` | `density` for every shape. A grid volume can also read its `temperature` or `flame` channel |
+| `range` | `[0, 1]` | `[low, high]`, the source values that map to the two ends of the ramp; values outside are clamped |
+| `exposure` | `1` | Multiplies the ramp colours, `0` to `1000`. `0` gives no light |
+
+At each step the light added per unit length is `ramp(t) * exposure * emissionStrength * t`, where `t` is the source value mapped by `range` and clamped to 0 to 1: it fades to nothing where the source is zero, so a cold cell gives none. It adds to the constant `emission`; the two can be used together. The ramp is baked to 8 colours for a blackbody (the stops themselves otherwise) and read by linear blending between them, the same bake in the rasterizer and the CPU path tracer, which agree to a relative RMSE of 0.009 on a graded sphere (64 px rasterizer on SwiftShader against the 32 px, 8 sample tracer). A volume without `emissionRamp` draws exactly as before. The ramp does not light the scene and does not feed bloom. The WebGPU path tracer has no room for it and throws; use `backend: "cpu"`.
 
 ### Mesh volumes
 

@@ -1,4 +1,5 @@
 import { finiteRange, vectorField } from './volumetric.js';
+import { resolveEmissionRamp } from './local-volume-ramp.js';
 
 // Local volumes: up to MAX_LOCAL_VOLUMES boxes, spheres or parts (shape "mesh") that absorb and emit light and, with `scatter`, scatter
 // the key light and the sky, for candle haze, smoke puffs and glowing fog in one place. They sit beside environment.volumeFog (the one scattering volume) and need no fog. The post pass marches
@@ -8,7 +9,7 @@ import { finiteRange, vectorField } from './volumetric.js';
 export const MAX_LOCAL_VOLUMES = 8;
 export const LOCAL_VOLUME_SHAPES = Object.freeze(['box', 'sphere', 'mesh', 'grid']);
 export const LOCAL_VOLUME_FIT = Object.freeze(['bounds', 'mesh']);
-export const LOCAL_VOLUME_FIELDS = Object.freeze(['shape', 'part', 'fit', 'center', 'size', 'radius', 'density', 'falloff', 'absorption', 'emission', 'emissionStrength', 'scatter', 'blur', 'noiseAmount', 'noiseScale', 'steps', 'grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy']);
+export const LOCAL_VOLUME_FIELDS = Object.freeze(['shape', 'part', 'fit', 'center', 'size', 'radius', 'density', 'falloff', 'absorption', 'emission', 'emissionStrength', 'scatter', 'blur', 'noiseAmount', 'noiseScale', 'steps', 'grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy', 'emissionRamp']);
 // The fields only a grid volume takes (#1045), and the steps its denser march may take (the shader's grid loop is bounded by the same number).
 export const LOCAL_VOLUME_GRID_FIELDS = Object.freeze(['grid', 'frames', 'fps', 'loop', 'temperatureScale', 'blackbodyIntensity', 'anisotropy']);
 export const LOCAL_VOLUME_MAXIMUM_STEPS = 32;
@@ -36,6 +37,7 @@ function resolveLocalVolume(input, label, resolveGrid) {
     noiseScale: finiteRange(input.noiseScale ?? 1, 0.001, 100, `${label}.noiseScale`),
     steps: shape === 'grid' ? 0 : finiteRange(input.steps ?? 16, 4, LOCAL_VOLUME_MAXIMUM_STEPS, `${label}.steps`),
   };
+  if (input.emissionRamp !== undefined) resolved.emissionRamp = resolveEmissionRamp(input.emissionRamp, shape, `${label}.emissionRamp`);
   if (shape === 'grid') return resolveGrid(input, resolved, label);
   const gridField = LOCAL_VOLUME_GRID_FIELDS.find(field => input[field] !== undefined);
   if (gridField) throw new TypeError(`${label}.${gridField} belongs to shape "grid"`);

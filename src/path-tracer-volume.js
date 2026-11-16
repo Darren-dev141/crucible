@@ -2,6 +2,7 @@ import { resolveVolumeFog } from './volumetric.js';
 import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN } from './local-volumes.js';
 import { countOpenEdges } from './local-volume-parts.js';
 import { blackbodyRadiance } from './volume-grid.js';
+import { bakeEmissionRamp, emissionRampPosition, sampleBakedRamp } from './local-volume-ramp.js';
 import { buildTriangleBvh } from './triangle-bvh.js';
 import { createTracer } from './ray-query.js';
 
@@ -186,6 +187,11 @@ function writeOpticalDepth(volume, x, y, z, direction, taps, span, out) {
   for (let channel = 0; channel < 3; channel++) out[channel] = volume.absorption[channel] * volume.density * profileSum * exitDistance / taps;
 }
 
+// Which of a grid sample's three channels (density, temperature, flame) drives a ramp.
+function rampSourceChannel(source) {
+  return source === 'density' ? 0 : source === 'temperature' ? 1 : 2;
+}
+
 /**
  * Builds the function that carries a ray through the scene's local volumes (environment.localVolumes). Each volume is marched with
  * its own step count between its entry and exit, nearest entry first: the emitted light is added in proportion to the throughput
@@ -239,6 +245,17 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
     }
   }
 
+  // The emission ramp (#1046), baked once per volume: the light per unit length is the ramp colour at the source value times the position along the ramp, as the
+  // rasterizer's localVolumeRampLight does.
+  const bakedRamps = new Map(volumes.filter(volume => volume.emissionRamp).map(volume => [volume, bakeEmissionRamp(volume.emissionRamp)]));
+  const rampColor = new Float64Array(3);
+  function addRampLight(volume, sourceValue, stepLength, throughput, emitted) {
+    const position = emissionRampPosition(volume.emissionRamp, sourceValue);
+    if (position <= 0) return;
+    sampleBakedRamp(bakedRamps.get(volume), position, rampColor);
+    for (let channel = 0; channel < 3; channel++) emitted[channel] += throughput[channel] * rampColor[channel] * volume.emissionStrength * position * stepLength;
+  }
+
   const gridCell = new Float64Array(3);
   const blackbody = new Float64Array(3);
 
@@ -251,6 +268,7 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
     blackbodyRadiance(gridCell[1] * volume.temperatureScale, blackbody);
     const flameWidth = gridCell[2] * stepLength;
     const blackbodyWidth = volume.blackbodyIntensity * volume.emissionStrength * stepLength;
+    if (volume.emissionRamp) addRampLight(volume, gridCell[rampSourceChannel(volume.emissionRamp.source)], stepLength, throughput, emitted);
     for (let channel = 0; channel < 3; channel++) {
       emitted[channel] += throughput[channel] * (volume.emission[channel] * volume.emissionStrength * flameWidth + blackbody[channel] * blackbodyWidth);
       throughput[channel] *= Math.exp(-volume.absorption[channel] * volume.density * width);
@@ -302,6 +320,7 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
         if (volume.scatter > 0 && lighting) {
           addScatteredLight(volume, originX + directionX * distance, originY + directionY * distance, originZ + directionZ * distance, directionX, directionY, directionZ, width, throughput, emitted);
         }
+        if (volume.emissionRamp) addRampLight(volume, profile, stepLength, throughput, emitted);
         for (let channel = 0; channel < 3; channel++) {
           emitted[channel] += throughput[channel] * volume.emission[channel] * volume.emissionStrength * width;
           throughput[channel] *= Math.exp(-volume.absorption[channel] * volume.density * width);
