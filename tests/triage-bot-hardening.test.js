@@ -203,3 +203,14 @@ test('the workflow offers a number-only manual dry run, and the post and label s
     assert.ok(source.indexOf('isDryRun()') > -1 && source.indexOf('isDryRun()') < source.indexOf("'--method'"), name);
   }
 });
+
+test('every path the settings deny to Read is also denied to Grep and Glob on the command line', () => {
+  const settingsDenied = [...workflow.matchAll(/"Read\(([^)]+)\)"/g)].map(match => match[1]);
+  const disallowedLine = workflow.split('\n').find(line => line.includes('--disallowedTools'));
+  assert.ok(settingsDenied.length >= 10, 'the settings deny list was not found');
+  for (const path of settingsDenied) {
+    for (const tool of ['Read', 'Grep', 'Glob']) {
+      assert.ok(disallowedLine.includes(`${tool}(${path})`), `--disallowedTools is missing ${tool}(${path}); copy the settings deny list into it.`);
+    }
+  }
+});
