@@ -2,7 +2,7 @@
 // before any compile, so a snippet that breaks a rule never reaches a driver. The post-process pass (user-pass.js) is the
 // first user; a material fragment hook can reuse validateShaderSnippet, validateSnippetUniforms and mapShaderInfoLog.
 //
-// A snippet is one GLSL ES 3.00 fragment of at most 4 KB. It declares no uniforms (they come from a separate object),
+// A snippet is one GLSL ES 3.00 fragment of at most 4 KB of code (comments and extra white space are not counted). It declares no uniforms (they come from a separate object),
 // has no preprocessor, no `while` or `do`, and only counted `for` loops over integer literals, so every snippet ends.
 
 export const SNIPPET_LIMITS = Object.freeze({
@@ -13,6 +13,9 @@ export const SNIPPET_LIMITS = Object.freeze({
   // Loop iterations of one call, with nested loops multiplied and helper function calls counted in.
   maxLoopWork: 4096,
 });
+
+// The limit above counts code only. This bound on the text as sent (comments and indentation included) keeps the checks cheap.
+const MAX_RAW_SOURCE_BYTES = 65536;
 
 export const UNIFORM_NAME_PATTERN = /^[a-z][A-Za-z0-9]{0,31}$/;
 export const UNIFORM_TYPES = Object.freeze(['float', 'vec2', 'vec3', 'vec4', 'int']);
@@ -83,6 +86,11 @@ function blankComments(source, label) {
     }
   }
   return result;
+}
+
+/** The size the limit counts: the text with comments already blanked, every run of white space collapsed to one space, ends trimmed. */
+export function measureCodeBytes(blankedText) {
+  return blankedText.replace(/\s+/g, ' ').trim().length;
 }
 
 function checkCharacters(source, label) {
@@ -285,11 +293,15 @@ export function validateShaderSnippet(source, options = {}) {
   if (typeof source !== 'string' || source.trim() === '') {
     throw new ShaderSnippetError(label, 'The fragment is empty or not a string.', 'Send the GLSL text as a string.');
   }
-  if (source.length > maxBytes) {
-    throw new ShaderSnippetError(label, `The fragment is ${source.length} bytes; the limit is ${maxBytes}.`, 'Shorten the snippet or move constants into uniforms.');
+  if (source.length > MAX_RAW_SOURCE_BYTES) {
+    throw new ShaderSnippetError(label, `The fragment is ${source.length} bytes; the most accepted, comments included, is ${MAX_RAW_SOURCE_BYTES}.`, 'Remove comments.');
   }
   checkCharacters(source, label);
   const text = blankComments(source, label);
+  const codeBytes = measureCodeBytes(text);
+  if (codeBytes > maxBytes) {
+    throw new ShaderSnippetError(label, `The fragment is ${source.length} bytes (${codeBytes} after comments and spaces are removed); the limit is ${maxBytes}.`, 'Shorten the snippet or move constants into uniforms.');
+  }
   const preprocessor = text.indexOf('#');
   if (preprocessor !== -1) {
     throw new ShaderSnippetError(label, 'Preprocessor lines (#) are not allowed.', 'Remove the # line; write constants as const float name = value; and use plain code instead of #define.', positionOf(text, preprocessor));
