@@ -59,3 +59,30 @@ test('scene_look draws a blast added by scene_apply, and the exported recipe is 
   const again = await call(client, 'scene_create', { recipe: exportedRecipe });
   assert.ok(again.sessionId);
 });
+
+test('sparks and motionBlur options go through scene_apply, and the exported recipe is created fresh', { timeout: 240000 }, async context => {
+  const client = await startServer(context);
+  const created = await call(client, 'scene_create', { recipe });
+  const operation = { type: 'add-explosion', id: 'blast', center: [0, 0, 0], size: 2, sparks: { count: 50, lifetime: [0.5, 1] }, motionBlur: false };
+  await call(client, 'scene_apply', { sessionId: created.sessionId, expectedRevision: created.revision, operations: [operation] });
+  await call(client, 'scene_look', { sessionId: created.sessionId, motionTime: 0.5 });
+  const exported = await call(client, 'scene_export_recipe', { sessionId: created.sessionId });
+  const exportedRecipe = exported.recipe ?? exported;
+  const [sparks] = exportedRecipe.particles.systems;
+  assert.equal(sparks.type, 'sparks');
+  assert.equal(sparks.count, 50);
+  assert.ok(!exportedRecipe.environment.localVolumes[0].frames.some(name => name.includes('velocity')));
+  assert.ok((await call(client, 'scene_create', { recipe: exportedRecipe })).sessionId);
+});
+
+test('the default blast sends velocity grids and an exported recipe with them is created fresh', { timeout: 240000 }, async context => {
+  const client = await startServer(context);
+  const created = await call(client, 'scene_create', { recipe });
+  await call(client, 'scene_apply', { sessionId: created.sessionId, expectedRevision: created.revision, operations: [{ type: 'add-explosion', id: 'blast', center: [0, 0, 0], size: 2 }] });
+  await call(client, 'scene_look', { sessionId: created.sessionId, motionTime: 0.3 });
+  const exported = await call(client, 'scene_export_recipe', { sessionId: created.sessionId });
+  const exportedRecipe = exported.recipe ?? exported;
+  assert.ok(exportedRecipe.environment.localVolumes[0].frames.every(name => name.includes('velocity')));
+  assert.ok(exportedRecipe.effects.motionBlur.shutter > 0);
+  assert.ok((await call(client, 'scene_create', { recipe: exportedRecipe })).sessionId);
+});
