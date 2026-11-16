@@ -32,6 +32,7 @@ const MATERIAL_LAYER_NOTES = Object.freeze({
   transmission: 'Refracts the opaque scene behind it, surface or liquid tag; blended parts do not show through; no anisotropy, iridescence, sheen or coat.',
   thickness: 'Metres crossed; 0 does not bend the view.',
   ior: 'Glass 1.5, water 1.33, diamond 2.42; sets the base reflectance.',
+  dispersion: 'Colour fringes through glass, 20 over the Abbe number; diamond 0.36; path traced only.',
   attenuationColor: 'Linear RGB kept after attenuationDistance.',
   attenuationDistance: 'Metres to reach attenuationColor; omit for none.',
   sheenColor: 'Linear RGB glow at grazing angles; black is off.',
