@@ -160,8 +160,8 @@ function bindProbe(renderer, mapState) {
   state.bound = true;
   bindProbeSpecular(renderer, state, probeMap, renderer.uniforms);
   if (globalMap && renderer.environmentResources) {
-    // The environment's irradiance still lights the diffuse term, and the intensity uniform is now 1.
-    context.uniform3fv(renderer.uniforms['environmentIrradiance[0]'], renderer.environmentResources.irradiance.map(value => value * globalMap.intensity));
+    // The environment's irradiance still lights the diffuse term, with the global map's own rotation and intensity.
+    renderer.applyDiffuseUniforms(globalMap, renderer.uniforms, false);
   }
   if (probeMap.parallax) context.uniform4fv(state.floorLocation, probeMap.parallax);
   context.uniform1f(state.enabledLocation, probeEnabledState(probeMap));
