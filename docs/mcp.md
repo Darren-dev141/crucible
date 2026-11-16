@@ -345,7 +345,7 @@ The script prints calls, errors, error rate and median duration per tool, most c
 | Unique geometry buffers | 32 MiB |
 | Recipe or command JSON | 1 MiB |
 | Incoming stdio buffer | 2 MiB |
-| Preview dimensions | 64 to 1024 pixels per dimension (image jobs: up to 3840x2160, stills and video up to 1920x1080; `scene_capabilities` jobs lists both as `maximumWidth`, `maximumHeight`, `maximumPixels` and `maximumSequenceWidth`, `maximumSequenceHeight`, `maximumSequencePixels`) |
+| Preview dimensions | 64 to 1024 pixels per dimension (image jobs: up to 3840x2160, stills and video up to 1920x1080; `scene_capabilities` jobs lists both as `maximumWidth`, `maximumHeight`, `maximumPixels` and `maximumSequenceWidth`, `maximumSequenceHeight`, `maximumSequencePixels`; `maximumSquareSide` and `maximumSquareSequenceSide` give the largest square frame; a stills job with `frames` writes up to `maximumStillsWithFrames` numbered PNGs, see [agent-render-jobs](agent-render-jobs.md)) |
 | Default preview dimensions | 768 by 512 pixels |
 | PNG payload | 1 MiB |
 

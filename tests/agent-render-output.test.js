@@ -27,7 +27,7 @@ function recordingRunner(seen) {
     seen.push(settings);
     const mimeType = settings.kind === 'video' ? 'video/mp4' : settings.format === 'exr' ? 'image/x-exr' : 'image/png';
     const artifacts = [];
-    for (const filename of artifactNames(settings.kind, settings.passes, settings.format)) {
+    for (const filename of artifactNames(settings.kind, settings.passes, settings.format, settings.multilayer, settings.frameCount)) {
       await writeFile(join(directory, `${filename}.partial`), Buffer.alloc(100, 1));
       artifacts.push({ temporary: `${filename}.partial`, filename, mimeType });
     }
@@ -132,6 +132,40 @@ test('options survive a restart of the job store', async context => {
   assert.equal(second.status(jobId).state, 'completed');
   assert.equal(second.status(jobId).settings.format, 'exr');
   assert.equal(second.result(jobId).artifacts[0].mimeType, 'image/x-exr');
+});
+
+test('a stills job with frames writes that many numbered artifacts on the motion clock', async context => {
+  const controller = await withController(context, recordingRunner([]));
+  const { status, result } = await finished(controller, { kind: 'stills', width: 64, height: 64, fps: 30, frames: 12, transparent: true });
+  assert.equal(status.settings.frameCount, 12);
+  assert.equal(status.settings.frames, 12);
+  assert.equal(status.settings.transparent, true);
+  assert.ok(Math.abs(status.settings.duration - 11 / 30) < 1e-12);
+  assert.deepEqual(result.artifacts.map(artifact => artifact.filename), Array.from({ length: 12 }, (_, index) => `frame-${index}.png`));
+  assert.equal(artifactNames('stills', ['depth'], 'png', false, 3).length, 6);
+});
+
+test('frames needs stills, stays under its cap and names the cap and what to pass instead', async context => {
+  const controller = await withController(context, recordingRunner([]));
+  await assert.rejects(controller.submit(submission({ kind: 'video', width: 64, height: 64, frames: 4 })), /frames needs kind stills/);
+  await assert.rejects(controller.submit(submission({ kind: 'stills', width: 64, height: 64, frames: 301 })), /render a longer clip in parts, each from its own motion\.start\) must be within 2 and 300/);
+  await assert.rejects(controller.submit(submission({ kind: 'stills', width: 64, height: 64, frames: 10, fps: 10, duration: 5 })), /leave duration out/);
+  await assert.rejects(controller.submit(submission({ kind: 'stills', width: 1500, height: 1500 })), /square frame fits up to 1440x1440/);
+});
+
+test('frames survives a restart of the job store', async context => {
+  const root = await mkdtemp(join(tmpdir(), 'crucible-render-output-'));
+  const first = await createAgentRenderJobs({ root, limits, run: recordingRunner([]) });
+  const { jobId } = await first.submit(submission({ kind: 'stills', width: 64, height: 64, fps: 24, frames: 20 }));
+  while (!['completed', 'failed'].includes(first.status(jobId).state)) await new Promise(resolve => setTimeout(resolve, 2));
+  await first.close();
+  const second = await createAgentRenderJobs({ root, limits, run: recordingRunner([]) });
+  context.after(async () => {
+    await second.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  assert.equal(second.status(jobId).state, 'completed');
+  assert.equal(second.result(jobId).artifacts.length, 20);
 });
 
 // Encoders
