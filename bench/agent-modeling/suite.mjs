@@ -15,6 +15,7 @@ export const BENCH_TASKS = [
   { id: 'bracket-revision', kind: 'revision' },
   { id: 'kettle-resize', kind: 'revision' },
   { id: 'workshop', kind: 'scene' },
+  { id: 'shelf-faces', kind: 'scene' },
   { id: 'desk-resize', kind: 'scene' },
   { id: 'terrain-hole-walk', kind: 'scene' },
   { id: 'look-pick', kind: 'look' },

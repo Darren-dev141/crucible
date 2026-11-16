@@ -60,6 +60,7 @@ own mesh report:
 | slotted-rail | Long: a bar with every edge chamfered and five through slots, in one piece |
 | crate-revision | Long: starts from the crate recipe in the prompt; raise the lid, then drill a blind hole into the body |
 | bracket-revision | Long: starts from the L bracket recipe in the prompt; lengthen the base, recentre it, move to three holes |
+| shelf-faces | A bookcase whose boards and mug are given by their top or bottom faces (underside 0.1 m, upper surface 0.6 m, level with the panel tops), so the agent must turn a face height into a centre or use a `level` relation (#1755) |
 | workshop | Long: a whole scene, a floor slab with a table, a chair and a mug, 12 parts that rest on each other |
 | robot-shot | Long: the robot with both hands placed by IK, then a side-on camera, checked from the exported recipe |
 
