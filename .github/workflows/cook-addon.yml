@@ -66,7 +66,10 @@ jobs:
           MESA_SHADER_CACHE_DISABLE: 'true'
           PROBE_FRAMES: '12'
           PROBE_MAX_SECONDS: '600'
-        run: node scripts/check-first-native-job.mjs . 960x540
+        run: |
+          npm run build
+          node scripts/build-mcp.mjs
+          node scripts/check-first-native-job.mjs . 960x540
       - name: Run the addon tests
         run: |
           start=$(date +%s)
