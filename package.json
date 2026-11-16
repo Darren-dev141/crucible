@@ -259,7 +259,8 @@
     "@dimforge/rapier3d-compat": "0.21.0",
     "draco3d": "1.5.9",
     "jolt-physics": "1.1.1",
-    "manifold-3d": "3.5.4"
+    "manifold-3d": "3.5.4",
+    "three": "0.187.0"
   },
   "dependencies": {
     "playwright-core": "1.65.0"
@@ -275,6 +276,9 @@
       "optional": true
     },
     "manifold-3d": {
+      "optional": true
+    },
+    "three": {
       "optional": true
     }
   },

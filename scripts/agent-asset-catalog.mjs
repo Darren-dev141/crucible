@@ -7,6 +7,7 @@ import { MAXIMUM_CATALOG_ENVIRONMENT_BYTES, MAXIMUM_CATALOG_LOOK_BYTES } from '.
 import { imageLimitProblem } from '../src/image-header.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { decompressDracoGlb, usesDraco } from './agent-draco.mjs';
+import { transcodeKtx2Glb, usesKtx2 } from './agent-ktx2.mjs';
 
 const MAXIMUM_ASSETS = AGENT_ASSET_LIMITS.maxAssets;
 const MAXIMUM_BYTES = AGENT_ASSET_LIMITS.maxBytes;
@@ -220,6 +221,20 @@ async function decompressedDraco(bytes, filename) {
   return result.bytes;
 }
 
+// The preview page has no KTX2 loader, so KHR_texture_basisu images are transcoded to PNG here (#1709), with the same skip rules.
+async function transcodedKtx2(bytes, filename) {
+  let result;
+  try {
+    result = await transcodeKtx2Glb(bytes, { filename });
+  } catch (error) {
+    throw new SkippableCatalogFileError(`${filename}: ${error.message}`);
+  }
+  if (result.bytes.length > MAXIMUM_BYTES) {
+    throw new SkippableCatalogFileError(`${filename}: transcoded from KTX2 the asset reaches ${result.bytes.length} bytes. ${assetBytesLimitMessage(result.bytes.length)}`);
+  }
+  return result.bytes;
+}
+
 export async function readCatalogFile(directory, filename, { enforceImageLimits = true } = {}) {
   const path = join(directory, filename);
   const original = await lstat(path);
@@ -269,6 +284,10 @@ export async function readCatalogFile(directory, filename, { enforceImageLimits 
       }
       if (usesDraco(document)) {
         bytes = await decompressedDraco(bytes, filename);
+        document = glbDocument(bytes).document;
+      }
+      if (usesKtx2(document)) {
+        bytes = await transcodedKtx2(bytes, filename);
         document = glbDocument(bytes).document;
       }
     }
