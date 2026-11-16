@@ -227,6 +227,33 @@ Bytes per frame, two bytes per voxel per channel (measured on the "Ground Explos
 
 The 3D texture on the GPU is RGBA16F, 8 bytes per voxel whatever the channels: 16.8 MB at 128 cubed, 134 MB at 256 cubed.
 
+### Baking a gas sim
+
+`src/gas-sim.js` bakes an explosion from a real grid simulation instead of a noise shape, into the grid files above: no dependency, plain JS, the same options and seed give the same bytes. It is the solver of Stam's "Stable Fluids" (semi-Lagrangian advection, pressure projection), with the smoke buoyancy and vorticity confinement of Fedkiw, Stam and Jensen, MacCormack advection with its limiter (Selle et al.), and a fuel that burns where it is hot into flame, heat and smoke.
+
+It is not a package export or an MCP tool yet, so it runs from a checkout of the repository, where `src/gas-sim.js` exports `bakeGasSimToGrids` and `GAS_SIM_TEMPERATURE_UNIT`:
+
+```js
+const frames = bakeGasSimToGrids({ resolution: 64, frames: 72, fps: 24, seed: 3 }, 'blast');
+// { shape: 'grid', frames, fps: 24, center: [0, 4, 0], size: [8, 8, 8], temperatureScale: GAS_SIM_TEMPERATURE_UNIT, blackbodyIntensity: 0.3 }
+```
+
+`bakeGasSim(options)` returns `{ frames: [{ density, temperature, flame }], resolution, size, fps }` as Float32Arrays; `bakeGasSimToGrids(options, namePrefix)` encodes and registers each frame as `<namePrefix>_0000.67vg` and returns the names for `frames`. The defaults are a 3 s ground blast: a 0.9 m burst on the floor of a 64 cubed grid of 0.125 m cells (an 8 m box), 72 frames at 24 fps, 2 solver steps per frame. The floor is a wall, the sides and the top are open, y is up.
+
+| Option | Range | Default |
+| --- | --- | --- |
+| `resolution` | one integer or `[x, y, z]`, each 8 to 96 | `64` |
+| `frames`, `fps`, `substeps` | 1 to 240, 1 to 120, 1 to 8 | `72`, `24`, `2` |
+| `seed` | integer 0 to 4294967295; shapes the burst | `1` |
+| `maxSeconds` | 0.1 to 3600; the bake throws when the wall clock passes it | `120` |
+| `cellSize` | metres, 0.005 to 2 | `0.125` |
+| `advection` | `maccormack` or `semi-lagrangian` | `maccormack` |
+| `pressureIterations`, `vorticity` | 4 to 100 red-black sweeps, confinement 0 to 40 | `20`, `8` |
+| `burstPosition`, `burstRadius`, `burstFuel`, `burstSmoke`, `burstTemperature`, `burstSpeed`, `burstSeconds`, `turbulence` | the source: metres from the corner, metres, fuel and smoke at the core, kelvin, m/s, seconds, 0 to 1 | middle of the floor, `0.9`, `1`, `0.8`, `2400`, `6`, `0.2`, `0.35` |
+| `temperatureLift`, `densityWeight`, `ambientTemperature`, `cooling`, `dissipation`, `flameDecay`, `burnRate`, `ignitionTemperature`, `heatRelease`, `smokeYield` | the physics, each bounded; see `NUMBER_OPTIONS` in the source | tuned for a ground blast |
+
+Every option is checked, and an error names the field, its range and what to pass. The `temperature` channel holds the kelvin above the ambient air in units of `GAS_SIM_TEMPERATURE_UNIT` (1000 K): pass it as `temperatureScale`, and cold air reads 0 so the blackbody adds no glow there. `flame` is 0 to 1 per cell. A bake of 64 cubed with three channels is 1.5 MiB a frame, so 72 frames are 108 MiB of the 256 MiB sequence limit; `bakeGasSimToGrids` refuses a bake that would pass it before it starts. The advection is not conservative: the smoke mass stays within 3% over the first 8 solver steps after the burst and drifts after that.
+
 ### Cycles reference for grid volumes
 
 To put a number on the gap between Glaze, Cook and a production renderer, the same grid is rendered in Blender Cycles with Principled Volume from one JSON spec (the spec format is at the top of `scripts/cycles-volume-reference.py`; Glaze and Cook renders of the same scene read the same fields). Three scripts, no dependency beyond Blender 5.x, whose Python ships `openvdb`:
