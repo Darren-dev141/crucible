@@ -57,9 +57,9 @@ Issues and pull requests are public. Leave out local paths (a Windows user folde
 
 ## Checks
 
-Run `npm run preflight` before you open a pull request. It runs every check below that applies to the files you changed, plus the size, tool cost and coverage gates, keeps going after a failure and ends with one line per check and how to fix it. Logs go to `artifacts/preflight/`. `--skip-tests` skips the slow test pass while you iterate.
+Run `npm run preflight` before you open a pull request. It runs every check below that applies to the files you changed, plus the size, tool cost and coverage gates, keeps going after a failure and ends with one line per check and how to fix it. Logs go to `artifacts/preflight/`. `--skip-tests` skips the slow test pass while you iterate but still runs the unit tests recorded under half a second (`scripts/fast-tests.mjs`, picked from `config/test-timings.json`).
 
-`npm ci` points git at `.githooks/`, whose pre-push hook runs `npm run preflight -- --skip-tests` and stops the push when a gate fails. Pushing only tags or branch deletions skips it. To skip it once, run `SKIP_PREFLIGHT=1 git push` in Bash or `$env:SKIP_PREFLIGHT=1; git push` in PowerShell. `git push --no-verify` skips it too. The unit tests stay out of the hook because they take minutes; run the full preflight before you open the pull request.
+`npm ci` points git at `.githooks/`, whose pre-push hook runs `npm run preflight -- --skip-tests` and stops the push when a gate fails. Pushing only tags or branch deletions skips it. To skip it once, run `SKIP_PREFLIGHT=1 git push` in Bash or `$env:SKIP_PREFLIGHT=1; git push` in PowerShell. `git push --no-verify` skips it too. The hook runs only the sub-second unit tests (about 10 s), because the full pass takes minutes; run the full preflight before you open the pull request.
 
 Between one test file and the full pass there are four commands made for coding agents. Their output is short (one `FAIL file :: test :: first message` line per failure, at most ten, then a count) and the full TAP goes to `artifacts/test-logs/`:
 

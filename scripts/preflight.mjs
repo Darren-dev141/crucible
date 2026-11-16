@@ -2,7 +2,7 @@
 // one summary line per check and how to fix each failure. Made for people and coding agents alike: every check runs even
 // after one fails, full logs go to artifacts/preflight/, and only the tail of a failing log is printed.
 // Usage: npm run preflight                 every check that applies to the changed files
-//        npm run preflight -- --skip-tests  skip the unit tests and the coverage gate (the slowest part)
+//        npm run preflight -- --skip-tests  run only the sub-second unit tests (scripts/fast-tests.mjs) and skip the rest and the coverage gate
 //        npm run preflight -- --json        print the summary as JSON after the logs
 //        npm run preflight -- --base <ref>  compare with another ref than origin/main
 import { spawn, spawnSync } from 'node:child_process';
@@ -136,6 +136,12 @@ export function planChecks(changedPaths, { skipTests = false, release = false, b
   });
 
   const testSkip = skipTests ? 'skipped with --skip-tests' : null;
+  checks.push({
+    name: 'fast tests',
+    command: ['node', 'scripts/fast-tests.mjs'],
+    skipped: skipTests ? null : 'the full unit test pass below covers them',
+    fix: 'Run the failing file alone with node --test tests/<file>.test.js. Never weaken a test to make it pass.',
+  });
   checks.push({
     name: 'build library',
     command: ['npm', 'run', 'build:lib'],
