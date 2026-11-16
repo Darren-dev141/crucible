@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene, loadPhysicsEngine } from '../src/agent-scene.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
+import { EXPLOSION_EMPTY_GRID, explosionGridBytes } from '../src/explosion-grids.js';
 import { agentSceneModulesNeeded, needsPhysics } from '../src/agent-scene-modules.js';
 
 await loadPhysicsEngine();
@@ -42,19 +43,24 @@ test('a blast writes plain sections, every part ID starting with the explosion I
   const { recipe } = applyBlast(blast({ start: 0.5, fuel: 'oily' }));
   assert.equal([recipe.effects.flash].flat()[0].startTime, 0.5);
   assert.equal(recipe.effects.distortion[0].shape, 'ring');
-  assert.equal(recipe.environment.localVolumes.length, 4);
-  assert.deepEqual(recipe.environment.localVolumes.map(volume => volume.part), ['blast-fireball', 'blast-core', 'blast-smoke', 'blast-smoke-cap']);
+  assert.equal(recipe.environment.localVolumes.length, 1);
+  const volume = recipe.environment.localVolumes[0];
+  assert.equal(volume.shape, 'grid');
+  assert.equal(volume.castShadow, true);
+  assert.equal(volume.lightsScene, true);
+  assert.equal(volume.loop, false);
+  assert.ok(volume.blackbodyIntensity > 0 && volume.temperatureScale === 1000);
+  assert.equal(volume.frames.filter(name => name === 'explosion-empty.67vg').length, Math.ceil(0.5 * volume.fps));
+  assert.equal(volume.frames.at(-1), 'explosion-oily-1_0071.67vg');
   assert.deepEqual(recipe.particles.systems.map(system => system.node), ['blast-sparks', 'blast-dust', 'blast-rubble']);
   assert.ok(recipe.particles.systems.every(system => system.delay === 0.5));
   const added = [...recipe.nodes, ...recipe.geometries, ...recipe.materials].map(entry => entry.id).filter(id => id.startsWith('blast-'));
-  assert.ok(added.length >= 12);
-  assert.equal(recipe.environment.pointLights.length, 1);
-  assert.ok(recipe.motion.tracks.some(track => track.kind === 'light' && track.id === 'point:0'));
+  assert.ok(added.length >= 10);
   assert.ok(recipe.nodes.some(node => node.id === 'blast-scorch' && node.decal === true));
   const shake = recipe.motion.tracks.find(track => track.kind === 'camera');
   assert.deepEqual(shake.keyframes.at(-1).value, recipe.camera.eye);
   assert.ok(shake.keyframes.some(key => key.value[0] !== recipe.camera.eye[0]));
-  assert.ok(recipe.motion.duration >= 8.5);
+  assert.ok(recipe.motion.duration > 0.5 + 72 / volume.fps);
   assert.deepEqual(recipe.nodes.find(node => node.id === 'crate').translation, [2.6, 0.5, -1.2]);
 });
 
@@ -115,12 +121,57 @@ test('bad input names the field and a valid value', () => {
   for (const [operation, pattern] of cases) assert.throws(() => applyBlast(operation), pattern, JSON.stringify(operation));
 });
 
-test('debris needs a physics floor, and a second blast needs a new ID and free slots', () => {
+test('debris needs a physics floor, and a second blast needs a new ID and no other grid volume', () => {
   const recipe = setRecipe();
   delete recipe.physics;
   assert.throws(() => applyBlast(blast({ debris: { node: 'crate' } }), recipe), /fixed floor/);
   const scene = createAgentScene(setRecipe());
   scene.apply([blast()], { expectedRevision: scene.inspect({}).revision });
   assert.throws(() => scene.apply([blast()], { expectedRevision: scene.inspect({}).revision }), /blast-/);
-  assert.throws(() => scene.apply([blast({ id: 'second' })], { expectedRevision: scene.inspect({}).revision }), /particle systems/);
+  assert.throws(() => scene.apply([blast({ id: 'second' })], { expectedRevision: scene.inspect({}).revision }), /grid volume/);
+});
+
+test('the fireball is a gas-sim grid volume scaled to the blast size: box, density, emission and playback speed', () => {
+  const small = applyBlast(blast({ size: 2.5 })).recipe.environment.localVolumes[0];
+  const large = applyBlast(blast({ size: 10 })).recipe.environment.localVolumes[0];
+  assert.deepEqual(small.size, [8, 8, 8]);
+  assert.deepEqual(large.size, [32, 32, 32]);
+  assert.equal(small.fps, 24);
+  assert.equal(large.fps, 12);
+  assert.equal(small.density / large.density, 4);
+  assert.equal(small.emissionStrength / large.emissionStrength, 4);
+  assert.deepEqual(small.center, [0, 4, 0]);
+  const oily = applyBlast(blast({ size: 2.5, fuel: 'oily' })).recipe.environment.localVolumes[0];
+  assert.equal(oily.density, 1.5 * small.density);
+  assert.notDeepEqual(oily.frames, small.frames);
+  const raised = applyBlast(blast({ size: 2.5, center: [1, 2, 3], ground: 0 })).recipe.environment.localVolumes[0];
+  assert.deepEqual(raised.center, [1, 6, 3]);
+});
+
+test('the grids the recipe names are baked from the name, byte for byte, and tied to the seed and the fuel', () => {
+  const { frames } = applyBlast(blast({ seed: 3 })).recipe.environment.localVolumes[0];
+  assert.equal(frames.length, 72);
+  assert.equal(frames[0], 'explosion-dry-3_0000.67vg');
+  const first = explosionGridBytes(frames[10]);
+  const again = explosionGridBytes(frames[10]);
+  assert.ok(first.length > 1000);
+  assert.deepEqual(first, again);
+  assert.notDeepEqual(first, explosionGridBytes('explosion-dry-4_0010.67vg'));
+  assert.notDeepEqual(first, explosionGridBytes('explosion-oily-3_0010.67vg'));
+  assert.equal(explosionGridBytes('explosion-dry-3_0072.67vg'), null);
+  assert.equal(explosionGridBytes('blast.67vg'), null);
+  assert.ok(explosionGridBytes(EXPLOSION_EMPTY_GRID).length > 1000);
+});
+
+test('the wait before a blast is empty grid frames, bounded by the frame list', () => {
+  const waited = applyBlast(blast({ size: 2.5, start: 2 })).recipe.environment.localVolumes[0];
+  assert.equal(waited.frames.length, 72 + 48);
+  assert.ok(waited.frames.slice(0, 48).every(name => name === EXPLOSION_EMPTY_GRID));
+  assert.throws(() => applyBlast(blast({ size: 2.5, start: 30 })), /start.*at most 18\.3 s.*512/);
+});
+
+test('a scene with a grid volume already refuses the blast and says how to make room', () => {
+  const recipe = setRecipe();
+  recipe.environment = { localVolumes: [{ shape: 'grid', grid: 'explosion-empty.67vg', center: [0, 1, 0], size: [2, 2, 2] }] };
+  assert.throws(() => applyBlast(blast(), recipe), /grid volume.*set-environment/);
 });

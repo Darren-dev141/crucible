@@ -51,6 +51,11 @@ test('scene_look draws a blast added by scene_apply, and the exported recipe is 
     await call(client, 'scene_look', { sessionId: created.sessionId, motionTime });
   }
   const exported = await call(client, 'scene_export_recipe', { sessionId: created.sessionId });
-  const again = await call(client, 'scene_create', { recipe: exported.recipe ?? exported });
+  const exportedRecipe = exported.recipe ?? exported;
+  const [volume] = exportedRecipe.environment.localVolumes;
+  assert.equal(volume.shape, 'grid');
+  assert.equal(volume.castShadow, true);
+  // The recipe names grids that exist in no folder: the server bakes them from their names, so a fresh scene can be created from the export.
+  const again = await call(client, 'scene_create', { recipe: exportedRecipe });
   assert.ok(again.sessionId);
 });

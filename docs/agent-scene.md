@@ -421,7 +421,7 @@ Final resource references and hierarchy must be valid before publication.
 | `center`, `size` | required | Charge position and fireball diameter in metres, 0.5 to 100 |
 | `start` | `0` | Scene time of the blast in seconds, 0 to 3600 |
 | `seed` | `1` | The same seed writes the same recipe byte for byte |
-| `fuel` | `dry` | `oily` adds more dark smoke, a bigger fire and more sparks |
+| `fuel` | `dry` | `oily` bakes more dark smoke, thickens the volume and adds more sparks |
 | `ground` | `center` y | Height of the ground for the dust, rubble landing and the scorch |
 | `shake` | `0.4` | Camera shake 0 to 1 over about 1 s; skipped when the camera already has an eye track, refused when you ask for it |
 | `debris` | none | `{ node }`: a convex mesh node broken into 12 loose pieces thrown outward by impulse events at `start`. Needs a `physics` section with a fixed floor body first; its `duration` grows to cover `start + 3` |
@@ -429,14 +429,16 @@ Final resource references and hierarchy must be valid before publication.
 What it writes (read it back with `scene_export_recipe`, then tweak any part):
 
 - `effects.flash` and an `effects.distortion` ring at the centre, which fade by their own decay and falloff on the scene clock.
-- Hidden nodes `id-fireball`, `id-core`, `id-smoke` and `id-smoke-cap` that shape four `environment.localVolumes`; scale and translation tracks grow and lift them. The fireball is one volume with strong noise so its edge billows, orange with a hotter core inside; the core dies first, then the fire, while the smoke column rises and the cap spreads sideways.
-- An orange point light over the centre whose intensity flares and dies on a light track, and `effects.bloom.strength` raised to at least 0.5 so the glow spills past the flames.
-- Particle systems `id-sparks`, `id-dust` and `id-rubble`, delayed to `start` (the `delay` field of a particle system).
+- One gas-sim grid volume in `environment.localVolumes` for the fireball and the smoke: a baked simulation of a ground blast (`src/gas-sim.js`), lit by the physical blackbody of each voxel's temperature (`blackbodyIntensity`), with `castShadow` on so the smoke shades the floor and `lightsScene` on so the fire lights the set. It is the look of the gas-sim preview (#1735). `size` scales it: the box is 3.2 times `size` on a side, the density and emission shrink with the box so the blast keeps its optical depth, and it plays at 24 frames a second divided by the square root of `size / 2.5`, so a bigger fire rises slower. The grid is 32 cubed and 72 frames (3 s of simulation at the reference size), held on its last frame, baked once per fuel and seed in about 4 s. `oily` bakes more and darker smoke and thickens the volume.
+- The grid files are named `explosion-<fuel>-<seed>_0000.67vg` to `_0071`, plus `explosion-empty.67vg` for the wait before `start` (one empty frame per frame of playback, so `start` is at most about 18 s at size 2.5 and the error says the limit for the size you pass). No such files exist on disk: the MCP server bakes the same bytes again from the name, so `scene_export_recipe`, `scene_create` and the render jobs work with the recipe as it is.
+- `effects.bloom.strength` raised to at least 0.5 so the glow spills past the flames. The volume's own light replaces the old point light and its track.
+- `effects.flash` and an `effects.distortion` ring at the centre, which fade by their own decay and falloff on the scene clock.
+- Particle systems `id-sparks`, `id-dust` and `id-rubble`, delayed to `start` (the `delay` field of a particle system). Sparks and a velocity motion blur on the fireball are planned as options (#1761, #1762).
 - A dark `id-scorch` disc decal that appears at `start`, and a camera eye shake track.
-- The motion duration becomes at least `start + 8`.
+- The motion duration becomes at least `start` plus the playing time of the blast plus 1 s.
 
-It needs 4 free local volumes, 3 of the 4 particle systems, a free point light, and a free flash and distortion slot, and fails naming the field otherwise.
-Gaps: a volume has no track, so the fireball fades by shrinking, not by cooling; fire volumes that overlap draw hard box seams (volumes composite nearest entry first), so the fire is one volume; the dust is a puff, not a flat ring; there is no grid volume (#1045), no self-shadow (#1047) and no crater.
+It needs a scene with no grid volume yet (a scene draws one), a free local volume, 3 of the 4 particle systems, and a free flash and distortion slot, and fails naming the field otherwise.
+Gaps: the grid is 32 cubed, so the detail is coarser than the 64 cubed preview and the smoke holds its last frame after the simulation ends; the dust is a puff, not a flat ring; there is no crater.
 
 Reparenting changes hierarchy while preserving each node's local transform.
 Commands can add or remove nodes and resources.
