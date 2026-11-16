@@ -45,6 +45,15 @@ export function combinedAssetBytesLimitMessage(total) {
   return `This call sends ${total} bytes of assets to the preview page at once, over the catalog maxCombinedBytes ${limit} (${describeAssetBytes(limit)}). Place fewer or smaller assets in one call and add the rest in later calls, or shrink them (meshopt compression, smaller textures). The frames of one volume grid cannot be split across calls: use fewer frames or convert them with a lower --max-resolution.`;
 }
 
+/**
+ * Message for a scene whose unique assets pass the combined limit after an edit. A render job, and the page that recovers after it,
+ * load every unique asset of the scene at once, so the limit holds for the whole scene and not only for the call that adds the last asset.
+ */
+export function sceneAssetBytesLimitMessage(total) {
+  const limit = AGENT_ASSET_LIMITS.maxCombinedBytes;
+  return `This edit would make the scene's unique assets ${total} bytes together, over the catalog maxCombinedBytes ${limit} (${describeAssetBytes(limit)}). A render job loads all of them at once, so the scene cannot grow past this; an asset placed many times counts once. Remove an asset or shrink them (meshopt compression, smaller textures); a larger scene loads through loadGltf in code.`;
+}
+
 function decodedBase64Bytes(text) {
   const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0;
   return Math.floor(text.length * 3 / 4) - padding;
@@ -70,8 +79,8 @@ export function combinedAssetBytes(input) {
 }
 
 /** Throws a RangeError when a byte total passes the combined limit. The runtime calls it with file sizes before it reads any file. */
-export function assertCombinedByteTotal(total) {
-  if (total > AGENT_ASSET_LIMITS.maxCombinedBytes) throw new RangeError(combinedAssetBytesLimitMessage(total));
+export function assertCombinedByteTotal(total, describeLimit = combinedAssetBytesLimitMessage) {
+  if (total > AGENT_ASSET_LIMITS.maxCombinedBytes) throw new RangeError(describeLimit(total));
 }
 
 /** Throws a RangeError when the assets in one preview call pass the combined limit. */
