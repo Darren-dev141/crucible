@@ -120,6 +120,13 @@ async function connect(context) {
   return { client, server, sessionId, calls: () => calls, closed: () => closed };
 }
 
+function dentedRecipe(impacts) {
+  return {
+    ...recipe(),
+    geometries: [{ id: 'cube', type: 'box', bevel: 0 }, { id: 'cube-dented', type: 'dented', source: 'cube', stiffness: 1000, maxDepth: 0.2, radius: 0.5, impacts }],
+  };
+}
+
 async function rejected(client, name, argumentsValue) {
   let result;
   try {
@@ -156,7 +163,7 @@ test('SDK advertises the complete strict JSON contract and truthful annotations'
   assert.equal(recipeSchema.properties.materials.maxItems, 256);
   assert.equal(recipeSchema.properties.geometries.maxItems, 256);
   // The tool lists the common fields; the strict schema still validates and scene_capabilities serves the full outline.
-  assert.deepEqual(recipeSchema.properties.geometries.items.properties.type.enum, ['box', 'cylinder', 'sphere', 'torus', 'lathe', 'extrude', 'tube', 'curve', 'sdf', 'text', 'terrain', 'grid', 'plane', 'cone', 'icoSphere', 'circle', 'line', 'fragment', 'mesh']);
+  assert.deepEqual(recipeSchema.properties.geometries.items.properties.type.enum, ['box', 'cylinder', 'sphere', 'torus', 'lathe', 'extrude', 'tube', 'curve', 'sdf', 'text', 'terrain', 'grid', 'plane', 'cone', 'icoSphere', 'circle', 'line', 'fragment', 'dented', 'mesh']);
   assert.ok(recipeSchema.properties.environment.properties.setup);
   assert.equal(recipeSchema.properties.shadow.additionalProperties, false);
   for (const topic of ['geometries', 'environment', 'effects', 'motion', 'physics', 'cloth', 'armatures', 'materialFields', 'meshEdit', 'meshStack']) {
@@ -571,4 +578,16 @@ test('a failed scene_create says the scene was not created and what to do, so th
   const inspected = await client.callTool({ name: 'scene_inspect', arguments: { ids: ['mesh'] } });
   assert.equal(inspected.isError, true);
   assert.doesNotMatch(inspected.content[0].text, /No scene was created/);
+});
+
+test('scene_create accepts a dented geometry and rejects bad impacts before dispatch', async context => {
+  const { client, calls } = await connect(context);
+  const impact = { point: [0, 0, 1], direction: [0, 0, -1], impulse: 100 };
+  const accepted = await client.callTool({ name: 'scene_create', arguments: { recipe: dentedRecipe([impact]) } });
+  assert.notEqual(accepted.isError, true);
+  const before = calls();
+  await rejected(client, 'scene_create', { recipe: dentedRecipe(Array.from({ length: 9 }, () => impact)) });
+  await rejected(client, 'scene_create', { recipe: dentedRecipe([]) });
+  await rejected(client, 'scene_create', { recipe: dentedRecipe([{ ...impact, speed: 3 }]) });
+  assert.equal(calls(), before);
 });
