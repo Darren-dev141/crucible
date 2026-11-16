@@ -138,6 +138,7 @@ test('the fireball is a gas-sim grid volume scaled to the blast size: box, densi
   assert.deepEqual(small.size, [8, 8, 8]);
   assert.deepEqual(large.size, [32, 32, 32]);
   assert.equal(small.fps, 24);
+  assert.ok(small.steps <= 32, 'a CPU preview look must fit its 30 s limit, so the march stays at one step per voxel');
   assert.equal(large.fps, 12);
   assert.equal(small.density / large.density, 4);
   assert.equal(small.emissionStrength / large.emissionStrength, 4);
