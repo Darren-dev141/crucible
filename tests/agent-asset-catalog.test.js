@@ -248,8 +248,9 @@ test('size() equals read().length for a pack file entry of a GLB with sibling im
   assert.equal(await packCatalog.size(metadata.assetId), stored.length);
 });
 
-function pngHeaderOnly(width, height) {
+function pngHeaderOnly(width, height, salt = 0) {
   const header = Buffer.alloc(33);
+  header[30] = salt;
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header);
   header.writeUInt32BE(13, 8);
   header.write('IHDR', 12, 'latin1');
@@ -294,13 +295,20 @@ test('a catalog with nothing skipped has no skipped field (#1313)', async contex
 test('an image whose header declares a frame over the sequence limits is skipped before any decode (#1313)', async context => {
   const { directory } = await fixture(context);
   await writeFile(join(directory, 'huge.png'), pngHeaderOnly(16000, 16000));
-  await writeFile(join(directory, 'wide.png'), pngHeaderOnly(1025, 8));
-  await writeFile(join(directory, 'ok.png'), pngHeaderOnly(1024, 1024));
+  await writeFile(join(directory, 'wide.png'), pngHeaderOnly(2049, 8));
+  await writeFile(join(directory, 'ok.png'), pngHeaderOnly(2048, 2048));
   const listing = (await createAgentAssetCatalog(directory)).list();
   assert.deepEqual(listing.assets.map(asset => asset.name).sort(), ['cube.glb', 'ok.png']);
   const reasons = Object.fromEntries(listing.skipped.map(entry => [entry.name, entry.reason]));
-  assert.match(reasons['huge.png'], /16000x16000; frames are at most 1024 pixels on a side/);
-  assert.match(reasons['wide.png'], /1025x8; frames are at most 1024/);
+  assert.match(reasons['huge.png'], /16000x16000; frames are at most 2048 pixels on a side/);
+  assert.match(reasons['wide.png'], /2049x8; frames are at most 2048/);
+});
+
+test('image files count against the frame cap, not the 64 file cap of the other assets (#1852)', async context => {
+  const { directory } = await fixture(context);
+  for (let index = 0; index < 100; index++) await writeFile(join(directory, `frame-${String(index).padStart(3, '0')}.png`), pngHeaderOnly(2, 2, index));
+  const listing = (await createAgentAssetCatalog(directory)).list();
+  assert.equal(listing.assets.filter(asset => asset.kind === 'image').length, 100);
 });
 
 function packGlb(name, assetId) {

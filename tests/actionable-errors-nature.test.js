@@ -69,7 +69,7 @@ const CASES = [
   ['cloth pinTo without a pin', cloth({ duration: 2, sheets: [{ node: 'flag', pinTo: { node: 'sparks' } }] }), 'cloth.sheets[0].pinTo', '{"node":"sparks"}', 'also sets pin'],
   ['texture sequence fps above the limit', sequence({ frames: FRAME_IDS, fps: 600 }), 'materials[1].map.sequence.fps', '600', 'at most 60, such as 12'],
   ['texture sequence frame that is not an asset ID', sequence({ frames: [FRAME_IDS[0], 'not-an-id'] }), 'materials[1].map.sequence.frames[1]', '"not-an-id"', '64 hexadecimal characters'],
-  ['texture sequence with one frame', sequence({ frames: [FRAME_IDS[0]], fps: 10 }), 'materials[1].map.sequence.frames', '"1 frames"', 'a list of 2 to 64'],
+  ['texture sequence with one frame', sequence({ frames: [FRAME_IDS[0]], fps: 10 }), 'materials[1].map.sequence.frames', '"1 frames"', 'a list of 2 to 4096'],
   ['texture sequence loop as text', sequence({ frames: FRAME_IDS, fps: 10, loop: 'yes' }), 'materials[1].map.sequence.loop', '"yes"', 'true or false'],
 ];
 
