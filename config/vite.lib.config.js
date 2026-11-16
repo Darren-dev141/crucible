@@ -101,6 +101,7 @@ export default defineConfig({
         'splat-shader': 'src/splat-shader.js',
         'subsurface-shader': 'src/subsurface-shader.js',
         'fog-shader': 'src/fog-shader.js',
+        'linear-output-shader': 'src/linear-output-shader.js',
         'light-linking': 'src/light-linking.js',
         'cascaded-shadows': 'src/cascaded-shadows.js',
         'light-shapes': 'src/light-shapes.js',
