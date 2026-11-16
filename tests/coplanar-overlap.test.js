@@ -7,6 +7,7 @@ import { loadAgentSceneModules } from '../src/agent-scene-modules.js';
 import { frameDiagnostics } from '../src/frame-diagnostics.js';
 import { groupParts } from '../src/renderer.js';
 import { resolveEffects } from '../src/effects.js';
+import { sphere } from '../src/geometry.js';
 
 await loadAgentSceneModules({ environment: { resolveCoplanar: 'offset' } });
 
@@ -331,4 +332,17 @@ test('with resolveCoplanar false, a 1.5 mm near-flush pair of nodes is reported 
   const warnings = coplanarWarnings([wall, node('plate', [0, 0, 0.0015], [1, 0.5, 0.2])]);
   assert.equal(warnings.length, 1);
   assert.deepEqual([...warnings[0].parts].sort(), ['plate', 'wall']);
+});
+
+test('two dense overlapping meshes are found without one object per triangle (#1343)', () => {
+  const geometry = sphere(150, 150);
+  const material = { color: [0.5, 0.5, 0.5] };
+  const placed = (name, offset) => ({ name, geometry, material, matrix: Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, offset, 0, 0, 1]) });
+  const heapBefore = process.memoryUsage().heapUsed;
+  const found = findCoplanarOverlaps([placed('outer', 0), placed('inner', 0.0005)]);
+  const heapGrowthPerTriangle = (process.memoryUsage().heapUsed - heapBefore) / (geometry.indices.length / 3);
+  assert.equal(found.truncated, false);
+  assert.ok(found.overlaps.length > 0 && found.overlaps[0].area > 0, 'the near-identical surfaces are reported as overlapping');
+  // Before the flat triangle table every triangle cost about 180 bytes of heap here, now about half that.
+  assert.ok(heapGrowthPerTriangle < 100, `plane search kept ${Math.round(heapGrowthPerTriangle)} bytes of heap per triangle`);
 });
