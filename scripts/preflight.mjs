@@ -2,7 +2,7 @@
 // one summary line per check and how to fix each failure. Made for people and coding agents alike: every check runs even
 // after one fails, full logs go to artifacts/preflight/, and only the tail of a failing log is printed.
 // Usage: npm run preflight                 every check that applies to the changed files
-//        npm run preflight -- --skip-tests  run only the sub-second unit tests (scripts/fast-tests.mjs) and skip the rest and the coverage gate
+//        npm run preflight -- --skip-tests  run only the sub-second unit tests (config/fast-tests.json) and skip the rest and the coverage gate
 //        npm run preflight -- --json        print the summary as JSON after the logs
 //        npm run preflight -- --base <ref>  compare with another ref than origin/main
 import { spawn, spawnSync } from 'node:child_process';
