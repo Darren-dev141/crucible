@@ -20,7 +20,7 @@ import { chooseDenoiser, finishWithOidn } from './agent-path-trace-denoise.mjs';
 import { createNativeSequence } from './agent-native-sequence.mjs';
 import { chooseNativeTemporal, createTemporalAccumulator, temporalFrameSeed } from './agent-native-temporal.mjs';
 import { readNativeCapacity } from './native-capacity.mjs';
-import { chooseNativeInstancing, chooseNativeKernel, chooseTraceBackend, createNativeTracerLocator, fetchNativeExport, isNativeTimeLimitError, traceFrameNative, traceTexelsNative } from './agent-native-trace.mjs';
+import { chooseNativeInstancing, chooseNativeKernel, chooseTraceBackend, createNativeTracerLocator, createExportReuse, discardHeldExport, fetchNativeExport, isNativeTimeLimitError, traceFrameNative, traceTexelsNative } from './agent-native-trace.mjs';
 import { addonCapabilities, addonFileFor, addonImportMap } from './mcp-addons.mjs';
 import { createAgentAssetCatalog } from './agent-asset-catalog.mjs';
 import { createPackRegistry } from './agent-packs.mjs';
@@ -669,6 +669,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     let frameReceiver;
     // A stills or video job of native frames renders them all through one session; it is closed when the job ends.
     let nativeSequence;
+    // The table bytes of the last native frame, so a later frame reads only the tables that changed (JS67_NATIVE_EXPORT_REUSE=off reads them all).
+    const nativeExportReuse = createExportReuse();
     // A native video job blends each frame into the ones before it, so the noise the denoiser leaves does not shimmer.
     let nativeTemporal;
     let nativeTemporalShotIndex;
@@ -800,7 +802,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             const blendsOverTime = usesSession && settings.kind === 'video' && chooseNativeKernel() === 'cycles' && chooseNativeTemporal();
             const frameSeed = blendsOverTime ? temporalFrameSeed(tracerOptions.seed, frame) : tracerOptions.seed;
             try {
-              const exported = await fetchNativeExport(jobPage, { ...frameInput, options: { width, height, bounces: tracerOptions.bounces, seed: frameSeed, fireflyClamp: 20, noiseThreshold: tracerOptions.noiseThreshold, samples: tracerOptions.samples, instancing: chooseNativeInstancing(), kernel: chooseNativeKernel() } }, { capacity: readNativeCapacity(trace.tracer).capacity });
+              const exported = await fetchNativeExport(jobPage, { ...frameInput, options: { width, height, bounces: tracerOptions.bounces, seed: frameSeed, fireflyClamp: 20, noiseThreshold: tracerOptions.noiseThreshold, samples: tracerOptions.samples, instancing: chooseNativeInstancing(), kernel: chooseNativeKernel() } }, { capacity: readNativeCapacity(trace.tracer).capacity, ...(usesSession && process.env.JS67_NATIVE_EXPORT_REUSE !== 'off' ? { reuse: nativeExportReuse } : {}) });
               exportedScene = true;
               if (usesSession) nativeSequence ??= createNativeSequence({ tracer: trace.tracer });
               if (blendsOverTime) {
@@ -819,6 +821,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
               if (error.nativeCapacity) throw error;
               nativeSequence?.close();
               nativeSequence = undefined;
+              discardHeldExport(nativeExportReuse);
               nativeTemporal?.restart('a frame rendered on another backend');
               // Only a tracer or adapter failure makes the tracer unusable; a scene that failed to export says so for this job alone.
               if (exportedScene) nativeTracerLocator.markUnusable(error.message);

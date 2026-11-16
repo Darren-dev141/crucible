@@ -118,7 +118,7 @@ function tableBytesFrom(table) {
  * bytes, which traceFrameNative takes like the base64 of a one-message export. `readChunk(name, offset)` resolves with the
  * base64 of one chunk. No single string holds a whole table, so the scene is bounded by memory, not by a message.
  */
-export async function collectExportChunks(manifest, readChunk, { capacity } = {}) {
+export async function collectExportChunks(manifest, readChunk, { capacity, reuse } = {}) {
   const { chunks, ...exported } = manifest;
   if (!chunks || !(chunks.chunkBytes > 0)) {
     throw new TypeError('collectExportChunks: the export carries no `chunks` manifest. Export the scene with transport "chunks".');
@@ -126,7 +126,15 @@ export async function collectExportChunks(manifest, readChunk, { capacity } = {}
   // With the adapter capacity, a scene that cannot fit fails here, before any table is read from the page.
   const capacityUse = capacity ? requireExportFitsCapacity(manifest, capacity) : undefined;
   const tables = {};
+  let reusedBytes = 0;
   for (const [name, byteLength] of Object.entries(chunks.tables)) {
+    const changedRanges = chunks.changedRanges?.[name];
+    if (changedRanges) {
+      const { bytes, copiedBytes } = await tableFromHeldAndChangedRanges(reuse, name, byteLength, changedRanges, readChunk);
+      tables[name] = bytes;
+      reusedBytes += copiedBytes;
+      continue;
+    }
     const bytes = new Uint8Array(byteLength);
     for (let offset = 0; offset < byteLength; offset += chunks.chunkBytes) {
       const chunk = Buffer.from(await readChunk(name, offset), 'base64');
@@ -138,19 +146,81 @@ export async function collectExportChunks(manifest, readChunk, { capacity } = {}
     }
     tables[name] = bytes;
   }
-  return { ...exported, tables, ...(capacityUse ? { capacityUse } : {}) };
+  if (reuse && chunks.digests) {
+    reuse.tables = tables;
+    reuse.digests = { blockBytes: chunks.blockBytes, tables: chunks.digests };
+  }
+  return { ...exported, tables, ...(capacityUse ? { capacityUse } : {}), ...(chunks.changedRanges ? { reusedBytes } : {}) };
+}
+
+/**
+ * What a job keeps between the exports of its frames: the table bytes of the last export and their digests. Pass one object to
+ * every `fetchNativeExport` of the job (`reuse`), and call `discardHeldExport` when the job's native session closes.
+ */
+export function createExportReuse() {
+  return { tables: {}, digests: {} };
+}
+
+export function discardHeldExport(reuse) {
+  if (!reuse) return;
+  reuse.tables = {};
+  reuse.digests = {};
+}
+
+// A table the page sent as changed ranges: the blocks outside them are copied from the same table of the last export, which the
+// reader must still hold, and the ranges are read from the page. Returns the table and how many bytes were copied instead of read.
+async function tableFromHeldAndChangedRanges(reuse, name, byteLength, changedRanges, readChunk) {
+  const held = reuse?.tables?.[name];
+  if (!(held instanceof Uint8Array)) {
+    throw new RangeError(`The native scene export sends table "${name}" as changed ranges, but the reader holds no earlier copy of it. Pass the same \`reuse\` object to every export of one job.`);
+  }
+  const bytes = new Uint8Array(byteLength);
+  let copiedBytes = 0;
+  let cursor = 0;
+  const copyHeld = end => {
+    if (end <= cursor) return;
+    if (end > held.byteLength) throw new RangeError(`The native scene export keeps bytes ${cursor} to ${end} of table "${name}", but the held copy has ${held.byteLength} bytes.`);
+    bytes.set(held.subarray(cursor, end), cursor);
+    copiedBytes += end - cursor;
+  };
+  for (const [offset, length] of changedRanges) {
+    if (!Number.isInteger(offset) || !Number.isInteger(length) || offset < cursor || length < 1 || offset + length > byteLength) {
+      throw new RangeError(`The native scene export sent the range ${offset}+${length} of table "${name}", which is out of order or outside its ${byteLength} bytes.`);
+    }
+    copyHeld(offset);
+    const chunk = Buffer.from(await readChunk(name, offset, length), 'base64');
+    if (chunk.length !== length) {
+      throw new RangeError(`The native scene export sent ${chunk.length} bytes of table "${name}" at offset ${offset}, expected ${length}. The page changed the export while it was read.`);
+    }
+    bytes.set(chunk, offset);
+    cursor = offset + length;
+  }
+  copyHeld(byteLength);
+  return { bytes, copiedBytes };
 }
 
 /**
  * Exports the scene of a render job from its page in chunks and returns it with byte tables. `input` is what the page's
  * `exportNativeScene` takes. The page lets go of its copy when the read ends, whether it succeeded or not. `capacity` (from
- * readNativeCapacity) makes a scene the adapter cannot hold fail before its tables are read.
+ * readNativeCapacity) makes a scene the adapter cannot hold fail before its tables are read. `reuse` (from createExportReuse, one per
+ * job) makes a later frame read only the tables whose bytes changed since the last frame of the job; the tables it returns are the same
+ * bytes a full export would give.
  */
-export async function fetchNativeExport(page, input, { capacity } = {}) {
+export async function fetchNativeExport(page, input, { capacity, reuse } = {}) {
   const maximumTriangles = chunkedTriangleBound(capacity?.maxUniqueTriangles);
-  const manifest = await page.evaluate(request => window.__agentPreview.exportNativeScene(request), { ...input, chunked: true, maximumTriangles });
+  const reuseDigests = reuse ? reuse.digests : undefined;
+  let manifest;
   try {
-    return await collectExportChunks(manifest, (name, offset) => page.evaluate(request => window.__agentPreview.readNativeExportChunk(request), { name, offset }), { capacity });
+    manifest = await page.evaluate(request => window.__agentPreview.exportNativeScene(request), { ...input, chunked: true, maximumTriangles, ...(reuseDigests ? { reuseDigests } : {}) });
+  } catch (error) {
+    discardHeldExport(reuse);
+    throw error;
+  }
+  try {
+    return await collectExportChunks(manifest, (name, offset, byteCount) => page.evaluate(request => window.__agentPreview.readNativeExportChunk(request), { name, offset, ...(byteCount === undefined ? {} : { byteCount }) }), { capacity, reuse });
+  } catch (error) {
+    discardHeldExport(reuse);
+    throw error;
   } finally {
     await page.evaluate(() => window.__agentPreview.releaseNativeExport()).catch(() => {});
   }

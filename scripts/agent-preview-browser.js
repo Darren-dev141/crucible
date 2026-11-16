@@ -1,4 +1,4 @@
-import { exportNativeSceneTables, nativeTexelTracerIfAvailable, readExportChunk, splitExportForChunks } from './native-bake-page.js';
+import { describeTableReuse, exportNativeSceneTables, nativeTexelTracerIfAvailable, readExportChunk, splitExportForChunks } from './native-bake-page.js';
 
 // The byte tables of the last chunked native export, held until the job runner has read them (releaseNativeExport).
 let heldNativeExportTables = null;
@@ -1074,7 +1074,9 @@ window.__agentPreview = {
   // The scene at one instant packed into the tables the native ray query tracer reads (renderer.backend "native"). The job
   // runner traces them outside the page; each table comes back as base64 bytes. With `chunked` the answer holds a `chunks`
   // manifest instead of the tables, which stay here for readNativeExportChunk, so no one message bounds the scene.
-  async exportNativeScene({ sessionId, animation, motionTime, options, chunked = false, maximumTriangles }) {
+  // `reuseDigests` (chunked only: `{ blockBytes, tables }`, the block digests the reader kept from its last export; `{}` for the first)
+  // makes the manifest carry the block digests of every table and the `changedRanges` the reader lacks, so a video frame reads only the bytes that moved.
+  async exportNativeScene({ sessionId, animation, motionTime, options, chunked = false, maximumTriangles, reuseDigests }) {
     const record = requireSession(sessionId);
     if (record.asset && (animation !== undefined || motionTime !== undefined)) {
       record.scene.sampleFrame({ ...(animation === undefined ? {} : { animation }),
@@ -1096,15 +1098,15 @@ window.__agentPreview = {
       modules: { buildTraceScene, resolveTexture, buildNativeInput, buildJobNativeInput, buildFlattenedJobNativeInput, pack, gridVolumeInput } });
     let exported = packed;
     if (chunked) {
-      const split = splitExportForChunks(packed);
+      const split = splitExportForChunks(packed, reuseDigests ? await describeTableReuse(packed.tables, reuseDigests) : undefined);
       heldNativeExportTables = split.tables;
       exported = split.manifest;
     }
     return { ...exported, ignored: describeIgnoredFeatures(record.scene.parts, environment, 'cpu', { kernelMaterials: exported.wholeMaterials, clipStart: camera.clipStart }) };
   },
   // One chunk (base64) of a table of the chunked export that exportNativeScene holds.
-  readNativeExportChunk({ name, offset }) {
-    return readExportChunk(heldNativeExportTables, name, offset);
+  readNativeExportChunk({ name, offset, byteCount }) {
+    return readExportChunk(heldNativeExportTables, name, offset, byteCount);
   },
   // Lets go of the held export once the job runner has every table.
   releaseNativeExport() {

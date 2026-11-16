@@ -126,7 +126,7 @@ function tablesForTransport(input, transport) {
  * `tables`: the byte length of every table and the chunk size, small enough for one message. `tables` are the bytes the
  * holder serves with `readExportChunk` until the reader has them all.
  */
-export function splitExportForChunks(exported) {
+export function splitExportForChunks(exported, reuse) {
   const { tables, ...rest } = exported;
   const byteLengths = {};
   for (const [name, bytes] of Object.entries(tables)) {
@@ -135,14 +135,71 @@ export function splitExportForChunks(exported) {
     }
     byteLengths[name] = bytes.byteLength;
   }
-  return { manifest: { ...rest, chunks: { tables: byteLengths, chunkBytes: NATIVE_EXPORT_CHUNK_BYTES } }, tables };
+  return { manifest: { ...rest, chunks: { tables: byteLengths, chunkBytes: NATIVE_EXPORT_CHUNK_BYTES, ...(reuse ?? {}) } }, tables };
 }
 
-/** One chunk of a byte table as base64: the NATIVE_EXPORT_CHUNK_BYTES from `offset`, or what is left of the table. */
-export function readExportChunk(tables, name, offset) {
+// A table is compared with the last frame's in blocks of this size, so a table that is mostly still (a scene's triangles, where only
+// the particles move) sends only the blocks that changed. A multiple of 3 and a divisor of the chunk size.
+export const NATIVE_EXPORT_REUSE_BLOCK_BYTES = 1024 * 1024;
+
+function hexOfDigest(digest) {
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * The byte ranges ([offset, length] pairs, in order, each at most NATIVE_EXPORT_CHUNK_BYTES long) of a table whose blocks differ
+ * from the held ones. `blockDigests` and `heldBlockDigests` hold one digest per block; a block past the end of the held table differs.
+ */
+export function changedBlockRanges(blockDigests, heldBlockDigests, byteLength) {
+  const ranges = [];
+  blockDigests.forEach((digest, block) => {
+    if (heldBlockDigests[block] === digest) return;
+    const offset = block * NATIVE_EXPORT_REUSE_BLOCK_BYTES;
+    const length = Math.min(NATIVE_EXPORT_REUSE_BLOCK_BYTES, byteLength - offset);
+    const last = ranges[ranges.length - 1];
+    if (last && last[0] + last[1] === offset && last[1] + length <= NATIVE_EXPORT_CHUNK_BYTES) last[1] += length;
+    else ranges.push([offset, length]);
+  });
+  return ranges;
+}
+
+/**
+ * The SHA-256 of every block of every byte table of an export, and the ranges of each table that differ from what the reader
+ * already holds. `held` is `{ blockBytes, tables }`, where `tables` maps a table name to the block digests the reader kept from
+ * its last export (empty on the first frame of a sequence). The result goes to `splitExportForChunks` as `reuse`: for a table the
+ * reader holds, it copies every block outside `changedRanges` from its last export and reads only those ranges. A table the reader
+ * does not hold is read whole. A page with no `crypto.subtle` returns nothing, and the reader then reads every table.
+ */
+export async function describeTableReuse(tables, held) {
+  if (typeof crypto === 'undefined' || !crypto.subtle) return undefined;
+  const heldTables = held?.blockBytes === NATIVE_EXPORT_REUSE_BLOCK_BYTES ? held.tables ?? {} : {};
+  const digests = {};
+  const changedRanges = {};
+  for (const [name, bytes] of Object.entries(tables)) {
+    const blockDigests = [];
+    for (let offset = 0; offset < bytes.byteLength; offset += NATIVE_EXPORT_REUSE_BLOCK_BYTES) {
+      blockDigests.push(hexOfDigest(await crypto.subtle.digest('SHA-256', bytes.subarray(offset, Math.min(bytes.byteLength, offset + NATIVE_EXPORT_REUSE_BLOCK_BYTES)))));
+    }
+    digests[name] = blockDigests;
+    if (Array.isArray(heldTables[name])) changedRanges[name] = changedBlockRanges(blockDigests, heldTables[name], bytes.byteLength);
+  }
+  return { blockBytes: NATIVE_EXPORT_REUSE_BLOCK_BYTES, digests, changedRanges };
+}
+
+/**
+ * One chunk of a byte table as base64: the NATIVE_EXPORT_CHUNK_BYTES from `offset`, or what is left of the table. With `byteCount`
+ * it is exactly that range instead (a changed range of a reused table), at any offset inside the table.
+ */
+export function readExportChunk(tables, name, offset, byteCount) {
   const bytes = tables?.[name];
   if (!(bytes instanceof Uint8Array)) {
     throw new RangeError(`readExportChunk: there is no table "${name}" in the held export (tables: ${Object.keys(tables ?? {}).join(', ') || 'none'}).`);
+  }
+  if (byteCount !== undefined) {
+    if (!Number.isInteger(offset) || !Number.isInteger(byteCount) || offset < 0 || byteCount < 1 || byteCount > NATIVE_EXPORT_CHUNK_BYTES || offset + byteCount > bytes.byteLength) {
+      throw new RangeError(`readExportChunk: the range of ${byteCount} bytes at offset ${offset} of table "${name}" must lie inside its ${bytes.byteLength} bytes and span at most ${NATIVE_EXPORT_CHUNK_BYTES}.`);
+    }
+    return bytesToBase64(bytes.subarray(offset, offset + byteCount));
   }
   if (!Number.isInteger(offset) || offset < 0 || offset >= bytes.byteLength || offset % NATIVE_EXPORT_CHUNK_BYTES !== 0) {
     throw new RangeError(`readExportChunk: offset ${offset} of table "${name}" must be a multiple of ${NATIVE_EXPORT_CHUNK_BYTES} below its ${bytes.byteLength} bytes.`);
