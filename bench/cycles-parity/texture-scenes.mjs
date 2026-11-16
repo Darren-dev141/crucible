@@ -277,8 +277,8 @@ function normalMapScene(shape, mapKind, segments = 48, variant = {}) {
   }
   return {
     parts,
-    blenderWorld: { type: 'constant', value: LIGHT_LEVEL },
-    environment: variant.oneLight ? { ...environment(), pointLights: environment().pointLights.slice(0, 1) } : environment(),
+    blenderWorld: { type: 'constant', value: variant.noAmbient ? 0 : LIGHT_LEVEL },
+    environment: { ...environment(), ...(variant.oneLight ? { pointLights: environment().pointLights.slice(0, 1) } : {}), ...(variant.noAmbient ? { ambientIntensity: 0 } : {}) },
     camera: { eye: [0, 0, 6], target: [0, 0, 0], up: [0, 1, 0], fov: 40, near: 0.1, far: 50 },
   };
 }
@@ -296,6 +296,14 @@ export const TEXTURE_SCENES = {
   'normal-plane': () => normalMapScene('plane', 'bumpy'),
   'normal-sphere': () => normalMapScene('sphere', 'bumpy'),
   'normal-sphere-coarse': () => normalMapScene('sphere', 'bumpy', 16),
+  'normal-sphere-fine': () => normalMapScene('sphere', 'bumpy', 96),
+  'normal-sphere-flat': () => normalMapScene('sphere', 'none'),
+  'normal-sphere-tilt-r-fine': () => normalMapScene('sphere', 'tilt-r', 96),
+  'normal-sphere-tilt-r-diffuse': () => normalMapScene('sphere', 'tilt-r', 48, DIFFUSE_ONLY),
+  'normal-sphere-tilt-r-diffuse-one': () => normalMapScene('sphere', 'tilt-r', 48, { ...DIFFUSE_ONLY, oneLight: true }),
+  'normal-sphere-tilt-r-one': () => normalMapScene('sphere', 'tilt-r', 48, { oneLight: true }),
+  'normal-sphere-tilt-r-diffuse-one-dark': () => normalMapScene('sphere', 'tilt-r', 48, { ...DIFFUSE_ONLY, oneLight: true, noAmbient: true }),
+  'normal-sphere-flat-diffuse-one-dark': () => normalMapScene('sphere', 'none', 48, { ...DIFFUSE_ONLY, oneLight: true, noAmbient: true }),
   'normal-plane-tilt-r': () => normalMapScene('plane', 'tilt-r'),
   'normal-plane-tilt-g': () => normalMapScene('plane', 'tilt-g'),
   'normal-sphere-tilt-r': () => normalMapScene('sphere', 'tilt-r'),
