@@ -599,8 +599,9 @@ runTest('runtime close promptly aborts a pending private review and skips source
 runTest('invalid preview configuration rejects before any browser or renderer allocation', () => {
   assert.throws(() => createAgentRuntime({ backend: 'fake' }), /backend/);
   for (const memory of [0, 31, 385, 1024, 64.5, NaN]) {
-    assert.throws(() => createAgentRuntime({ memory }), /memory/);
+    assert.throws(() => createAgentRuntime({ memory, totalMemoryBytes: 512 * 1024 ** 2 }), /memory/);
   }
+  assert.throws(() => createAgentRuntime({ memory: 2049, totalMemoryBytes: 4 * 1024 ** 3 }), /from 32 to 2048 MiB on this machine/);
   assert.throws(() => createAgentRuntime({ browser: 'does-not-exist-browser.exe' }), /browser/);
   assert.throws(() => createAgentRuntime({ assets: 'relative-path' }), /absolute/);
 });

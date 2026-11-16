@@ -149,6 +149,26 @@ export const MAXIMUM_SEQUENCE_JOB_PIXELS = 1920 * 1080;
  * (planRenderSize estimate, 4 samples), Node RSS peaks under 180 MiB, so 384 leaves about 200 MiB for scene textures and geometry.
  */
 export const MAXIMUM_MEMORY_MIB = 384;
+/** The largest --memory on any machine, however much RAM it has (#1776, #1696). */
+export const MEMORY_CEILING_MIB = 4096;
+
+/**
+ * The largest --memory this machine accepts: half of its RAM, so the server never takes more than half of what the owner has,
+ * bounded above by MEMORY_CEILING_MIB and below by MAXIMUM_MEMORY_MIB, which every machine accepts as before.
+ * Pure: pass os.totalmem().
+ */
+export function maximumMemoryMiB(totalMemoryBytes) {
+  if (!Number.isFinite(totalMemoryBytes) || totalMemoryBytes <= 0) {
+    throw new RangeError(`maximumMemoryMiB needs the machine's total memory in bytes (os.totalmem()), got ${totalMemoryBytes}.`);
+  }
+  const halfOfMemoryMiB = Math.floor(totalMemoryBytes / 2 / 1024 ** 2);
+  return Math.max(MAXIMUM_MEMORY_MIB, Math.min(MEMORY_CEILING_MIB, halfOfMemoryMiB));
+}
+
+/** The --memory range error shared by the server flag check and the runtime factory, naming the machine's maximum. */
+export function memoryRangeError(memory, maximumMiB) {
+  return new RangeError(`memory must be an integer from 32 to ${maximumMiB} MiB on this machine (half of its RAM, at most ${MEMORY_CEILING_MIB}), got ${memory}.`);
+}
 export const AUDIO_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(wav|mp3|ogg|flac)$/;
 // Metres that depth pass values 0 to 65535 span, measured from the camera.
 export const RENDER_PASS_DEPTH_RANGE = 100;
@@ -333,7 +353,7 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   }),
   // Recipe particles: closed-form from seeded launch values, so any time is computed directly and a seek never replays.
   particles: Object.freeze({
-    emitter: 'System node geometry is the particle shape; its transform does not move them. Fields (defaults): node, seed (1), count (100), rate (per second; omit: burst at 0), delay (seconds before the first birth, 0), lifetime, speed, size (number or [min, max]; 1, 1, 0.05), direction ([0,1,0]), spread (cone degrees, 30), emitter { shape point|box|sphere|disc|mesh, position, halfExtents, radius; mesh: mesh node, group (vertex group weighting surface, vertices or edges), from surface (area weighted)|vertices|edges (length weighted)|volume (closed mesh), sharpAngle (degrees, edges only: keep open or bent edges), normalSpeed m/s along the normal }, instances [node ids, up to 8: each particle draws one], orient none|random|normal (mesh surface, vertices or edges), scale constant|shrink|grow, drag (1/s, 0), floor (world y they land on).',
+    emitter: 'System node geometry is the particle shape; its transform does not move them. Fields (defaults): node, seed (1), count (100), rate (per second; omit: burst at 0), start (alias delay: seconds before the first birth, 0), stop (seconds, after start: nothing is born at or after it), lifetime, speed, size (number or [min, max]; 1, 1, 0.05), direction ([0,1,0]), spread (cone degrees, 30), emitter { shape point|box|sphere|disc|mesh, position, halfExtents, radius; mesh: mesh node, group (vertex group weighting surface, vertices or edges), from surface (area weighted)|vertices|edges (length weighted)|volume (closed mesh), sharpAngle (degrees, edges only: keep open or bent edges), normalSpeed m/s along the normal }, instances [node ids, up to 8: each particle draws one], orient none|random|normal (mesh surface, vertices or edges), scale constant|shrink|grow, drag (1/s, 0), floor (world y they land on).',
     hair: 'type hair grows strands from a read-only root surface node into node (its own geometry is ignored). Fields (defaults): surface, seed, count, length (m, number or [min, max], 0.1), segments (1-8, 4), width (m, 0.004), droop (0.5), lean (0.2), sway (tip travel m, off), swayRate (Hz, 0.5). Tapering tubes, no UVs.',
     sparks: 'type sparks (preset explosion, delay s): cooling streaks; node material tag unlit; docs/physics.md',
     sectionFields: 'systems, gravity ([0,-9.81,0]), wind (m/s; moves emitter particles only with drag > 0, and sets the hair sway direction), fields (also cloth; wind, turbulence, vortex, drag, magnet: docs/physics.md)',
