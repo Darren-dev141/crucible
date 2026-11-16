@@ -96,6 +96,7 @@ These checks need a GPU or a person's eyes, so they do not run on a pull request
 
 | Check | Run it when you change |
 | --- | --- |
+| `Cook addon` workflow | Native code: it runs on a pull request only when `package.json`, the lock file or a file the addon tests import changes (`node scripts/addon-job-paths.mjs` lists them), and nightly on `main` |
 | `npm run smoke:mcp` | MCP tools or the preview, on a GPU |
 | `npm run smoke:character` | Skinning, glTF loading, poses or IK |
 | `npm run smoke:line-art-nodes` | Outlines or `environment.lines.nodes`, on a GPU |
