@@ -420,29 +420,18 @@ jobs:
   addon:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        config: [w256-a, w256-b, w256-c, w256-d, w256-e, nopt-a, nopt-b, nopt-c, nopt-d, nopt-e]
     env:
-      # DIAGNOSTIC (#1760): matrix of lavapipe settings, revert before merge.
-      MATRIX_CONFIG: ${{ matrix.config }}
       # Six tests failed on Intel AVX-512 runners and passed on AMD (#1760). Keep lavapipe's JIT on 256-bit vectors so every runner
       # compiles the Cook kernel the same way, as the AVX-512 path miscompiled it before (cook#45).
       LP_NATIVE_VECTOR_WIDTH: '256'
+      # With the vector width pinned, two tests still failed (#1760): the mip level 0 read (difference 8.6 to 80, expected 0) and the
+      # light tree mean. The same file passed on 5 of 5 runners (AMD EPYC 9V74 and 9V45, Intel 6975P-C, 8573C and 8370C) with
+      # LLVM's optimisation passes off and failed on 4 of 5 (AMD EPYC 9V74 and 9V45) with them on, so an optimisation pass in
+      # lavapipe's JIT changes the kernel's result. Drop this once Mesa's LLVM stops doing that.
+      GALLIVM_PERF: 'nopt'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
-      - name: Apply the matrix config
-        run: |
-          case "${MATRIX_CONFIG%-?}" in
-            w256) echo LP_NATIVE_VECTOR_WIDTH=256 ;;
-            w128) echo LP_NATIVE_VECTOR_WIDTH=128 ;;
-            w512) echo LP_NATIVE_VECTOR_WIDTH=512 ;;
-            nopt) echo LP_NATIVE_VECTOR_WIDTH=256; echo GALLIVM_PERF=nopt ;;
-            w128-nopt) echo LP_NATIVE_VECTOR_WIDTH=128; echo GALLIVM_PERF=nopt ;;
-            w256-nofma) echo LP_NATIVE_VECTOR_WIDTH=256; echo LP_FORCE_NO_FMA=1 ;;
-          esac >> "$GITHUB_ENV"
       # The built addon is cached by the Cook pin, the runner and the Rust toolchain (#1800). A hit skips the cargo target restore
       # and the cargo build; a miss builds as before and saves the addon. Fork pull requests may restore but never save, so a fork
       # cannot plant an addon that a later run on this repository would load.
@@ -501,10 +490,16 @@ jobs:
       # A fresh runner has an empty Mesa shader cache, so the first native job compiles the kernel cold on lavapipe. That job
       # once failed the memory guard (#1186); this step runs it first, with the cache off, and fails the job if it does not
       # complete on the native backend.
-      - name: Build
+      - name: First native render job on a fresh runner completes under the memory guard
+        env:
+          MESA_SHADER_CACHE_DISABLE: 'true'
+          PROBE_FRAMES: '12'
+          PROBE_MAX_SECONDS: '600'
+          PROBE_RUNTIME_BACKEND: cpu
         run: |
           npm run build
           node scripts/build-mcp.mjs
+          node scripts/check-first-native-job.mjs . 960x540
       - name: Run the addon tests
         run: |
           start=$(date +%s)
@@ -513,7 +508,7 @@ jobs:
           # and with the default concurrency the light-tree file crashed (SIGSEGV) and byte-for-byte tests differed, while each
           # passed alone and two runs of one render were byte-identical on lavapipe (#1717).
           set +e
-          node --test --test-concurrency=2 --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --test-reporter=tap --test-reporter-destination=addon-tests.tap tests/native-texture-mips.test.js tests/native-light-tree-kernel.test.js
+          node --test --test-concurrency=2 --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --test-reporter=tap --test-reporter-destination=addon-tests.tap $(git grep -l "support/cook.js" -- tests)
           status=$?
           echo "test_seconds=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
           echo "node --test exit code $status"
@@ -529,6 +524,6 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: addon-tests-tap-${{ matrix.config }}
+          name: addon-tests-tap
           path: addon-tests.tap
           if-no-files-found: ignore
