@@ -2,19 +2,36 @@
 //
 // node bench/agent-modeling/compare-bench.mjs <baseline bench file> <candidate bench file> [--tolerance 0.05]
 //
-// Prints pass@1, pass^k, calls and tokens per run side by side, then the tasks whose pass count changed. Exits with 1
+// A candidate that ran only a subset of the tasks (bench.mjs --kinds, --topics or --tasks) is compared on those tasks alone: the
+// baseline is cut down to the same tasks first, and the baseline tasks that did not run are listed as skipped. A skipped task
+// is never a failure. Prints pass@1, pass^k, calls and tokens per run side by side, then the tasks whose pass count changed. Exits with 1
 // when a model's pass@1 drops by more than the tolerance (default 0.05) or when infra runs pass --infra-bound (default 0.1) of its runs. With k runs per task, a swing of one run on
 // one task is noise: judge a branch by the totals and by tasks that moved by two runs or more.
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { zeroCallSummary } from './bench-summary.mjs';
+import { benchTotals, zeroCallSummary } from './bench-summary.mjs';
 
 const percent = value => (value === null || value === undefined ? '?' : `${Math.round(value * 100)}%`);
 const signed = value => (value > 0 ? `+${value}` : String(value));
 
-/** Differences per model: totals side by side and the tasks whose passes changed. */
 export const DEFAULT_INFRA_BOUND = 0.1;
+
+/** The baseline of one model cut down to the tasks the candidate ran: its totals and its per-task results. With the per-run
+ * records the totals are recomputed exactly; without them only pass@1 can be, from the per-task pass counts. */
+export function restrictBaseline(baseline, model, ranTasks) {
+  const before = baseline.summary[model];
+  const taskResults = Object.fromEntries(Object.entries(before.taskResults).filter(([task]) => ranTasks.has(task)));
+  const records = baseline.recordsByModel?.[model];
+  if (records) {
+    const totals = benchTotals(records.filter(record => ranTasks.has(record.task)), baseline.runsPerTask);
+    return { totals: { ...before, ...totals }, taskResults, exact: true };
+  }
+  const results = Object.values(taskResults);
+  const runs = results.reduce((sum, result) => sum + result.runs, 0);
+  const passed = results.reduce((sum, result) => sum + result.passed, 0);
+  return { totals: { ...before, passAt1: runs ? Number((passed / runs).toFixed(3)) : null }, taskResults, exact: false };
+}
 
 /** Differences per model. Infra runs (no scene call because claude -p or the MCP server failed) are printed next to
  * pass@1 and are not in it; a model whose infra share passes `infraBound` in either file is flagged INFRA, since its
@@ -24,8 +41,11 @@ export function compareBench(baseline, candidate, tolerance = 0.05, infraBound =
   let regressed = false;
   let tooMuchInfra = false;
   for (const model of Object.keys(baseline.summary).filter(name => name in candidate.summary)) {
-    const before = baseline.summary[model];
     const after = candidate.summary[model];
+    const ranTasks = new Set(Object.keys(after.taskResults));
+    const skipped = Object.keys(baseline.summary[model].taskResults).filter(task => !ranTasks.has(task));
+    const { totals: before, taskResults: baselineTasks, exact } = skipped.length ? restrictBaseline(baseline, model, ranTasks) : { totals: baseline.summary[model], taskResults: baseline.summary[model].taskResults, exact: true };
+    if (skipped.length) lines.push(`${model}: compared on ${ranTasks.size} tasks; ${skipped.length} baseline tasks skipped (not run, not failures): ${skipped.join(', ')}${exact ? '' : '. The baseline file has no per-run records, so only pass@1 is cut to those tasks and the other baseline numbers cover all tasks'}`);
     const drop = Number(((before.passAt1 ?? 0) - (after.passAt1 ?? 0)).toFixed(3));
     if (drop > tolerance) regressed = true;
     const overBound = (before.infraShare ?? 0) > infraBound || (after.infraShare ?? 0) > infraBound;
@@ -34,11 +54,12 @@ export function compareBench(baseline, candidate, tolerance = 0.05, infraBound =
     for (const [name, totals] of [['baseline', before], ['candidate', after]]) {
       for (const text of zeroCallSummary(totals)) lines.push(`  ${name} ${text}`);
     }
-    const tasks = new Set([...Object.keys(before.taskResults), ...Object.keys(after.taskResults)]);
+    const tasks = new Set([...Object.keys(baselineTasks), ...Object.keys(after.taskResults)]);
     for (const task of tasks) {
-      const passedBefore = before.taskResults[task]?.passed ?? 0;
+      const passedBefore = baselineTasks[task]?.passed ?? 0;
       const passedAfter = after.taskResults[task]?.passed ?? 0;
-      if (passedBefore !== passedAfter) lines.push(`  ${task}: ${passedBefore}/${before.taskResults[task]?.runs ?? 0} -> ${passedAfter}/${after.taskResults[task]?.runs ?? 0} (${signed(passedAfter - passedBefore)})`);
+      if (!baselineTasks[task]) lines.push(`  ${task}: no baseline, ${passedAfter}/${after.taskResults[task]?.runs ?? 0} (new task)`);
+      else if (passedBefore !== passedAfter) lines.push(`  ${task}: ${passedBefore}/${baselineTasks[task]?.runs ?? 0} -> ${passedAfter}/${after.taskResults[task]?.runs ?? 0} (${signed(passedAfter - passedBefore)})`);
     }
   }
   return { regressed, tooMuchInfra, text: lines.join('\n') || 'No model appears in both files.' };
