@@ -42,8 +42,7 @@ layerTextureSupport.bind = (renderer, mapState, layerState, batch) => {
   if (!renderer.shaderFeatures.has('retro')) return;
   const { context, uniforms } = renderer;
   uniforms.retro ??= context.getUniformLocation(renderer.program, 'retro');
-  const retro = batch.parts[0].material.retro;
-  context.uniform3f(uniforms.retro, ...(retro?.vertexSnap ?? [0, 0]), retro?.affineUV ? 1 : 0);
+  context.uniform3f(uniforms.retro, ...(batch.retro?.vertexSnap ?? [0, 0]), batch.retro?.affineUV ? 1 : 0);
 };
 
 function normalizeVertexSnap(value) {
