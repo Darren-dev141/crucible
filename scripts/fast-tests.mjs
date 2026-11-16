@@ -4,6 +4,7 @@
 // Usage: node scripts/fast-tests.mjs [--threshold-ms 500] [--budget-ms 120000]
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { importsFile } from './import-specifiers.mjs';
 import { isMainModule, listTestFiles, repositoryRoot, runTestFiles } from './test-run.mjs';
 
 export const DEFAULT_THRESHOLD_MS = 1000;
@@ -28,8 +29,8 @@ export function selectFastTests(timings, existingFiles, { thresholdMs = DEFAULT_
 }
 
 // The native Cook tests are recorded at 0 ms on CI, where they skip for lack of a GPU or the built addon, but they run for real here.
-export function usesNativeAddon(sourceText) {
-  return sourceText.includes('support/cook');
+export function usesNativeAddon(sourceText, importerPath = 'tests/example.test.js') {
+  return importsFile(sourceText, importerPath, 'tests/support/cook.js');
 }
 
 export function readFastTests(folder = repositoryRoot) {
@@ -54,7 +55,7 @@ function main(arguments_) {
   }
   const thresholdMs = numberAfter(arguments_, '--threshold-ms', DEFAULT_THRESHOLD_MS);
   const budgetMs = numberAfter(arguments_, '--budget-ms', DEFAULT_BUDGET_MS);
-  const { files, recordedMilliseconds } = selectFastTests(timings, listTestFiles().filter(file => !usesNativeAddon(readFileSync(join(repositoryRoot, file), 'utf8'))), { thresholdMs, budgetMs });
+  const { files, recordedMilliseconds } = selectFastTests(timings, listTestFiles().filter(file => !usesNativeAddon(readFileSync(join(repositoryRoot, file), 'utf8'), file)), { thresholdMs, budgetMs });
   if (files.length === 0) {
     console.log(`No test file is recorded under ${thresholdMs} ms in ${FAST_TESTS_PATH}; nothing to run.`);
     return;

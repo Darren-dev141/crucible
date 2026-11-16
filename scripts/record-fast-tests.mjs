@@ -38,7 +38,7 @@ export function pickFastResults(results, limitMs = RECORD_LIMIT_MS) {
 }
 
 async function main() {
-  const testFiles = listTestFiles().filter(file => !usesNativeAddon(readFileSync(join(repositoryRoot, file), 'utf8')));
+  const testFiles = listTestFiles().filter(file => !usesNativeAddon(readFileSync(join(repositoryRoot, file), 'utf8'), file));
   console.log(`Measuring ${testFiles.length} test files, ${PARALLEL_MEASUREMENTS} at a time.`);
   const fastTests = pickFastResults(await measureAll(testFiles));
   writeFileSync(join(repositoryRoot, FAST_TESTS_PATH), `${JSON.stringify(fastTests, null, 2)}\n`);

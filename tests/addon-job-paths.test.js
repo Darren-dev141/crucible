@@ -46,20 +46,59 @@ test('the traced addon set includes the addon tests, their helper and the source
   assert.ok(traced.some((file) => file.startsWith('src/')));
 });
 
-test('every file the addon tests reach is covered by the pull_request paths of cook-addon.yml', () => {
-  const globs = triggerPaths('pull_request');
-  const missing = traceAddonFiles().filter((file) => !isCovered(file, globs));
+/** The workflow lines to paste under on.pull_request.paths for the traced files it does not cover, sorted. */
+function missingPathLines(tracedFiles, globs) {
+  return tracedFiles.filter((file) => !isCovered(file, globs)).sort().map((file) => `      - '${file}'`);
+}
+
+function assertWorkflowCovers(tracedFiles, globs) {
+  const missingLines = missingPathLines(tracedFiles, globs);
   assert.deepEqual(
-    missing,
+    missingLines,
     [],
-    `Add these to on.pull_request.paths in .github/workflows/cook-addon.yml (run \`node scripts/addon-job-paths.mjs\` for the full list):\n${missing.join('\n')}`,
+    `Paste these lines under on.pull_request.paths in .github/workflows/cook-addon.yml:\n${missingLines.join('\n')}`,
   );
+}
+
+test('every file the addon tests reach is covered by the pull_request paths of cook-addon.yml', () => {
+  assertWorkflowCovers(traceAddonFiles(), triggerPaths('pull_request'));
+});
+
+test('a traced file the workflow lacks fails with the exact lines to paste, in sorted order', () => {
+  const globs = triggerPaths('pull_request');
+  const traced = ['scripts/zzz-new.mjs', 'tests/support/cook.js', 'scripts/aaa-new.mjs'];
+  assert.deepEqual(missingPathLines(traced, globs), ["      - 'scripts/aaa-new.mjs'", "      - 'scripts/zzz-new.mjs'"]);
+  assert.throws(
+    () => assertWorkflowCovers(traced, globs),
+    (error) => error.message.includes("      - 'scripts/aaa-new.mjs'\n      - 'scripts/zzz-new.mjs'"),
+  );
+});
+
+test('a file that the real tracer reaches but the workflow lacks is reported', () => {
+  const globs = triggerPaths('pull_request').filter((glob) => glob !== 'tests/support/cook.js');
+  assert.deepEqual(missingPathLines(traceAddonFiles(), globs), ["      - 'tests/support/cook.js'"]);
+});
+
+test('addon tests are found by their imports, not by a mention of the helper in text', () => {
+  const sources = {
+    'tests/imports.test.js': "import { x } from './support/cook.js';",
+    'tests/side-effect.test.js': "import './support/cook.js';",
+    'tests/reexport.test.js': "export { x } from './support/cook.js';",
+    'tests/dynamic.test.js': "const helper = await import('./support/cook.js');",
+    'tests/required.test.js': "const helper = require('./support/cook.js');",
+    'tests/string.test.js': "const note = './support/cook.js'; const other = \"import './support/cook.js'\";",
+    'tests/comment.test.js': "// import './support/cook.js'\n/* import './support/cook.js' */",
+    'tests/other-helper.test.js': "import { x } from './support/scene.js';",
+  };
+  const found = addonTestFiles(Object.keys(sources), (file) => sources[file]);
+  assert.deepEqual(found, ['tests/dynamic.test.js', 'tests/imports.test.js', 'tests/reexport.test.js', 'tests/required.test.js', 'tests/side-effect.test.js']);
 });
 
 test('the pull_request paths keep the build inputs and the workflow itself', () => {
   const globs = triggerPaths('pull_request');
-  for (const required of ['package.json', 'package-lock.json', '.github/workflows/cook-addon.yml', 'scripts/check-first-native-job.mjs']) {
-    assert.ok(isCovered(required, globs), `${required} must trigger the addon job`);
+  const requiredPaths = ['package.json', 'package-lock.json', '.github/workflows/cook-addon.yml', 'scripts/check-first-native-job.mjs', 'scripts/addon-job-paths.mjs', 'scripts/import-specifiers.mjs', 'tests/addon-job-paths.test.js'];
+  for (const requiredPath of requiredPaths) {
+    assert.ok(isCovered(requiredPath, globs), `${requiredPath} must trigger the addon job`);
   }
   assert.ok(!isCovered('docs/goal.md', globs), 'documentation must not trigger the addon job');
 });
