@@ -177,8 +177,9 @@ function frameWasReduced(metrics) {
 function memoryAdvice(metrics) {
   const running = metrics.memoryBudgetMiB ? `; this server runs with --memory ${metrics.memoryBudgetMiB}` : '';
   const needs = ` The full frame needs a render budget of ${metrics.requiredMemoryMiB} MiB${running}.`;
-  if (metrics.requiredMemoryMiB > MAXIMUM_MEMORY_MIB) {
-    return `${needs} --memory accepts at most ${MAXIMUM_MEMORY_MIB}, so a restart cannot fit it. Reduce the textures, the geometry, the frame size, or turn off HDR or bloom to render at ${metrics.requestedWidth}x${metrics.requestedHeight}.`;
+  const maximumMemoryMiB = metrics.maximumMemoryMiB ?? MAXIMUM_MEMORY_MIB;
+  if (metrics.requiredMemoryMiB > maximumMemoryMiB) {
+    return `${needs} --memory accepts at most ${maximumMemoryMiB} on this machine, so a restart cannot fit it. Reduce the textures, the geometry, the frame size, or turn off HDR or bloom to render at ${metrics.requestedWidth}x${metrics.requestedHeight}.`;
   }
   return `${needs} Restart it with --memory ${metrics.requiredMemoryMiB} or more to render at ${metrics.requestedWidth}x${metrics.requestedHeight}.`;
 }
