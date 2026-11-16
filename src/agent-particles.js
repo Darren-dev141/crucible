@@ -10,7 +10,7 @@ import { bakingContext, boundedArray, finiteNumber, knownKeys, rootNodeWithGeome
 
 const PARTICLES_FIELDS = ['gravity', 'wind', 'fields', 'systems'];
 const SYSTEM_TYPES = ['emitter', 'hair', 'sparks'];
-const EMITTER_SYSTEM_FIELDS = ['type', 'node', 'seed', 'count', 'rate', 'delay', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'size', 'scale', 'drag', 'floor', 'bounce', 'friction', 'colliders', 'spin', 'color', 'alpha', 'instances', 'orient'];
+const EMITTER_SYSTEM_FIELDS = ['type', 'node', 'seed', 'count', 'rate', 'delay', 'start', 'stop', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'size', 'scale', 'drag', 'floor', 'bounce', 'friction', 'colliders', 'spin', 'color', 'alpha', 'instances', 'orient'];
 const SPARK_SYSTEM_FIELDS = ['type', 'preset', 'node', 'seed', 'count', 'delay', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'position', 'size', 'drag', 'floor', 'bounce', 'temperature', 'intensity', 'shutter'];
 const SPARK_PRESETS = Object.freeze({
   // A blast: a few hundred sparks thrown in every direction from a small ball, fast, light enough for drag to pull them in, living 0.5 to 2 s.
@@ -186,7 +186,7 @@ function normalizeEmitterSystem(input, context, path) {
     throw invalidField(`${path}.scale`, system.scale, `one of ${SCALE_MODES.join(', ')}`);
   }
   if (input.rate !== undefined) system.rate = finiteNumber(input.rate, `${path}.rate`, 0.01, PARTICLE_LIMITS.maxParticlesPerSystem * 100);
-  if (input.delay !== undefined) system.delay = finiteNumber(input.delay, `${path}.delay`, 0, 3600);
+  applyEmissionWindow(input, system, path);
   if (input.bounce !== undefined) system.bounce = finiteNumber(input.bounce, `${path}.bounce`, 0, 1);
   if (input.friction !== undefined) system.friction = finiteNumber(input.friction, `${path}.friction`, 0, 1);
   if (input.spin !== undefined) system.spin = rangeOf(input.spin, `${path}.spin`, -100000, 100000);
@@ -361,10 +361,29 @@ function worldToNodeLocal(geometry, matrix) {
   return Object.freeze({ ...geometry, positions, normals });
 }
 
+// `start` is a second name for `delay` (seconds before the first birth); `stop` ends the window, so a system with a `rate`
+// emits only inside it.
+function applyEmissionWindow(input, system, path) {
+  if (input.start !== undefined && input.delay !== undefined) {
+    throw invalidField(`${path}.start`, input.start, 'either start or delay, which mean the same thing (seconds before the first birth), not both');
+  }
+  const startField = input.start === undefined ? 'delay' : 'start';
+  const startInput = input.start ?? input.delay;
+  if (startInput !== undefined) system.delay = finiteNumber(startInput, `${path}.${startField}`, 0, 3600);
+  if (input.stop === undefined) return;
+  const stop = finiteNumber(input.stop, `${path}.stop`, 0, 3600);
+  const start = system.delay ?? 0;
+  if (stop <= start) {
+    throw invalidField(`${path}.stop`, input.stop, `a time in seconds after the start (${start}), such as ${start + 2}`);
+  }
+  system.stop = stop;
+}
+
 // Most particles alive at once and the time the last one dies, counted from the launch values alone.
 function lifeSummary(launches) {
   const events = [];
   for (let index = 0; index < launches.count; index++) {
+    if (launches.birth[index] >= launches.stop) continue;
     events.push([launches.birth[index], 1], [launches.birth[index] + launches.life[index], -1]);
   }
   events.sort((first, second) => first[0] - second[0] || first[1] - second[1]);

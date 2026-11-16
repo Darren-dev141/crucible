@@ -134,6 +134,30 @@ export function bakeAtSampledPose(lightBake, recipe, pose) {
   return { parts: entry.parts, report: { ...entry.report, reused } };
 }
 
+/**
+ * `bakeAgentParts`, except that a size limit (a RangeError: part cap, path work, triangles, grid nodes) returns
+ * `{ refusal: message }` when `mayRefuse` is true, so an edit of an existing scene can stay applied without its bake.
+ */
+export function bakeUnlessRefused(mayRefuse, ...bakeArguments) {
+  try {
+    return { baked: bakeAgentParts(...bakeArguments) };
+  } catch (error) {
+    if (!mayRefuse || !(error instanceof RangeError)) {
+      throw error;
+    }
+    return { refusal: error.message };
+  }
+}
+
+/** The scene_inspect and scene_apply diagnostic for an edit whose rebake could not run: the edit stands and the scene is drawn unbaked. */
+export function bakeSkippedDiagnostic(reason) {
+  return {
+    kind: 'bake-skipped', severity: 'warning', target: 'bake',
+    message: `The edit is applied but the light bake did not run, so the old bake was dropped and the scene is drawn without baked light. ${reason}`,
+    fix: 'Fit the bake to the scene: fewer parts, a lower bake.samples or bake.texelsPerUnit (scene_apply set-bake), or remove bake.irradianceGrid and bake.probes when the part limit is theirs (they trace on the CPU, 256 parts). The bake runs again on the next edit.',
+  };
+}
+
 function staleBakeDiagnostic() {
   return {
     kind: 'bake-stale', severity: 'warning', target: 'bake',
