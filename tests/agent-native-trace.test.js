@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  chooseNativeKernel, chooseTraceBackend, createNativeTracerLocator, isNativeTimeLimitError, traceFrameNative, yieldToEventLoop,
+  chooseNativeKernel, chooseTraceBackend, clampNegativeColor, createNativeTracerLocator, isNativeTimeLimitError, traceFrameNative, yieldToEventLoop,
 } from '../scripts/agent-native-trace.mjs';
 
 // These tests use fake engines, so they run with and without Cook installed; a COOK_DISABLE from the suite's absent-mode run
@@ -349,4 +349,45 @@ test('the adapter a native trace ran on reaches report.gpu, and a llvmpipe repor
   assert.equal(exceedsMemoryGuard({ nodeBytes: firstJobPeakBytes, browserHeapBytes: 0, nativeAllowanceBytes: allowance.bytes }), true);
   allowance.grantForAdapter(traced.report.gpu);
   assert.equal(exceedsMemoryGuard({ nodeBytes: firstJobPeakBytes, browserHeapBytes: 0, nativeAllowanceBytes: allowance.bytes }), false);
+});
+
+// Dispersive glass keeps signed spectral weights, so a trace can hold small negative pixels at the most saturated fringes.
+function tracerWithColor(red) {
+  const pixels = 4 * 4;
+  const rgba = new Float32Array(pixels * 4);
+  for (let pixel = 0; pixel < pixels; pixel++) rgba.set([red(pixel), 0.3, 0.4, 1], pixel * 4);
+  return {
+    traceNative: () => ({ rgba, albedo: new Float32Array(pixels * 3).fill(0.5), normal: new Float32Array(pixels * 3).fill(0.5),
+      depth: new Float32Array(pixels), variance: new Float32Array(pixels), averageSamples: 8, adapter: 'test adapter', backend: 'test' }),
+  };
+}
+
+const signedRed = pixel => (pixel % 5 === 0 ? -0.05 : 0.2);
+const clampedRed = pixel => Math.max(signedRed(pixel), 0);
+
+test('negative traced pixels stay in rawLinear but OIDN and the display bytes see zero', async () => {
+  const seenByOidn = [];
+  const denoiser = { OIDN_VERSION: 'test', async denoiseWithOidn(features) { seenByOidn.push(features.color); return features.color; } };
+  const frame = { exported: emptyExport, width: 4, height: 4, samples: 8, nativePost: false };
+  const signed = await traceFrameNative({ ...frame, tracer: tracerWithColor(signedRed), denoise: 'oidn', denoiser });
+  assert.ok(signed.rawLinear.some(value => value < 0), 'the film keeps the signed values');
+  assert.ok(seenByOidn[0].every(value => value >= 0), 'OIDN gets no negative value');
+  assert.equal(seenByOidn[0][0], 0);
+  assert.equal(seenByOidn[0][3 * 5], 0);
+  assert.equal(seenByOidn[0][1], Math.fround(0.3));
+  for (const viewTransform of ['aces', 'agx', 'neutral']) {
+    const options = { ...frame, denoise: 'none', viewTransform };
+    const withNegatives = await traceFrameNative({ ...options, tracer: tracerWithColor(signedRed) });
+    const clamped = await traceFrameNative({ ...options, tracer: tracerWithColor(clampedRed) });
+    assert.ok(withNegatives.rawLinear.some(value => value < 0));
+    assert.equal(withNegatives.data, clamped.data, `${viewTransform}: the PNG matches the clamped film`);
+  }
+});
+
+test('clampNegativeColor returns a buffer without negatives as the same array', () => {
+  const plain = new Float32Array([0, 0.5, 2]);
+  assert.equal(clampNegativeColor(plain), plain);
+  const signed = new Float32Array([-0.1, 0.5, -2]);
+  assert.deepEqual([...clampNegativeColor(signed)], [0, 0.5, 0]);
+  assert.deepEqual([...signed], [...new Float32Array([-0.1, 0.5, -2])], 'the input is not edited');
 });
