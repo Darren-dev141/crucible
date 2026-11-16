@@ -112,6 +112,7 @@ async function importedBindings(source) {
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
   failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, disposeGate, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
   const events = [];
+  const sourceCalls = [];
   const sandboxTimers = new Set();
   const viewports = [];
   const deadlines = [];
@@ -139,6 +140,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
       // The render job disposes its private session with a bare session id instead of a method call.
       const { method, input } = typeof argument === 'string' ? { method: 'dispose', input: { sessionId: argument } } : argument;
       events.push(`${this.privateTarget ? 'private' : 'source'}:${method}`);
+      if (!this.privateTarget) sourceCalls.push({ method, input });
       if (method === hangMethod && !this.privateTarget) return new Promise(() => {});
       if (method === 'create' && this.privateTarget && failPrivateCreate) {
         failPrivateCreate = false;
@@ -219,7 +221,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
   openHarnesses.push({ runtime, sandboxTimers, releasePages: () => { resolvePrivatePage(); privatePage?.rejectShot?.(new Error('Harness cleanup')); } });
   const created = await runtime.create({ recipe });
   const disconnectBrowser = () => { browserConnected = false; };
-  return { runtime, sessionId: created.sessionId, disconnectBrowser, deadlines, events, viewports, shotStarted, acquisitionStarted, resolvePrivatePage };
+  return { runtime, sessionId: created.sessionId, disconnectBrowser, deadlines, events, sourceCalls, viewports, shotStarted, acquisitionStarted, resolvePrivatePage };
 }
 
 function boundedResult(promise) {
@@ -809,6 +811,71 @@ runTest('a render job of a scene over the combined limit fails with the cap mess
     assert.equal(catalog.counts.reads, 0);
     assert.equal((await runtime.capabilities()).phase, 'ready');
   } finally { await runtime.close(); }
+});
+
+// A recipe that names a catalog file instead of its SHA-256 id (#1843): the id changes on every re-export, the name does not.
+async function namedAssetHarness(context) {
+  const directory = await mkdtemp(join(tmpdir(), 'crucible-named-assets-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  await cp(new URL('./fixtures/kenney-boat/', import.meta.url), directory, { recursive: true });
+  await writeFile(join(directory, 'sheep_body.glb'), withDistinctDocument(await readFile(join(directory, 'boat-fishing-small.glb')), 'sheep'));
+  const realCatalog = await createAgentAssetCatalog(directory);
+  const sheepId = realCatalog.list().assets.find(asset => asset.name === 'sheep_body.glb').assetId;
+  const readIds = [];
+  const recordingCatalog = {
+    list: () => realCatalog.list(),
+    size: assetId => realCatalog.size(assetId),
+    resolveName: name => realCatalog.resolveName(name),
+    read: assetId => {
+      readIds.push(assetId);
+      return realCatalog.read(assetId);
+    },
+  };
+  const harness = await reviewRuntimeHarness({
+    runtimeOptions: { assets: directory },
+    contextOverrides: { createAgentAssetCatalog: async () => recordingCatalog },
+  });
+  return { ...harness, sheepId, readIds };
+}
+
+function recipePlacing(placement) {
+  return { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [{ id: 'sheep0-body', asset: placement }] };
+}
+
+runTest('scene_create places a catalog GLB by file name and keeps only its hash (#1843)', async context => {
+  const { runtime, sourceCalls, sheepId, readIds } = await namedAssetHarness(context);
+  await runtime.create({ recipe: recipePlacing({ name: 'sheep_body.glb' }) });
+  const createCall = sourceCalls.filter(call => call.method === 'create').at(-1);
+  assert.deepEqual(createCall.input.recipe.nodes[0].asset, { id: sheepId });
+  assert.deepEqual(readIds, [sheepId]);
+});
+
+runTest('scene_apply add-node places a catalog GLB by file name (#1843)', async context => {
+  const { runtime, sessionId, sourceCalls, sheepId } = await namedAssetHarness(context);
+  await runtime.apply({ sessionId, operations: [{ type: 'add-node', node: { id: 'sheep1-body', asset: { name: 'sheep_body.glb' } } }] });
+  const applyCall = sourceCalls.filter(call => call.method === 'apply').at(-1);
+  assert.deepEqual(applyCall.input.operations[0].node.asset, { id: sheepId });
+});
+
+runTest('an unknown asset name is refused with near names and the catalog tool to run (#1843)', async context => {
+  const { runtime } = await namedAssetHarness(context);
+  await assert.rejects(runtime.create({ recipe: recipePlacing({ name: 'sheep_body' }) }), /No catalog GLB is named "sheep_body".*"sheep_body\.glb"/);
+  await assert.rejects(runtime.create({ recipe: recipePlacing({ name: 'wolf.glb' }) }), /Run scene_asset_catalog/);
+});
+
+runTest('an asset placement with both id and name is refused (#1843)', async context => {
+  const { runtime, sheepId } = await namedAssetHarness(context);
+  await assert.rejects(runtime.create({ recipe: recipePlacing({ id: sheepId, name: 'sheep_body.glb' }) }), /exactly one of id .* or name/);
+});
+
+runTest('scene_create_asset opens a catalog GLB by assetName and refuses assetName with assetId (#1843)', async context => {
+  const { runtime, sourceCalls, sheepId } = await namedAssetHarness(context);
+  const assetRecipe = { format: 'crucible.asset', schemaVersion: 1 };
+  await runtime.createAsset({ recipe: { ...assetRecipe, assetName: 'sheep_body.glb' } });
+  const createCall = sourceCalls.filter(call => call.method === 'createAsset').at(-1);
+  assert.equal(createCall.input.recipe.assetId, sheepId);
+  assert.equal(createCall.input.recipe.assetName, undefined);
+  await assert.rejects(runtime.createAsset({ recipe: { ...assetRecipe, assetId: sheepId, assetName: 'sheep_body.glb' } }), /exactly one of recipe\.assetId/);
 });
 
 // The same GLB with one extra field in its JSON chunk, so the catalog gives it another asset id.

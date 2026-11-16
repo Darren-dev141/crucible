@@ -302,3 +302,28 @@ test('an image whose header declares a frame over the sequence limits is skipped
   assert.match(reasons['huge.png'], /16000x16000; frames are at most 1024 pixels on a side/);
   assert.match(reasons['wide.png'], /1025x8; frames are at most 1024/);
 });
+
+function packGlb(name, assetId) {
+  return { directory: tmpdir(), filename: name, assetId, metadata: Object.freeze({ assetId, name, bytes: 10, kind: 'glb' }) };
+}
+
+test('resolveName finds a GLB by its exact name, including a pack path (#1843)', async context => {
+  const { directory } = await fixture(context);
+  const catalog = await createAgentAssetCatalog(directory, [packGlb('farm/sheep.glb', 'e'.repeat(64))]);
+  assert.equal(catalog.resolveName('cube.glb'), catalog.list().assets.find(asset => asset.name === 'cube.glb').assetId);
+  assert.equal(catalog.resolveName('farm/sheep.glb'), 'e'.repeat(64));
+});
+
+test('resolveName refuses two GLBs with one name and says to pass the id (#1843)', async context => {
+  const { directory } = await fixture(context);
+  const catalog = await createAgentAssetCatalog(directory, [packGlb('sheep.glb', 'e'.repeat(64)), packGlb('sheep.glb', 'f'.repeat(64))]);
+  assert.throws(() => catalog.resolveName('sheep.glb'), /2 catalog GLBs are named "sheep\.glb".*Pass asset\.id/);
+});
+
+test('resolveName refuses an unknown or non-string name with a hint (#1843)', async context => {
+  const { directory } = await fixture(context);
+  const catalog = await createAgentAssetCatalog(directory);
+  assert.throws(() => catalog.resolveName('cub'), /Near names: "cube\.glb"/);
+  assert.throws(() => catalog.resolveName('tree.glb'), /Run scene_asset_catalog/);
+  assert.throws(() => catalog.resolveName(7), TypeError);
+});

@@ -61,7 +61,7 @@ const skinSpec = z.strictObject({
   maxDistance: positive.optional().describe('Metres from the nearest bone beyond which a vertex counts as unweighted in scene_inspect rig. Defaults to a quarter of the rig size.'),
 }).describe('Bind this mesh node to an armature with automatic weights: each vertex follows its nearest bones, by distance to the bone segments. Needs the armature at rest where the mesh is.');
 const relationList = z.array(z.record(z.string(), z.unknown())).max(8).describe('Relations against other mesh nodes; fields in scene_capabilities relations. [] removes them.').meta({ id: 'Relations' });
-const placedAsset = z.record(z.string(), z.unknown()).describe('Catalog GLB placed at this group node: {id,materials,clip,drive}; see scene_capabilities placedAssets.').meta({ id: 'PlacedAsset' });
+const placedAsset = z.record(z.string(), z.unknown()).describe('Catalog GLB placed at this group node: {id or name,materials,clip,drive}; see scene_capabilities placedAssets.').meta({ id: 'PlacedAsset' });
 const placedVegetation = z.record(z.string(), z.unknown()).describe('Trees at this group node: {species} for one, or {mix, scatter:{ground,...}} over a terrain node; see scene_capabilities vegetation.').meta({ id: 'PlacedVegetation' });
 // Left open here and checked by the scene (normalizeRayVisibility), whose errors say what to pass; the shape is in scene_capabilities renderFlags.
 const rayVisibility = z.unknown();
@@ -775,7 +775,8 @@ const recipe = z.strictObject({
 const assetRecipe = z.strictObject({
   format: z.preprocess(acceptLegacyFormat, z.literal('crucible.asset')),
   schemaVersion: z.literal(1),
-  assetId: z.string().regex(/^[a-f0-9]{64}$/).describe('SHA-256 asset ID from scene_asset_catalog.'),
+  assetId: z.string().regex(/^[a-f0-9]{64}$/).optional().describe('SHA-256 asset ID from scene_asset_catalog, or assetName.'),
+  assetName: z.string().max(256).optional(),
   camera: z.strictObject(cameraFields).optional(),
   environment: environmentListed.optional(),
   effects: effectsListed.optional(),

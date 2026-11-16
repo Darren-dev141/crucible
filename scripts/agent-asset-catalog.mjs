@@ -356,6 +356,27 @@ export async function createAgentAssetCatalog(root, packFiles = []) {
       return { assets: structuredClone([...entries.values()].map(entry => entry.metadata)), maximumBytes: MAXIMUM_BYTES, maximumAssets: MAXIMUM_ASSETS, ...(skipped.length ? { skipped: structuredClone(skipped) } : {}) };
     },
     /**
+     * The asset id of the GLB listed under exactly this name (a file in --assets, or `pack/file` for a pack), so a recipe can name
+     * a file that is re-exported often. Several GLBs under one name are refused rather than guessed.
+     */
+    resolveName(name) {
+      if (typeof name !== 'string' || !name) {
+        throw new TypeError('asset.name must be the file name of a catalog GLB, such as "sheep_body.glb"; scene_asset_catalog lists the names.');
+      }
+      const glbs = [...entries.entries()].filter(([, entry]) => entry.metadata.kind === 'glb');
+      const matches = glbs.filter(([, entry]) => entry.metadata.name === name);
+      if (matches.length === 1) return matches[0][0];
+      if (matches.length > 1) {
+        const ids = matches.map(([assetId]) => assetId.slice(0, 12)).join(', ');
+        throw new Error(`${matches.length} catalog GLBs are named "${name}" (ids ${ids}). Pass asset.id with one full id from scene_asset_catalog instead of the name.`);
+      }
+      const wanted = name.toLowerCase();
+      const near = glbs.map(([, entry]) => entry.metadata.name)
+        .filter(candidate => candidate.toLowerCase().includes(wanted) || wanted.includes(candidate.toLowerCase())).slice(0, 5);
+      const advice = near.length ? `Near names: ${near.map(candidate => `"${candidate}"`).join(', ')}.` : 'Run scene_asset_catalog to list the names.';
+      throw new Error(`No catalog GLB is named "${name}". ${advice} A name must match exactly, such as "sheep_body.glb".`);
+    },
+    /**
      * The length `read` returns, known from the catalog record without loading the file. A GLB whose images sit beside it is
      * larger than its file on disk, because `read` embeds those images.
      */
