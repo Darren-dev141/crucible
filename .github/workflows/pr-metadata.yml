@@ -32,7 +32,7 @@ jobs:
   # holds a read-only token, no secrets and no checkout credentials, and it passes only a small JSON file to the next job, which holds
   # the write permissions and never runs pull request code.
   fingerprint:
-    if: github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

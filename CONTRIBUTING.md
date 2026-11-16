@@ -134,7 +134,7 @@ The configs:
 - Every shader feature registered by an optional module (fog, explosion, lighting pass, subsurface, toon, world materials, splats and the rest), and every exported GLSL string of a look file.
 - Look defaults: every exported `UPPER_CASE` constant of a look file (lighting, material, tone map, fog, post and volume values).
 
-Covered files are JavaScript under `src/` and Python under `packages/`. A look file anywhere else (for example Rust or a package's JavaScript) is held as before. The fingerprint reads shader text and defaults only: a change to how JavaScript computes a uniform is not seen, so say so in the description when you change such code and ask for the hold.
+Covered files are JavaScript under `src/`. A look file anywhere else (a package's JavaScript, Rust, Python or GLSL files) is held as before, and so is every pull request from a fork, because the fingerprint job runs only for branches of this repository. The fingerprint reads shader text and defaults only: a change to how JavaScript computes a uniform is not seen, so say so in the description when you change such code and ask for the hold.
 
 ### Who runs the GPU and person checks
 

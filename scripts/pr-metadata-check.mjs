@@ -29,8 +29,8 @@ const lightPathPattern = /^(docs\/|\.github\/|tests\/|changes\/)|\.md$/;
 // "flight" and "highlight" do not match "light".
 const lookNamePattern = /(^|[-_/.])(shaders?|glsl|lights?|lighting|materials?|environment|shadows?|tone|tonemap|fog|sky|post|bloom|ssao|taa|exposure)(?=$|[-_/.])/i;
 const lookRootPattern = /^(src|packages)\//;
-// What the fingerprint covers: the JavaScript under src/ that it imports, and Python files (the Blender add-on never runs in the renderer).
-const fingerprintCoveredPattern = /^(src\/.+\.js|packages\/.+\.py)$/;
+// What the fingerprint covers: the JavaScript under src/ that it imports. Everything else under packages/ stays held.
+const fingerprintCoveredPattern = /^src\/.+\.js$/;
 
 const linkedIssuePattern = /\b(?:closes|close|closed|fixes|fix|fixed|resolves|resolve|resolved|part of)\s+(?:#\d+|https:\/\/github\.com\/codepawl\/crucible\/issues\/\d+)/i;
 const localPathPatterns = [
@@ -107,6 +107,8 @@ export function isFingerprintCovered(path) {
 
 /** True when the fingerprint proved every touched look file leaves shader text and look defaults as they were. */
 export function isLookIdentical(pr, files) {
+  // The fingerprint job imports the head's modules, so a fork could forge its result: a fork pull request always gets the normal hold.
+  if (pr.fromFork) return false;
   const lookPaths = files.map(file => normalizePath(file.filename)).filter(isLookPath);
   if (lookPaths.length === 0 || !lookPaths.every(isFingerprintCovered)) return false;
   if (pr.lookIdentical === true) return true;

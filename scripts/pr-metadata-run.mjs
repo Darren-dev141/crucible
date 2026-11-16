@@ -47,6 +47,7 @@ export async function checkOnePullRequest({ github, repo, number, now, reopened,
   const input = toCheckInput(pullRequest, files);
   input.pr.lookApproved = await lookWasApproved({ github, repo, number, input });
   input.pr.lookIdentical = lookIdentical;
+  input.pr.fromFork = pullRequest.head?.repo?.full_name !== pullRequest.base?.repo?.full_name;
   const result = checkPullRequest(input);
   const exempt = isAutoCloseExempt(input.pr);
   const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });

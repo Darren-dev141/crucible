@@ -39,14 +39,14 @@ function files(...names) {
 const replays = [
   {
     number: 1613,
-    expectHold: false,
+    expectHold: true,
     lookIdentical: true,
     changed: [],
     files: files('changes/1589.md', 'packages/blender-addon/cook_blender/material_export.py', 'packages/blender-addon/cook_blender/scene_export.py', 'packages/blender-addon/tests/test_edge_cases.py'),
   },
   {
     number: 1594,
-    expectHold: false,
+    expectHold: true,
     lookIdentical: true,
     changed: [],
     files: files('changes/1589.md', 'packages/blender-addon/cook_blender/material_export.py', 'packages/blender-addon/tests/test_edge_cases.py'),
@@ -76,6 +76,20 @@ for (const replay of replays) {
     assert.equal(result.maintainerTodos.some(todo => todo.startsWith('Look change')), replay.expectHold);
   });
 }
+
+test('a fork pull request with lookIdentical true still gets the hold', () => {
+  const result = checkPullRequest({ pr: pullRequest({ lookIdentical: true, fromFork: true }), files: files('src/lighting.js') });
+  assert.ok(result.addLabels.includes('hold:look-approval'));
+  assert.ok(!result.addLabels.includes('look:identical'));
+});
+
+test('an add-on script change and a look file the fingerprint cannot generate are held', () => {
+  for (const name of ['packages/blender-addon/cook_blender/material_export.py', 'packages/cook-native/src/shader.rs', 'src/shaders/sky.glsl']) {
+    const result = checkPullRequest({ pr: pullRequest({ lookIdentical: true }), files: files(name) });
+    assert.ok(result.addLabels.includes('hold:look-approval'), name);
+    assert.ok(!result.addLabels.includes('look:identical'), name);
+  }
+});
 
 test('without a fingerprint a look change is held exactly as before', () => {
   const lookFiles = files('src/lighting.js');
@@ -113,9 +127,9 @@ test('the hourly sweep keeps look:identical and adds no hold while no fingerprin
   assert.deepEqual(result.removeLabels, []);
 });
 
-test('only JavaScript under src and Python add-on files count as covered by the fingerprint', () => {
+test('only JavaScript under src counts as covered by the fingerprint', () => {
   assert.ok(isFingerprintCovered('src/post.js'));
-  assert.ok(isFingerprintCovered('packages/blender-addon/cook_blender/material_export.py'));
+  assert.ok(!isFingerprintCovered('packages/blender-addon/cook_blender/material_export.py'));
   assert.ok(!isFingerprintCovered('packages/cook-native/src/shader.rs'));
   assert.ok(!isFingerprintCovered('packages/some-addon/shaders.js'));
   assert.ok(!isFingerprintCovered('src/shaders/sky.glsl'));
