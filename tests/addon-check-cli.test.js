@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { checkAddon, entryOf, parseArguments, rangeIsSatisfiable } from '../bin/crucible-addon-check.mjs';
 import { MCP_OPTION_FLAGS, MCP_OPTION_NAMES, mcpHelpText, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
-import { MAXIMUM_MEMORY_MIB } from '../src/agent-scene-capabilities.js';
+import { MEMORY_CEILING_MIB } from '../src/agent-scene-capabilities.js';
 import { resolveAddons } from '../scripts/mcp-addons.mjs';
 
 const checkScript = resolve('bin/crucible-addon-check.mjs');
@@ -157,9 +157,9 @@ test('the help text and the parse error summary name every flag', () => {
   }
 });
 
-test('the --memory range in the flag table follows MAXIMUM_MEMORY_MIB', () => {
+test('the --memory range in the flag table follows MEMORY_CEILING_MIB', () => {
   const memoryFlag = MCP_OPTION_FLAGS.find(flag => flag.name === '--memory');
-  assert.ok(memoryFlag.value.includes('..' + MAXIMUM_MEMORY_MIB + ' '), memoryFlag.value);
+  assert.ok(memoryFlag.value.includes('..' + MEMORY_CEILING_MIB + ' '), memoryFlag.value);
 });
 
 test('crucible-mcp --help lists every accepted flag and combines with other flags', () => {

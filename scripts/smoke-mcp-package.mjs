@@ -78,7 +78,7 @@ assert.match(help.stdout, /--assets/);
 const invalid = spawnSync(serverRuntime, [cli, '--memory', '0'], { cwd: consumer, encoding: 'utf8', windowsHide: true });
 assert.equal(invalid.status, 1);
 assert.equal(invalid.stdout, '');
-assert.match(invalid.stderr, /32 to 384/);
+assert.match(invalid.stderr, /memory must be an integer from 32 to \d+ MiB/);
 const shim = join(consumer, 'node_modules', '.bin', process.platform === 'win32' ? 'crucible-mcp.cmd' : 'crucible-mcp');
 const shimVersion = process.platform === 'win32'
   ? spawnSync('cmd.exe', ['/d', '/s', '/c', `""${shim}" --version"`], {

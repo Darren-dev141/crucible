@@ -7,7 +7,7 @@ import { createGpuQueueFromFlags } from './agent-gpu-queue.mjs';
 import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod/v4';
 import { describeSchemaInputsWithReceivedValues } from './mcp-input-errors.mjs';
-import { setPriority, constants } from 'node:os';
+import { setPriority, constants, totalmem } from 'node:os';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,7 +15,7 @@ import packageMetadata from '../package.json' with { type: 'json' };
 import { MODIFIER_OPERATIONS } from '../src/mesh-operations.js';
 import { VIEW_TRANSFORM_NAMES, LOOK_NAMES } from '../src/view-transform-names.js';
 import { BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES, CATALOG_FILE_ID } from '../src/look-catalog.js';
-import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, MAXIMUM_MEMORY_MIB } from '../src/agent-scene-capabilities.js';
+import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError } from '../src/agent-scene-capabilities.js';
 import { MATERIAL_LAYER_SCALAR_RANGES, MATERIAL_LAYER_COLOR_RANGES } from '../src/material-layers.js';
 import { SUBSURFACE_RANGES } from '../src/subsurface-limits.js';
 import { responseFormatField, chosenFormat, conciseReview, conciseJobStatus, conciseJobResult, withoutNotes } from './mcp-response-format.mjs';
@@ -1103,8 +1103,12 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
       throw new Error(`--${flag} must be on or off, got "${options[flag]}".`);
     }
   }
-  if (!['cpu', 'gpu'].includes(options.backend) || !Number.isInteger(options.memory) || options.memory < 32 || options.memory > MAXIMUM_MEMORY_MIB) {
-    throw new Error(`Backend must be cpu or gpu, and memory must be an integer from 32 to ${MAXIMUM_MEMORY_MIB} MiB.`);
+  if (!['cpu', 'gpu'].includes(options.backend)) {
+    throw new Error('Backend must be cpu or gpu.');
+  }
+  const maximumMemory = maximumMemoryMiB(totalmem());
+  if (!Number.isInteger(options.memory) || options.memory < 32 || options.memory > maximumMemory) {
+    throw memoryRangeError(options.memory, maximumMemory);
   }
   // Checked here, not in the runtime factory: the SDK calls the factory only when the first client connects.
   options.jobs = resolveJobRoot(options.jobs);

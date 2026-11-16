@@ -149,6 +149,26 @@ export const MAXIMUM_SEQUENCE_JOB_PIXELS = 1920 * 1080;
  * (planRenderSize estimate, 4 samples), Node RSS peaks under 180 MiB, so 384 leaves about 200 MiB for scene textures and geometry.
  */
 export const MAXIMUM_MEMORY_MIB = 384;
+/** The largest --memory on any machine, however much RAM it has (#1776, #1696). */
+export const MEMORY_CEILING_MIB = 4096;
+
+/**
+ * The largest --memory this machine accepts: half of its RAM, so the server never takes more than half of what the owner has,
+ * bounded above by MEMORY_CEILING_MIB and below by MAXIMUM_MEMORY_MIB, which every machine accepts as before.
+ * Pure: pass os.totalmem().
+ */
+export function maximumMemoryMiB(totalMemoryBytes) {
+  if (!Number.isFinite(totalMemoryBytes) || totalMemoryBytes <= 0) {
+    throw new RangeError(`maximumMemoryMiB needs the machine's total memory in bytes (os.totalmem()), got ${totalMemoryBytes}.`);
+  }
+  const halfOfMemoryMiB = Math.floor(totalMemoryBytes / 2 / 1024 ** 2);
+  return Math.max(MAXIMUM_MEMORY_MIB, Math.min(MEMORY_CEILING_MIB, halfOfMemoryMiB));
+}
+
+/** The --memory range error shared by the server flag check and the runtime factory, naming the machine's maximum. */
+export function memoryRangeError(memory, maximumMiB) {
+  return new RangeError(`memory must be an integer from 32 to ${maximumMiB} MiB on this machine (half of its RAM, at most ${MEMORY_CEILING_MIB}), got ${memory}.`);
+}
 export const AUDIO_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(wav|mp3|ogg|flac)$/;
 // Metres that depth pass values 0 to 65535 span, measured from the camera.
 export const RENDER_PASS_DEPTH_RANGE = 100;
