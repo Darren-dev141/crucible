@@ -61,6 +61,8 @@ const TRACK_PATH_HINTS = {
   'environment.keyColor': '{ "kind": "sun", "property": "color" }',
   'environment.keyIntensity': '{ "kind": "sun", "property": "intensity" }',
 };
+// An environment track named after a key light field belongs to the sun kind (#1585).
+const KEY_LIGHT_SUN_PROPERTIES = { keyIntensity: 'intensity', keyColor: 'color', keyDirection: 'direction', lightDirection: 'direction' };
 const MAX_IK_SOLVERS = 16;
 const IK_SWEEP_SAMPLES = 33;
 const TRACK_SWEEP_SAMPLES = 33;
@@ -535,7 +537,9 @@ export function normalizeAgentMotion(input, recipe) {
     knownKeys(track, ['kind', 'id', 'property', 'interpolation', 'keyframes', 'extrapolation', 'modifiers'], 'motion track');
     if (!Object.hasOwn(PROPERTIES, track.kind) || !Object.hasOwn(PROPERTIES[track.kind], track.property)) {
       const known = Object.hasOwn(PROPERTIES, track.kind) ? ` ${track.kind} properties: ${Object.keys(PROPERTIES[track.kind]).join(', ')}.` : ` Kinds: ${Object.keys(PROPERTIES).join(', ')}.`;
-      throw invalidField(`motion.tracks[${index}].property`, `${track.kind}.${track.property}`, `a kind and property pair.${known}`);
+      const sunProperty = track.kind === 'environment' ? KEY_LIGHT_SUN_PROPERTIES[track.property] : undefined;
+      const sunHint = sunProperty ? ` The key light is the sun kind: use { "kind": "sun", "property": "${sunProperty}" }, which works under any sky, an HDRI included.` : '';
+      throw invalidField(`motion.tracks[${index}].property`, `${track.kind}.${track.property}`, `a kind and property pair.${known}${sunHint}`);
     }
     if (SINGLETON_KINDS.has(track.kind)) {
       if (Object.hasOwn(track, 'id')) {
