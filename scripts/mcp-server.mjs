@@ -209,6 +209,7 @@ const cameraFields = {
   sensorWidth: positive.max(1000).optional(),
   shift: z.tuple([z.number().min(-1).max(1), z.number().min(-1).max(1)]).optional(),
   fStop: z.number().min(0.7).max(64).optional(),
+  focusDistance: positive.optional(),
 };
 const bounded = (minimum, maximum) => z.number().min(minimum).max(maximum);
 const boundedVector = (minimum, maximum) => z.tuple([bounded(minimum, maximum), bounded(minimum, maximum), bounded(minimum, maximum)]);
