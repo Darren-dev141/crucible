@@ -1,0 +1,1 @@
+- Dispersive glass keeps signed spectral weights as Cycles does, so prism fringes match its saturation, and negative pixels are clamped before OIDN and the display transform (#1714)
