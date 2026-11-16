@@ -9,6 +9,7 @@ import { freePort } from './helpers/free-port.js';
 import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { encodePng } from '../src/export-png.js';
+import { encodeVolumeGrid, registerVolumeGrid } from '../src/volume-grid.js';
 
 const SIZE = 256;
 const DIFFERENCE_GAIN = 8;
@@ -19,6 +20,12 @@ const SUN = { keyColor: [3, 3, 3], lightDirection: SUN_TOWARD, keyIntensity: 1, 
 const CAMERA = { eye: [0, 12, 0], target: [0, 0, 0], up: [0, 0, -1], fov: 50 };
 const UNDER_COLUMN = Math.round(SIZE * 25 / 64);
 const OPEN_COLUMN = Math.round(SIZE * 58 / 64);
+
+const GRID_NAME = 'surface-shadow-raster-block';
+const GRID_BYTES = encodeVolumeGrid({ resolution: [8, 4, 8], channels: { density: new Float32Array(8 * 4 * 8).fill(1) }, size: [4, 2, 4] });
+registerVolumeGrid(GRID_NAME, GRID_BYTES);
+const GRID_SMOKE = { castShadow: true, shape: 'grid', grid: GRID_NAME, center: [0, 2, 0], density: 0.6, absorption: [0.7, 0.8, 1], steps: 16 };
+const { castShadow: _gridCastShadow, ...gridWithoutFlag } = GRID_SMOKE;
 
 async function startServer(port) {
   const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -38,8 +45,10 @@ async function startServer(port) {
   return server;
 }
 
-async function rasterFrames(page, volumeLists) {
-  const task = async ({ size, lists, camera, light }) => {
+async function rasterFrames(page, volumeLists, grids = {}) {
+  const task = async ({ size, lists, camera, light, gridBytes }) => {
+    const { decodeVolumeGrid, registerVolumeGrid: registerInPage } = await import('/src/volume-grid.js');
+    for (const [name, bytes] of Object.entries(gridBytes)) registerInPage(name, decodeVolumeGrid(new Uint8Array(bytes)));
     const { box } = await import('/src/geometry.js');
     const { CrucibleRenderer } = await import('/src/renderer.js');
     const { createFloatOutput, readFloatPixels } = await import('/src/float-output.js');
@@ -63,7 +72,7 @@ async function rasterFrames(page, volumeLists) {
     renderer.dispose?.();
     return { frames, glError };
   };
-  return page.evaluate(task, { size: SIZE, lists: volumeLists, camera: CAMERA, light: SUN });
+  return page.evaluate(task, { size: SIZE, lists: volumeLists, camera: CAMERA, light: SUN, gridBytes: Object.fromEntries(Object.entries(grids).map(([name, bytes]) => [name, Array.from(bytes)])) });
 }
 
 // Mean green of one column over the middle band of rows, for a frame of `stride` floats per pixel.
@@ -140,6 +149,50 @@ test('the rasterizer darkens the floor under a smoke box as the CPU path tracer 
     }
     assert.ok(rasterOpenRatio > 0.99, `the floor the sun reaches past the smoke keeps its light: ${rasterOpenRatio}`);
     assert.ok(rasterRatio < 0.8, `the floor under the smoke is darker: ${rasterRatio}`);
+    assert.ok(Math.abs(rasterRatio - cpuRatio) < 0.25, `rasterizer ${rasterRatio} against CPU tracer ${cpuRatio}`);
+  } finally {
+    await browser?.close();
+    server.kill();
+  }
+});
+
+test('the rasterizer darkens the floor under a smoke grid as the CPU path tracer does, and castShadow false takes it away', async context => {
+  let chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch {
+    skipOrThrow(context, 'playwright is not installed');
+    return;
+  }
+  const port = await freePort();
+  const server = await startServer(port);
+  let browser;
+  try {
+    try {
+      browser = await launchChrome(chromium);
+    } catch (error) {
+      skipOrThrow(context, `Chrome did not start: ${error.message.split('\n')[0]}`);
+      return;
+    }
+    const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
+    await page.goto(`http://127.0.0.1:${port}/`);
+    const { frames, glError } = await rasterFrames(page, [[GRID_SMOKE], [{ ...GRID_SMOKE, castShadow: false }], [gridWithoutFlag]], { [GRID_NAME]: GRID_BYTES });
+    assert.equal(glError, 0);
+    const [shadowed, open, byDefault] = frames;
+    assert.deepEqual(Array.from(byDefault), Array.from(open), 'a volume without castShadow draws the same frame as castShadow false');
+    const rasterRatio = columnMean(shadowed, UNDER_COLUMN, 4) / columnMean(open, UNDER_COLUMN, 4);
+    const rasterOpenRatio = columnMean(shadowed, OPEN_COLUMN, 4) / columnMean(open, OPEN_COLUMN, 4);
+    const cpuShadowed = await cpuFrame(GRID_SMOKE);
+    const cpuOpen = await cpuFrame({ ...GRID_SMOKE, castShadow: false });
+    const cpuRatio = columnMean(cpuShadowed, UNDER_COLUMN, 3) / columnMean(cpuOpen, UNDER_COLUMN, 3);
+    context.diagnostic(`floor under the smoke keeps ${rasterRatio.toFixed(3)} of its light in the rasterizer and ${cpuRatio.toFixed(3)} in the CPU tracer; the open floor keeps ${rasterOpenRatio.toFixed(3)}`);
+    if (process.env.SURFACE_SHADOW_ARTIFACTS) {
+      mkdirSync(process.env.SURFACE_SHADOW_ARTIFACTS, { recursive: true });
+      writeStill(join(process.env.SURFACE_SHADOW_ARTIFACTS, 'surface-shadow-grid-before-after.png'), open, shadowed);
+      writeFileSync(join(process.env.SURFACE_SHADOW_ARTIFACTS, 'surface-shadow-grid.json'), JSON.stringify({ rasterRatio, cpuRatio, rasterOpenRatio }, null, 2));
+    }
+    assert.ok(rasterOpenRatio > 0.99, `the floor the sun reaches past the grid smoke keeps its light: ${rasterOpenRatio}`);
+    assert.ok(rasterRatio < 0.6, `the floor under the smoke is darker: ${rasterRatio}`);
     assert.ok(Math.abs(rasterRatio - cpuRatio) < 0.25, `rasterizer ${rasterRatio} against CPU tracer ${cpuRatio}`);
   } finally {
     await browser?.close();

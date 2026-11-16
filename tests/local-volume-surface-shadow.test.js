@@ -3,6 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes } from '../src/local-volumes.js';
+import { bindLocalVolumeParts } from '../src/local-volume-parts.js';
+import { encodeVolumeGrid, registerVolumeGrid } from '../src/volume-grid.js';
 import { createLocalVolumeSurfaceShadow } from '../src/path-tracer-volume.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 
@@ -39,9 +41,38 @@ test('a point under the smoke is dimmed along the sun, a point the sun reaches p
   assert.ok(factor[2] < factor[0], `the volume absorbs blue more than red, so less blue gets through: ${factor}`);
 });
 
-test('grid and mesh volumes cast no surface shadow yet', () => {
-  assert.equal(createLocalVolumeSurfaceShadow([{ ...resolveLocalVolumes([SMOKE])[0], shape: 'grid' }]), null);
+registerVolumeGrid('surface-shadow-block', encodeVolumeGrid({ resolution: [8, 4, 8], channels: { density: new Float32Array(8 * 4 * 8).fill(1) }, size: [4, 2, 4] }));
+const GRID_SMOKE = { castShadow: true, shape: 'grid', grid: 'surface-shadow-block', center: [0, 2, 0], density: 0.6, absorption: [0.7, 0.8, 1], steps: 16 };
+const boundGrid = overrides => bindLocalVolumeParts(resolveLocalVolumes([{ ...GRID_SMOKE, ...overrides }]), []);
+
+test('a grid volume that casts packs 2 in the first component of the packed grid vector, a plain grid still packs 1', () => {
+  const buffers = createLocalVolumeBuffers();
+  packLocalVolumes(boundGrid({}), buffers);
+  assert.equal(buffers.grid[0], 2);
+  packLocalVolumes(boundGrid({ castShadow: false }), buffers);
+  assert.equal(buffers.grid[0], 1);
+});
+
+test('a point under a grid smoke is dimmed along the sun by its density, a point the sun reaches past it is not, and castShadow false takes it out', () => {
+  const write = createLocalVolumeSurfaceShadow(boundGrid({}));
+  const factor = new Float64Array(3);
+  write(-1.2, 0, 0, ...SUN_TOWARD, factor);
+  assert.ok(factor.every(value => value > 0 && value < 0.8), `under the smoke ${factor}`);
+  assert.ok(factor[2] < factor[0], `the grid absorbs blue more than red: ${factor}`);
+  write(4, 0, 0, ...SUN_TOWARD, factor);
+  assert.deepEqual(Array.from(factor), [1, 1, 1]);
+  assert.equal(createLocalVolumeSurfaceShadow(boundGrid({ castShadow: false })), null);
+  const thin = createLocalVolumeSurfaceShadow(boundGrid({ density: 0.1 }));
+  const thick = createLocalVolumeSurfaceShadow(boundGrid({ density: 2 }));
+  const thinFactor = new Float64Array(3);
+  thin(-1.2, 0, 0, ...SUN_TOWARD, thinFactor);
+  thick(-1.2, 0, 0, ...SUN_TOWARD, factor);
+  assert.ok(factor[1] < thinFactor[1], 'a denser grid casts a darker shadow');
+});
+
+test('a mesh volume casts no surface shadow yet', () => {
   assert.equal(createLocalVolumeSurfaceShadow([{ ...resolveLocalVolumes([SMOKE])[0], mesh: true }]), null);
+  assert.equal(createLocalVolumeSurfaceShadow([{ ...resolveLocalVolumes([SMOKE])[0], shape: 'grid' }]), null);
 });
 
 const FLOOR = {

@@ -1,5 +1,5 @@
 import { registerShaderFeatureCode } from './shader-registry.js';
-import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY, MAX_LOCAL_VOLUMES } from './local-volumes.js';
+import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_GRID_SHADOW_TAPS, LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY, MAX_LOCAL_VOLUMES } from './local-volumes.js';
 import { createLocalVolumeCompositeFragment } from './post.js';
 import { compileProgram, fullscreenVertex } from './gl-program.js';
 import { LOCAL_VOLUME_RAMP_STOPS } from './local-volume-ramp.js';
@@ -450,19 +450,28 @@ vec3 localVolumeInScatter(int index, vec3 position, vec3 direction) {
 // The share of the key light a surface keeps under the volumes that cast shadows (#1047): exp of the optical depth the volumes put between it and the sun.
 vec3 localVolumeSurfaceShadow(vec3 position, vec3 towardSun) {
   vec3 depthSum = vec3(0.0);
+  vec3 gridDepth = vec3(0.0);
   for (int index = 0; index < 8; index++) {
     if (index >= localVolumeCount) break;
-    if (localVolumeGrid[index].z < 0.5 || localVolumeGrid[index].x > 0.5 || localVolumeCenters[index].w > 1.5) continue;
+    // A grid volume that casts packs 2 in the first component (a plain grid packs 1); the other shapes pack the flag in the third.
+    bool isGrid = localVolumeGrid[index].x > 0.5;
+    bool casts = isGrid ? localVolumeGrid[index].x > 1.5 : localVolumeGrid[index].z > 0.5;
+    if (!casts || localVolumeCenters[index].w > 1.5) continue;
     vec2 span = localVolumeInterval(index, position, towardSun);
     float entry = max(span.x, 0.0);
     if (span.y <= entry) continue;
     float profileSum = 0.0;
-    for (int tap = 0; tap < ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}; tap++) {
-      profileSum += min(localVolumeProfile(index, position + towardSun * (entry + (span.y - entry) * (float(tap) + 0.5) / ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}.0), true) * ${LOCAL_VOLUME_LIGHT_DEPTH_SATURATION.toFixed(3)}, 1.0);
+    for (int tap = 0; tap < ${LOCAL_VOLUME_GRID_SHADOW_TAPS}; tap++) {
+      // A grid reads its simulated density as it is: the saturation and strength below tune the faded skin of a box or sphere, not a measured density.
+      if (!isGrid && tap >= ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}) break;
+      float taps = isGrid ? ${LOCAL_VOLUME_GRID_SHADOW_TAPS}.0 : ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}.0;
+      float profile = localVolumeProfile(index, position + towardSun * (entry + (span.y - entry) * (float(tap) + 0.5) / taps), true);
+      profileSum += isGrid ? profile : min(profile * ${LOCAL_VOLUME_LIGHT_DEPTH_SATURATION.toFixed(3)}, 1.0);
     }
-    depthSum += localVolumeAbsorption[index].rgb * (profileSum * (span.y - entry) / ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}.0);
+    vec3 depth = localVolumeAbsorption[index].rgb * (profileSum * (span.y - entry) / (isGrid ? ${LOCAL_VOLUME_GRID_SHADOW_TAPS}.0 : ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}.0));
+    if (isGrid) gridDepth += depth; else depthSum += depth;
   }
-  return exp(-depthSum * ${LOCAL_VOLUME_SHADOW_STRENGTH.toFixed(3)});
+  return exp(-(depthSum * ${LOCAL_VOLUME_SHADOW_STRENGTH.toFixed(3)} + gridDepth));
 }
 // The light behind a volume, blurred by the optical depth in front of it: taps of the frame spread over a disc whose radius grows with the depth,
 // each counted only where its surface lies at or past the ray's first volume entry, so an object in front of the volume is never smeared into it.
