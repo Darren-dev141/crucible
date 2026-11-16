@@ -372,8 +372,9 @@ every part that sits against it.
 | `flush` | `side`, `offset` | Puts its own face on `side` level with the same face of the target. |
 | `align` | `axis`, `at`, `offset` | Puts its `min`, `center` or `max` on that axis at the target's. |
 | `centered` | `axes` (default all three) | Centres on those axes. |
+| `level` | `at` (`bottom`, `center`, `top`), `y` | Names no target and takes no `to`. Puts that face of the part at world height `y`, so a seat "with its upper surface at 0.5 m" is `{ "kind": "level", "at": "top", "y": 0.5 }` and the half-thickness is not summed by hand. Only Y is decided. |
 
-Every relation takes `to` (a mesh node ID) and an optional `region`, a mesh tag: only the faces of the target that carry
+`level` reads the world bounds of the part, so a part turned by `rotation` rests on its rotated extent, and it is a relation like the others: it is stored, solved again after every edit (a thicker slab grows downward and keeps its top at `y`), and the exported recipe holds the solved translation. Recipes without it export unchanged. Every other relation takes `to` (a mesh node ID) and an optional `region`, a mesh tag: only the faces of the target that carry
 that tag count as its bounds, so a part can sit on the tagged top of a tank and not on its tallest point. A relation
 decides only its own axes and replaces the node's `translation` on them; the other axes keep the authored value.
 

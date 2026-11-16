@@ -217,6 +217,17 @@ export const REFERENCES = {
       { id: 'upright', geometry: 'block', translation: [-0.14, 0.095, 0], scale: [0.02, 0.15, 0.1] },
     ],
   ),
+  'shelf-faces': scene(
+    [{ id: 'block', type: 'box', bevel: 0 }, { id: 'cup', type: 'cylinder', segments: 32, bevel: 0 }],
+    [
+      { id: 'panel-left', geometry: 'block', translation: [-0.49, 0.6, 0], scale: [0.02, 1.2, 0.3] },
+      { id: 'panel-right', geometry: 'block', translation: [0.49, 0.6, 0], scale: [0.02, 1.2, 0.3] },
+      { id: 'board-low', geometry: 'block', translation: [0, 0.11, 0], scale: [0.96, 0.02, 0.3] },
+      { id: 'board-mid', geometry: 'block', translation: [0, 0.59, 0], scale: [0.96, 0.02, 0.3] },
+      { id: 'board-top', geometry: 'block', translation: [0, 1.19, 0], scale: [0.96, 0.02, 0.3] },
+      { id: 'mug', geometry: 'cup', translation: [0, 0.65, 0], scale: [0.04, 0.1, 0.04] },
+    ],
+  ),
   workshop: scene(
     [{ id: 'block', type: 'box', bevel: 0 }, { id: 'cup', type: 'cylinder', segments: 32, bevel: 0 }],
     workshopNodes(),

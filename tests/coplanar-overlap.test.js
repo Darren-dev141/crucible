@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
 import { COPLANAR_TOLERANCE, clearFlushParts, findCoplanarOverlaps, coplanarOverlapDiagnostics, flushLeftoverDiagnostics, installCoplanarDiagnostics, resolveFlushParts } from '../src/coplanar-overlap.js';
@@ -7,6 +8,7 @@ import { loadAgentSceneModules } from '../src/agent-scene-modules.js';
 import { frameDiagnostics } from '../src/frame-diagnostics.js';
 import { groupParts } from '../src/renderer.js';
 import { resolveEffects } from '../src/effects.js';
+import { sphere } from '../src/geometry.js';
 
 await loadAgentSceneModules({ environment: { resolveCoplanar: 'offset' } });
 
@@ -331,4 +333,31 @@ test('with resolveCoplanar false, a 1.5 mm near-flush pair of nodes is reported 
   const warnings = coplanarWarnings([wall, node('plate', [0, 0, 0.0015], [1, 0.5, 0.2])]);
   assert.equal(warnings.length, 1);
   assert.deepEqual([...warnings[0].parts].sort(), ['plate', 'wall']);
+});
+
+// The heap is read in a child process whose young generation is larger than everything the search allocates, so no collection
+// runs during the search and the growth is the total it allocated, the same number on every run (#1819). Reading the heap in
+// this process after a collection would show only what survives, which is near zero with or without the flat triangle table.
+const PLANE_SEARCH_HEAP_SCRIPT = `
+  import { findCoplanarOverlaps } from ${JSON.stringify(new URL('../src/coplanar-overlap.js', import.meta.url).href)};
+  import { sphere } from ${JSON.stringify(new URL('../src/geometry.js', import.meta.url).href)};
+  const geometry = sphere(150, 150);
+  const material = { color: [0.5, 0.5, 0.5] };
+  const placed = (name, offset) => ({ name, geometry, material, matrix: Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, offset, 0, 0, 1]) });
+  globalThis.gc();
+  const heapBefore = process.memoryUsage().heapUsed;
+  const found = findCoplanarOverlaps([placed('outer', 0), placed('inner', 0.0005)]);
+  const heapAfter = process.memoryUsage().heapUsed;
+  console.log(JSON.stringify({ truncated: found.truncated, overlapCount: found.overlaps.length, firstArea: found.overlaps[0]?.area, triangles: geometry.indices.length / 3, heapGrowth: heapAfter - heapBefore }));
+`;
+
+test('two dense overlapping meshes are found without one object per triangle (#1343)', () => {
+  const flags = ['--expose-gc', '--min-semi-space-size=256', '--max-semi-space-size=256', '--input-type=module', '-e', PLANE_SEARCH_HEAP_SCRIPT];
+  const output = execFileSync(process.execPath, flags, { encoding: 'utf8' });
+  const measured = JSON.parse(output.trim().split('\n').pop());
+  assert.equal(measured.truncated, false);
+  assert.ok(measured.overlapCount > 0 && measured.firstArea > 0, 'the near-identical surfaces are reported as overlapping');
+  const bytesPerTriangle = measured.heapGrowth / measured.triangles;
+  // Allocated per triangle: about 3200 bytes with the flat triangle table, about 5600 with one object per triangle.
+  assert.ok(bytesPerTriangle < 4400, `plane search allocated ${Math.round(bytesPerTriangle)} bytes of heap per triangle`);
 });
