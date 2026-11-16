@@ -28,6 +28,7 @@ import { updatePartVertices } from '../src/update-part-vertices.js';
 import { rasterOptionsFor } from './agent-render-quality.mjs';
 import { hasPatternTextures } from './agent-preview-textures.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
+import { missingStreamedFrames, supplyStreamedFrame, retainStreamedWindow } from '../src/agent-texture-sequence.js';
 import { imageLimitProblem } from '../src/image-header.js';
 import { registerCatalogEnvironment, registerCatalogLook } from '../src/look-catalog.js';
 import { registerVolumeGrid } from '../src/volume-grid.js';
@@ -297,6 +298,21 @@ function syncSequenceTextures(record) {
     record.renderer.updateTexture(descriptor, { image });
     uploaded.set(descriptor, index);
   }
+}
+
+// Decodes the frames the host supplied for a motion time, hands them to their streamed sequences and drops the frames outside
+// the window of that time. Returns the decoded bytes that stay.
+async function loadStreamedFrames(scene, motionTime, sequenceData) {
+  const sequences = scene.sequenceTextures?.() ?? [];
+  for (const [id, base64] of Object.entries(sequenceData ?? {})) {
+    try {
+      supplyStreamedFrame(sequences, id, await decodeSequenceFrame(id, base64));
+    } catch (error) {
+      if (error instanceof RangeError) throw error;
+      throw new Error(`Sequence frame ${id.slice(0, 12)} is not a PNG, JPEG or WebP image the browser can decode.`);
+    }
+  }
+  return retainStreamedWindow(sequences, motionTime, TEXTURE_SEQUENCE_LIMITS.maxDecodedBytes);
 }
 
 function sceneIsTextured(scene) {
@@ -993,6 +1009,13 @@ window.__agentPreview = {
       resetCanvas();
       throw error;
     }
+  },
+  // Streamed texture sequences: the catalog IDs of the frames a motion time still needs, and the frames the host sends for it.
+  sequenceFramesNeeded({ sessionId, motionTime }) {
+    return missingStreamedFrames(requireSession(sessionId).scene.sequenceTextures?.() ?? [], motionTime);
+  },
+  async loadSequenceFrames({ sessionId, motionTime, sequenceData }) {
+    return { decodedBytes: await loadStreamedFrames(requireSession(sessionId).scene, motionTime, sequenceData) };
   },
   // `pass` draws one render pass instead of the lit image. Object ID frames also list the part behind each ID.
   // `camera` overrides camera fields and `depthOfField` the blur and focus distance (a timeline shot); `brightness` scales exposure for a dip through black.

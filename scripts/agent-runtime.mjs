@@ -29,10 +29,10 @@ import { geometryOnlyGlb } from './agent-query-asset.mjs';
 import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { namesCatalogFiles, resolveAssetPlacementNames } from '../src/agent-asset-names.js';
-import { sequenceFrameIds } from '../src/agent-texture-sequence.js';
+import { sequenceFrameIds, hasStreamedSequence } from '../src/agent-texture-sequence.js';
 import { readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grids.js';
 import { catalogLookReferences, BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES } from '../src/look-catalog.js';
-import { TEXTURE_SEQUENCE_CAPABILITIES } from '../src/texture-sequence-limits.js';
+import { TEXTURE_SEQUENCE_CAPABILITIES, TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { writeWebBuild } from './web-export.mjs';
 import { gameAssetIds } from '../src/game-assets.js';
 import { resolveJobRoot } from './agent-job-root.mjs';
@@ -166,6 +166,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   const pendingAskControllers = new Set();
   // Open scenes, least recently used first; the last one is what a call without a sessionId means.
   const openSessionIds = new Set();
+  // Set once a recipe with a streamed texture sequence is read; from then on a call with a motion time supplies its frames first.
+  let streamedSequencesUsed = false;
   // Scenes the page closed to stay under the scene cap, so a later call with one of them gets a clear error.
   const evictedSessionIds = [];
   // Scenes that have a bake, so an edit that rebakes gets the longer deadline.
@@ -359,6 +361,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   /** Bytes of the catalog images a recipe or edit list uses as map sequence frames, base64 by asset id. The page decodes them. */
   async function sequenceFrameData(value) {
+    if (hasStreamedSequence(value)) streamedSequencesUsed = true;
     const ids = sequenceFrameIds(value);
     if (!ids.length) return {};
     const entries = await Promise.all(ids.map(async id => [id, (await (await catalog()).read(id)).toString('base64')]));
@@ -635,8 +638,18 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (hasBake) bakedSessionIds.add(sessionId);
   }
 
+  // Streamed texture sequences: reads the frames a motion time needs from the catalog and sends them to the page, which decodes
+  // them and keeps only that time and the one before. A scene without streamed sequences needs none.
+  async function supplyStreamedFrames(target, sessionId, motionTime) {
+    const missingIds = await target.evaluate(request => window.__agentPreview.sequenceFramesNeeded(request), { sessionId, motionTime });
+    if (!missingIds.length) return;
+    const entries = await Promise.all(missingIds.map(async id => [id, (await (await catalog()).read(id)).toString('base64')]));
+    await target.evaluate(request => window.__agentPreview.loadSequenceFrames(request), { sessionId, motionTime, sequenceData: Object.fromEntries(entries) });
+  }
+
   async function invoke(method, input, timeoutMs = EVALUATION_TIMEOUT_MS) {
     requireSession(input.sessionId);
+    if (streamedSequencesUsed && typeof input.motionTime === 'number') await supplyStreamedFrames(page, input.sessionId, input.motionTime);
     if (!browserInstance?.isConnected() || page.isClosed()) {
       phase = 'failed';
       throw new Error(`The preview browser disconnected. ${RECOVERY_HINT}`);
@@ -780,6 +793,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         metrics.videoEncoder = pageEncodes ? 'browser-h264' : settings.encoder === 'nvenc' ? 'h264_nvenc' : 'libx264';
       }
       if (timeline) metrics.shots = filmTimelineShotStarts(timeline);
+      const streamedJob = hasStreamedSequence(snapshot.recipe);
+      if (streamedJob && settings.renderer) {
+        throw new Error(`A material map.sequence of more than ${TEXTURE_SEQUENCE_LIMITS.wholeSequenceFrames} frames streams its frames and is drawn by the raster renderer only. Remove settings.renderer, or pass a sequence of at most ${TEXTURE_SEQUENCE_LIMITS.wholeSequenceFrames} frames for a path traced job.`);
+      }
       for (let frame = 0; frame < settings.frameCount; frame++) {
         signal.throwIfAborted();
         const elapsed = settings.kind === 'video' ? frame / settings.fps
@@ -796,6 +813,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           ...(shotSample && shotSample.brightness < 1 ? { brightness: shotSample.brightness } : {}),
           ...(settings.animation ? { animation: { clip: settings.animation.clip, time: settings.animation.start + elapsed } } : {}) };
         const renderStarted = performance.now();
+        if (streamedJob && frameInput.motionTime !== undefined) await supplyStreamedFrames(jobPage, jobId, frameInput.motionTime);
         if (settings.renderer) {
           const { type, ...tracerOptions } = settings.renderer;
           if (settings.renderer.backend === 'gpu' && backend === 'cpu') throw new Error('renderer.backend "gpu" needs a runtime on the GPU backend, and this one runs on SwiftShader.');

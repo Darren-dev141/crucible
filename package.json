@@ -202,6 +202,7 @@
     "smoke:agent-compositing": "node scripts/smoke-agent-compositing.mjs",
     "smoke:agent-material-snippet": "node scripts/smoke-agent-material-snippet.mjs",
     "smoke:agent-texture-sequence": "node scripts/smoke-agent-texture-sequence.mjs",
+    "smoke:agent-texture-sequence-streamed": "node scripts/smoke-agent-texture-sequence-streamed.mjs",
     "smoke:render-passes": "node scripts/smoke-render-passes.mjs",
     "smoke:wireframe-pass": "node scripts/smoke-wireframe-pass.mjs",
     "smoke:object-motion-blur": "node scripts/smoke-object-motion-blur.mjs",
