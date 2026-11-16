@@ -11,6 +11,7 @@ import { encodePng } from '../src/export-png.js';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes } from '../src/local-volumes.js';
 
 const GLOW = { shape: 'sphere', center: [0, 1.2, 0], radius: 0.8, density: 0, falloff: 0.5, emission: [1, 0.45, 0.12], emissionStrength: 6, steps: 16 };
+const HOT = { ...GLOW, emissionStrength: 40 };
 const DARK = { ...GLOW, emission: [0, 0, 0], emissionStrength: 1 };
 const BLOOM = { strength: 1.2, threshold: 1, radius: 3 };
 const SIZE = 256;
@@ -60,14 +61,25 @@ async function rasterFrames(page, cases) {
     const output = createFloatOutput(renderer.context, size, size);
     const camera = { eye: [0, 1.4, 4], target: [0, 1.1, 0], fov: 40 };
     const light = { keyColor: [0.5, 0.5, 0.5], lightDirection: [0.3, 1, 0.4], keyIntensity: 1, fillIntensity: 0.2, skyTop: [0.05, 0.06, 0.08], skyBottom: [0.05, 0.06, 0.08] };
+    // Peak of the RGB channels in the composite target that feeds bloom extraction; null when the frame did not composite.
+    const compositePeak = () => {
+      const target = renderer.localVolumeComposite?.target;
+      if (!target) return null;
+      const pixels = readFloatPixels(renderer.context, target.framebuffer, size, size);
+      let peak = 0;
+      for (let index = 0; index < pixels.length; index += 4) peak = Math.max(peak, pixels[index], pixels[index + 1], pixels[index + 2]);
+      return peak;
+    };
+    const peaks = [];
     const frames = requested.map(({ localVolumes, bloom }) => {
       renderer.render({ ...camera, time: 0, environment: { ...light, localVolumes }, effects: { bloom }, outputFramebuffer: output.framebuffer });
+      peaks.push(compositePeak());
       return Array.from(readFloatPixels(renderer.context, output.framebuffer, size, size));
     });
     const glError = renderer.context.getError();
     output.dispose();
     renderer.dispose?.();
-    return { frames, glError };
+    return { frames, peaks, glError };
   };
   return page.evaluate(task, { size: SIZE, cases });
 }
@@ -125,13 +137,16 @@ test('a glowing volume blooms: the ring around it is brighter with bloom on, and
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
     await page.goto(`http://127.0.0.1:${port}/`);
     const noBloom = { strength: 0 };
-    const { frames: [glowOff, glowOn, darkOn, darkOff], glError } = await rasterFrames(page, [
+    const { frames: [glowOff, glowOn, darkOn, darkOff], peaks: [, , , , hotPeak], glError } = await rasterFrames(page, [
       { localVolumes: [GLOW], bloom: noBloom },
       { localVolumes: [GLOW], bloom: BLOOM },
       { localVolumes: [DARK], bloom: BLOOM },
       { localVolumes: [DARK], bloom: noBloom },
+      { localVolumes: [HOT], bloom: BLOOM },
     ]);
     assert.equal(glError, 0);
+    context.diagnostic(`the bloom source peaks at ${hotPeak} linear inside a volume with emissionStrength 40`);
+    assert.ok(hotPeak > 10, `the composite that feeds bloom keeps linear values above the threshold of 1 (peak above 10): peak ${hotPeak}`);
     const haloOff = haloMean(glowOff);
     const haloOn = haloMean(glowOn);
     context.diagnostic(`the ring around the glow averages ${haloOff.toFixed(4)} without bloom and ${haloOn.toFixed(4)} with it; a volume that does not glow ${haloMean(darkOff).toFixed(4)} and ${haloMean(darkOn).toFixed(4)}`);

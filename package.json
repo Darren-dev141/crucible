@@ -280,7 +280,7 @@
   },
   "devDependencies": {
     "@codepawlhq/crucible-denoise-oidn": "file:packages/denoise-oidn",
-    "@codepawlhq/cook": "git+https://github.com/codepawl/cook.git#2d6e7af518836f07ea17477e5bcd7673318a9b1b",
+    "@codepawlhq/cook": "git+https://github.com/codepawl/cook.git#bae37df582dcb24204b3590b88b0e25cf78519bf",
     "@dimforge/rapier3d-compat": "0.21.0",
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",
