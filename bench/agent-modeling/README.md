@@ -48,7 +48,7 @@ own mesh report:
 | crate-uv | The crate with even UVs |
 | desk-resize, desk-resize-plain | A 12-part desk (legs, drawers with handles, lamp, book) resized in three inspected steps, graded on contact for every attached pair and on where parts end up. Relations against absolute positions |
 | kettle-resize, kettle-resize-plain | Resize a kettle body so the lid, handle and spout stay against it. The first start recipe holds `relations`, the second absolute positions; the difference in tool calls is what relations are worth |
-| explosion-blast | A courtyard and a request for a blast with no operation name: graded on one `explosion-` grid volume between the pillars and a `scene_look` call (`add-explosion`) |
+| explosion-blast | A courtyard and a request for a blast with no operation name: graded on one `explosion-` grid volume between the pillars, the floor and four pillars left as they were (the blast adds its own debris and scorch nodes, so no part count) and a `scene_look` call (`add-explosion`) |
 | crate-wood | The crate with a wood material pattern, to see whether agents find `pattern` |
 | arm-reach | A jointed arm whose tip moves between two points, to see whether agents find `motion.ik` |
 | leg-plant | A leg that plants its foot on two points with the knee bending forward: `motion.ik` with `bendToward`, `pole` and `limits` |

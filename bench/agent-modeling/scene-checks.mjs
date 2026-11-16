@@ -186,7 +186,26 @@ function blastInside(check, recipe) {
   return { pass: Math.abs(x) <= check.halfWidth && Math.abs(z) <= check.halfWidth, detail: `blast centred at X ${round(x)}, Z ${round(z)}` };
 }
 
-const SCENE_CHECKS = { blastInside, cameraAims, cameraOrbit, cameraDolly, lights, sunLight, restsOnSupport, litRange, materialOf, track, trackRedder, trackLower,
+const UNCHANGED_TOLERANCE = 1e-6;
+const sameNumbers = (first, second) => first.length === second.length && first.every((value, index) => Math.abs(value - second[index]) <= UNCHANGED_TOLERANCE);
+
+/** Every node of check.nodes (an id, geometry, material, scale and translation, as in the start recipe) is still in the recipe with the same values. Other nodes may have been added. */
+function nodesUnchanged(check, recipe) {
+  const problems = [];
+  for (const expected of check.nodes) {
+    const actual = recipe.nodes.find(candidate => candidate.id === expected.id);
+    if (!actual) {
+      problems.push(`${expected.id} is gone`);
+    } else if (actual.geometry !== expected.geometry || actual.material !== expected.material) {
+      problems.push(`${expected.id} has geometry ${actual.geometry} and material ${actual.material}`);
+    } else if (!sameNumbers(actual.scale ?? [1, 1, 1], expected.scale ?? [1, 1, 1]) || !sameNumbers(actual.translation ?? [0, 0, 0], expected.translation ?? [0, 0, 0])) {
+      problems.push(`${expected.id} was moved or resized`);
+    }
+  }
+  return { pass: problems.length === 0, detail: problems.join('; ') || `${check.nodes.length} start nodes unchanged` };
+}
+
+const SCENE_CHECKS = { blastInside, nodesUnchanged, cameraAims, cameraOrbit, cameraDolly, lights, sunLight, restsOnSupport, litRange, materialOf, track, trackRedder, trackLower,
   environmentValue: (check, recipe) => fieldValue(check, recipe.environment, 'environment'),
   effectsValue: (check, recipe) => fieldValue(check, recipe.effects, 'effects') };
 

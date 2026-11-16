@@ -10,7 +10,8 @@ import { KETTLE_RESIZED, KETTLE_RESIZED_PLAIN } from './kettle.mjs';
 import { LAMP_SOLUTION } from './lamp.mjs';
 import { GALLERY_SOLUTION } from './gallery.mjs';
 import { DUSK_SOLUTION } from './dusk.mjs';
-import { EXPLOSION_SOLUTION } from './explosion.mjs';
+import { EXPLOSION_START } from './explosion.mjs';
+import { createAgentScene, loadAllAgentSceneModules } from '../../src/agent-scene.js';
 import { COLONNADE_SOLUTION } from './colonnade.mjs';
 import { DESK_FINAL, DESK_FINAL_PLAIN } from './desk.mjs';
 import { CABINET_FINAL, CABINET_FINAL_PLAIN } from './cabinet.mjs';
@@ -169,6 +170,16 @@ function workshopNodes() {
 function robotArmSolver(root, middle, end, target) {
   return { type: 'two-bone', root, middle, end, keepEndRotation: false, target };
 }
+
+/** The recipe a blast at the courtyard centre leaves: the real add-explosion operation applied to the start recipe, so it never drifts from what the operation writes. */
+async function explosionSolution() {
+  await loadAllAgentSceneModules();
+  const scene = createAgentScene(structuredClone(EXPLOSION_START));
+  scene.apply([{ type: 'add-explosion', id: 'explosion', center: [0, 0.2, 0], size: 4 }], { expectedRevision: scene.inspect({}).revision });
+  return scene.exportRecipe();
+}
+
+const EXPLOSION_SOLUTION = await explosionSolution();
 
 export const REFERENCES = {
   ...SCENE_REFERENCES,
