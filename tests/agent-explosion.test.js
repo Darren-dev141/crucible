@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createAgentScene, loadPhysicsEngine } from '../src/agent-scene.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
 import { EXPLOSION_EMPTY_GRID, explosionGridBytes } from '../src/explosion-grids.js';
+import { readVolumeGridFiles } from '../src/mcp-volume-grids.js';
 import { agentSceneModulesNeeded, needsPhysics } from '../src/agent-scene-modules.js';
 
 await loadPhysicsEngine();
@@ -174,4 +175,13 @@ test('a scene with a grid volume already refuses the blast and says how to make 
   const recipe = setRecipe();
   recipe.environment = { localVolumes: [{ shape: 'grid', grid: 'explosion-empty.67vg', center: [0, 1, 0], size: [2, 2, 2] }] };
   assert.throws(() => applyBlast(blast(), recipe), /grid volume.*set-environment/);
+});
+
+test('the MCP server finds the grids an add-explosion operation will name, so the page gets them with the call', () => {
+  const files = readVolumeGridFiles([blast({ seed: 9, fuel: 'oily', start: 1 })], '.');
+  assert.equal(files.size, 73);
+  assert.ok(files.has('explosion-oily-9_0000.67vg'));
+  assert.ok(files.has(EXPLOSION_EMPTY_GRID));
+  assert.equal(readVolumeGridFiles([blast({ fuel: 'nuclear' })], '.').size, 0);
+  assert.equal(readVolumeGridFiles([blast({ seed: -1 })], '.').size, 0);
 });

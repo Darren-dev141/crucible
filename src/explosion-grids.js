@@ -1,5 +1,5 @@
 import { bakeGasSim, GAS_SIM_TEMPERATURE_UNIT } from './gas-sim.js';
-import { encodeVolumeGrid, registerVolumeGrid } from './volume-grid.js';
+import { encodeVolumeGrid, isVolumeGridRegistered, registerVolumeGrid } from './volume-grid.js';
 
 // The gas-sim grids behind add-explosion (#1050). One blast is baked once at a fixed size and resolution, and the volume's own box scales it, so
 // a grid depends only on the fuel and the seed. Its file names say so (`explosion-dry-7_0000.67vg`): a recipe that names them can be rebuilt
@@ -65,6 +65,17 @@ function emptyFrame() {
   return emptyBytes;
 }
 
+/**
+ * The grid file names an add-explosion operation will name, for a caller that must send the files before the operation runs (the MCP server
+ * sends them to the preview page), or null when the operation's fuel or seed is not valid: the operation itself then fails with its own error.
+ */
+export function explosionGridNamesFor(operation) {
+  const fuel = operation.fuel ?? 'dry';
+  const seed = operation.seed ?? 1;
+  if (!Object.hasOwn(FUEL_OPTIONS, fuel) || !Number.isInteger(seed) || seed < 0 || seed > 4294967295) return null;
+  return [...explosionGridNames(fuel, seed), EXPLOSION_EMPTY_GRID];
+}
+
 /** The bytes of an explosion grid file by name, baked on first use, or null when the name is not one add-explosion writes. */
 export function explosionGridBytes(name) {
   if (name === EXPLOSION_EMPTY_GRID) return emptyFrame();
@@ -82,6 +93,8 @@ export function explosionGridBytes(name) {
  */
 export function registerExplosionGrids(fuel, seed) {
   const names = explosionGridNames(fuel, seed);
+  // The MCP server sends these grids with the call (explosionGridNamesFor), so the preview page has them already and bakes nothing.
+  if (isVolumeGridRegistered(names[0]) && isVolumeGridRegistered(names.at(-1)) && isVolumeGridRegistered(EXPLOSION_EMPTY_GRID)) return names;
   const frames = bakeFrames(fuel, seed);
   names.forEach((name, index) => registerVolumeGrid(name, frames[index]));
   registerVolumeGrid(EXPLOSION_EMPTY_GRID, emptyFrame());

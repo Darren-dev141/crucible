@@ -81,6 +81,8 @@ const PAGE_HANDOFF_TIMEOUT_MS = 4 * EVALUATION_TIMEOUT_MS;
 const QUERY_ONLY_TIMEOUT_MS = 120000;
 /** A bake runs on a worker for up to its own limit, so a call that bakes gets that much more than a plain call. */
 const BAKE_EVALUATION_TIMEOUT_MS = EVALUATION_TIMEOUT_MS + BAKE_WORKER_MAXIMUM_SECONDS * 1000;
+/** The first draw of a grid volume compiles its shader, which took 23 to 29 s on a loaded GPU, so an add-explosion apply (which adds one) gets twice a plain call. */
+const GRID_VOLUME_EVALUATION_TIMEOUT_MS = 2 * EVALUATION_TIMEOUT_MS;
 
 /** The last set-bake among the operations decides: a bake object adds one, null clears it. Undefined when there is none. */
 function bakeAfterOperations(operations) {
@@ -1131,7 +1133,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         const gameAssets = await gameAssetNeeds(input);
         const placedValue = gameAssets?.recipe ?? input.operations;
         const applyInput = { ...input, ...(await motionSources(motions, placedValue)), ...(await placedAssetData(placedValue)), ...(gameAssets ? { assetNeeds: gameAssets.recipe } : {}) };
-        const applied = await invoke('apply', applyInput, rebakes ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
+        const addsGridVolume = (input.operations ?? []).some(operation => operation.type === 'add-explosion');
+        const applyTimeout = rebakes ? BAKE_EVALUATION_TIMEOUT_MS : addsGridVolume ? GRID_VOLUME_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS;
+        const applied = await invoke('apply', applyInput, applyTimeout);
         if (bakeAfter ?? hadBake) bakedSessionIds.add(input.sessionId);
         else bakedSessionIds.delete(input.sessionId);
         return applied;

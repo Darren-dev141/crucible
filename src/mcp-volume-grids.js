@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { setVolumeGridLoader, VOLUME_GRID_MAX_BYTES } from './volume-grid.js';
 import { VOLUME_GRID_SEQUENCE_MAX_BYTES, VOLUME_GRID_SEQUENCE_MAX_FRAMES } from './volume-grid-sequence.js';
 import { AGENT_ASSET_LIMITS } from './agent-asset-limits.js';
-import { explosionGridBytes } from './explosion-grids.js';
+import { explosionGridBytes, explosionGridNamesFor } from './explosion-grids.js';
 
 // Lets a recipe name a grid volume's file (`grid: "blast.67vg"`) in the MCP server: the name is looked up in one folder, never as a path, so a
 // recipe cannot read anywhere else. The folder is the server's working directory unless this variable names another.
@@ -56,6 +56,11 @@ export function volumeGridUses(value) {
     if (Array.isArray(node)) {
       node.forEach(child => visit(child, depth + 1));
       return;
+    }
+    if (node.type === 'add-explosion') {
+      // The fireball grid of an add-explosion is made while the page applies it, so its files go to the page with the call (#1050).
+      const names = explosionGridNamesFor(node);
+      if (names) uses.push({ names, label: 'add-explosion' });
     }
     if (Array.isArray(node.localVolumes)) {
       node.localVolumes.forEach((volume, index) => {
