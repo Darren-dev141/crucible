@@ -320,6 +320,67 @@ function bindKeyLight(renderer, locate, environment) {
   context.uniform3fv(locate('localSkyAmbient'), localSkyAmbient(renderer, environment));
 }
 
+// The in-scatter light of a volume (the sky light through its own depth, the key light through the shadow map) is inlined at every march step, and
+// the driver builds each inlined copy. One copy per kind of volume keeps the grid copies free of the box and sphere profile and the other way round:
+// a grid scene built in 23 to 32 s on ANGLE d3d11 when both shared one copy (#1768).
+// A grid never has the detail shadow, so its light-depth loop stops at the 3 taps it takes.
+const GRID_LIGHT_DEPTH_TAPS = 3;
+function scatterFunctions(kind) {
+  return `// The optical depth of a volume between a point inside it and its far side along a direction, from midpoint taps of its profile.
+vec3 localVolumeDepth${kind}(int index, vec3 position, vec3 direction, int taps, bool withNoise) {
+  float exitDistance = max(localVolumeInterval(index, position, direction).y, 0.0);
+  float profileSum = 0.0;
+  for (int tap = 0; tap < ${kind === 'Grid' ? GRID_LIGHT_DEPTH_TAPS : LOCAL_VOLUME_DETAIL_SHADOW_TAPS}; tap++) {
+    if (tap >= taps) break;
+    profileSum += min(${kind === 'Grid' ? 'localVolumeGridProfile(index, position + direction * (exitDistance * (float(tap) + 0.5) / float(taps)))' : 'localVolumeShapeProfile(index, position + direction * (exitDistance * (float(tap) + 0.5) / float(taps)), withNoise)'} * ${LOCAL_VOLUME_LIGHT_DEPTH_SATURATION.toFixed(3)}, 1.0);
+  }
+  return localVolumeAbsorption[index].rgb * (profileSum * exitDistance / float(taps));
+}
+// The depth of one midpoint tap, the case the sky light needs: the loop above would be built eight times over for it.
+vec3 localVolumeDepthOnce${kind}(int index, vec3 position, vec3 direction) {
+  float exitDistance = max(localVolumeInterval(index, position, direction).y, 0.0);
+  float profile = ${kind === 'Grid' ? 'localVolumeGridProfile(index, position + direction * (exitDistance * 0.5))' : 'localVolumeShapeProfile(index, position + direction * (exitDistance * 0.5), false)'};
+  return localVolumeAbsorption[index].rgb * (min(profile * ${LOCAL_VOLUME_LIGHT_DEPTH_SATURATION.toFixed(3)}, 1.0) * exitDistance);
+}
+// The sky light a point receives through the volume's own depth: the mean over the up and four side directions of what one tap leaves.
+// Without it the sky term is flat, so a thick smoke glows as evenly deep inside as at its edge and hides the key light's side.
+vec3 localVolumeSkyLight${kind}(int index, vec3 position) {
+  vec3 open = vec3(0.0);
+  for (int side = 0; side < 5; side++) {
+    vec3 direction = side == 0 ? vec3(0.0, 1.0, 0.0) : (side == 1 ? vec3(1.0, 0.0, 0.0) : (side == 2 ? vec3(-1.0, 0.0, 0.0) : (side == 3 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 0.0, -1.0))));
+    open += exp(-localVolumeDepthOnce${kind}(index, position, direction));
+  }
+  return localSkyAmbient * (open * ${(0.2 * LOCAL_VOLUME_SKY_GAIN).toFixed(3)});
+}
+// The light a scattering volume receives at a point: the sky term and the key light through the shadow map, each through the volume's own depth.
+vec3 localVolumeInScatter${kind}(int index, vec3 position, vec3 direction) {
+  vec3 towardSun = normalize(volumeLightDirection);
+  float visibility = keyVisibility(position);
+  vec3 sunLight = vec3(0.0);
+  if (visibility > 0.001) {
+    vec3 lightDirection = normalize(vec3(towardSun.x, towardSun.y * ${LOCAL_VOLUME_SUN_FLATTEN.toFixed(3)}, towardSun.z));
+    bool detailShadow = localVolumeGrid[index].y > 0.5 && localVolumeGrid[index].x < 0.5;
+    vec3 lightDepth = localVolumeDepth${kind}(index, position, lightDirection, detailShadow ? ${LOCAL_VOLUME_DETAIL_SHADOW_TAPS} : 3, detailShadow) * ${LOCAL_VOLUME_SHADOW_STRENGTH.toFixed(3)};
+    // The octave sum of multiple scattering (scatterOctaves, in the free fourth component of the first axis row, as the octaves beyond the first so a volume without it keeps its bytes); one octave is the single scatter.
+    float cosine = dot(direction, towardSun);
+    int octaves = 1 + int(localVolumeAxes[index * 3].w + 0.5);
+    vec3 phaseSum = vec3(0.0);
+    float weight = 1.0;
+    float extinction = 1.0;
+    float anisotropy = localVolumeGrid[index].w;
+    for (int octave = 0; octave < ${LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES}; octave++) {
+      if (octave >= octaves) break;
+      phaseSum += weight * henyeyGreenstein(cosine, anisotropy) * exp(-lightDepth * extinction);
+      weight *= ${LOCAL_VOLUME_MULTI_SCATTER.toFixed(3)};
+      extinction *= ${LOCAL_VOLUME_MULTI_EXTINCTION.toFixed(3)};
+      anisotropy *= ${LOCAL_VOLUME_MULTI_ANISOTROPY.toFixed(3)};
+    }
+    sunLight = volumeLightColor * (visibility * ${LOCAL_VOLUME_KEY_GAIN.toFixed(3)}) * phaseSum;
+  }
+  return localVolumeSkyLight${kind}(index, position) + sunLight;
+}`;
+}
+
 const LOCAL_VOLUME_DECLARATIONS = `
 uniform int localVolumeCount;
 uniform float localOrthographic;
@@ -446,12 +507,12 @@ vec3 localVolumeRampLight(int index, float value) {
   int upper = min(lower + 1, int(setup.y) - 1);
   return mix(localVolumeRamp[index * ${LOCAL_VOLUME_RAMP_STOPS} + lower].rgb, localVolumeRamp[index * ${LOCAL_VOLUME_RAMP_STOPS} + upper].rgb, scaled - float(lower)) * position;
 }
-float localVolumeProfile(int index, vec3 position, bool withNoise) {
-  if (localVolumeGrid[index].x > 0.5) {
-    vec3 gridOffset = abs(position - localVolumeCenters[index].xyz);
-    vec3 gridHalf = localVolumeExtents[index].xyz;
-    return (gridOffset.x > gridHalf.x || gridOffset.y > gridHalf.y || gridOffset.z > gridHalf.z) ? 0.0 : localGridSample(index, position).x;
-  }
+float localVolumeGridProfile(int index, vec3 position) {
+  vec3 gridOffset = abs(position - localVolumeCenters[index].xyz);
+  vec3 gridHalf = localVolumeExtents[index].xyz;
+  return (gridOffset.x > gridHalf.x || gridOffset.y > gridHalf.y || gridOffset.z > gridHalf.z) ? 0.0 : localGridSample(index, position).x;
+}
+float localVolumeShapeProfile(int index, vec3 position, bool withNoise) {
   vec3 offset = position - localVolumeCenters[index].xyz;
   if (localVolumeCenters[index].w < 0.5) offset = localVolumeLocal(index, offset);
   vec3 halfSize = localVolumeExtents[index].xyz;
@@ -475,53 +536,10 @@ float localVolumeProfile(int index, vec3 position, bool withNoise) {
   if (noiseAmount > 0.0) profile *= mix(1.0, noise * 2.0, noiseAmount);
   return profile;
 }
-// The optical depth of a volume between a point inside it and its far side along a direction, from midpoint taps of its profile.
-vec3 localVolumeDepth(int index, vec3 position, vec3 direction, int taps, bool withNoise) {
-  float exitDistance = max(localVolumeInterval(index, position, direction).y, 0.0);
-  float profileSum = 0.0;
-  for (int tap = 0; tap < ${LOCAL_VOLUME_DETAIL_SHADOW_TAPS}; tap++) {
-    if (tap >= taps) break;
-    profileSum += min(localVolumeProfile(index, position + direction * (exitDistance * (float(tap) + 0.5) / float(taps)), withNoise) * ${LOCAL_VOLUME_LIGHT_DEPTH_SATURATION.toFixed(3)}, 1.0);
-  }
-  return localVolumeAbsorption[index].rgb * (profileSum * exitDistance / float(taps));
+float localVolumeProfile(int index, vec3 position, bool withNoise) {
+  return localVolumeGrid[index].x > 0.5 ? localVolumeGridProfile(index, position) : localVolumeShapeProfile(index, position, withNoise);
 }
-// The sky light a point receives through the volume's own depth: the mean over the up and four side directions of what one tap leaves.
-// Without it the sky term is flat, so a thick smoke glows as evenly deep inside as at its edge and hides the key light's side.
-vec3 localVolumeSkyLight(int index, vec3 position) {
-  vec3 open = exp(-localVolumeDepth(index, position, vec3(0.0, 1.0, 0.0), 1, false));
-  open += exp(-localVolumeDepth(index, position, vec3(1.0, 0.0, 0.0), 1, false));
-  open += exp(-localVolumeDepth(index, position, vec3(-1.0, 0.0, 0.0), 1, false));
-  open += exp(-localVolumeDepth(index, position, vec3(0.0, 0.0, 1.0), 1, false));
-  open += exp(-localVolumeDepth(index, position, vec3(0.0, 0.0, -1.0), 1, false));
-  return localSkyAmbient * (open * ${(0.2 * LOCAL_VOLUME_SKY_GAIN).toFixed(3)});
-}
-// The light a scattering volume receives at a point: the sky term and the key light through the shadow map, each through the volume's own depth.
-vec3 localVolumeInScatter(int index, vec3 position, vec3 direction) {
-  vec3 towardSun = normalize(volumeLightDirection);
-  float visibility = keyVisibility(position);
-  vec3 sunLight = vec3(0.0);
-  if (visibility > 0.001) {
-    vec3 lightDirection = normalize(vec3(towardSun.x, towardSun.y * ${LOCAL_VOLUME_SUN_FLATTEN.toFixed(3)}, towardSun.z));
-    bool detailShadow = localVolumeGrid[index].y > 0.5 && localVolumeGrid[index].x < 0.5;
-    vec3 lightDepth = localVolumeDepth(index, position, lightDirection, detailShadow ? ${LOCAL_VOLUME_DETAIL_SHADOW_TAPS} : 3, detailShadow) * ${LOCAL_VOLUME_SHADOW_STRENGTH.toFixed(3)};
-    // The octave sum of multiple scattering (scatterOctaves, in the free fourth component of the first axis row, as the octaves beyond the first so a volume without it keeps its bytes); one octave is the single scatter.
-    float cosine = dot(direction, towardSun);
-    int octaves = 1 + int(localVolumeAxes[index * 3].w + 0.5);
-    vec3 phaseSum = vec3(0.0);
-    float weight = 1.0;
-    float extinction = 1.0;
-    float anisotropy = localVolumeGrid[index].w;
-    for (int octave = 0; octave < ${LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES}; octave++) {
-      if (octave >= octaves) break;
-      phaseSum += weight * henyeyGreenstein(cosine, anisotropy) * exp(-lightDepth * extinction);
-      weight *= ${LOCAL_VOLUME_MULTI_SCATTER.toFixed(3)};
-      extinction *= ${LOCAL_VOLUME_MULTI_EXTINCTION.toFixed(3)};
-      anisotropy *= ${LOCAL_VOLUME_MULTI_ANISOTROPY.toFixed(3)};
-    }
-    sunLight = volumeLightColor * (visibility * ${LOCAL_VOLUME_KEY_GAIN.toFixed(3)}) * phaseSum;
-  }
-  return localVolumeSkyLight(index, position) + sunLight;
-}
+${scatterFunctions('Grid')}${scatterFunctions('Shape')}
 // The share of the key light a surface keeps under the volumes that cast shadows (#1047): exp of the optical depth the volumes put between it and the sun.
 vec3 localVolumeSurfaceShadow(vec3 position, vec3 towardSun) {
   vec3 depthSum = vec3(0.0);
@@ -652,7 +670,7 @@ vec3 localVolumes(vec3 background) {
         vec3 extinction = localVolumeAbsorption[nearest].rgb * (cell.x * gridStepSize);
         radiance += transmittance * (localVolumeEmission[nearest].rgb * cell.z + localGridBlackbody(nearest, ${motion ? 'samplePosition' : 'position'}) * localVolumeGrid[nearest].z) * gridStepSize;
         if (localVolumeRampSetup[nearest].y > 0.5) radiance += transmittance * localVolumeRampLight(nearest, localVolumeRampSetup[nearest].x < 1.5 ? cell.x : (localVolumeRampSetup[nearest].x < 2.5 ? cell.y : cell.z)) * gridStepSize;
-        if (gridScatter > 0.0 && cell.x > 0.0) radiance += transmittance * (gridScatter * (1.0 - exp(-extinction))) * localVolumeInScatter(nearest, position, direction);
+        if (gridScatter > 0.0 && cell.x > 0.0) radiance += transmittance * (gridScatter * (1.0 - exp(-extinction))) * localVolumeInScatterGrid(nearest, position, direction);
         transmittance *= exp(-extinction);
         blurDepth += localVolumeSteps[nearest].w * dot(extinction, vec3(0.3333));
       }
@@ -672,7 +690,7 @@ vec3 localVolumes(vec3 background) {
       radiance += transmittance * localVolumeEmission[nearest].rgb * (profile * stepSize);
       if (localVolumeRampSetup[nearest].y > 0.5) radiance += transmittance * localVolumeRampLight(nearest, profile) * stepSize;
       vec3 extinction = localVolumeAbsorption[nearest].rgb * (profile * stepSize);
-      if (scatterAlbedo > 0.0 && profile > 0.0) radiance += transmittance * (scatterAlbedo * (1.0 - exp(-extinction))) * localVolumeInScatter(nearest, position, direction);
+      if (scatterAlbedo > 0.0 && profile > 0.0) radiance += transmittance * (scatterAlbedo * (1.0 - exp(-extinction))) * localVolumeInScatterShape(nearest, position, direction);
       transmittance *= exp(-extinction);
       blurDepth += localVolumeSteps[nearest].w * dot(extinction, vec3(0.3333));
     }
