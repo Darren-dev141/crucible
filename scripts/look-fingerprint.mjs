@@ -17,9 +17,10 @@ import { normalizedSourceText } from './look-source-text.mjs';
 
 export const FINGERPRINT_VERSION = 2;
 
-// Files whose output this script generates and hashes (shader builders and the programs they register). For these the shader text
-// is compared through the configs, and the file itself only has to keep the same JavaScript outside its template literals.
-const GENERATED_FILE_PATTERN = /^(shaders?|post|post-steps|post-air|.+-shaders?)\.js$/;
+// Files whose exports the configs build in full (the main material program, the post program and the post steps). For these the shader
+// text is compared through the configs, and the file itself only has to keep the same JavaScript outside its template literals.
+// Every other file, shader generators included (a path tracer shader has branches the configs never build), is compared whole.
+const GENERATED_FILE_PATTERN = /^(shaders|post|post-steps)\.js$/;
 const HASH_LENGTH = 16;
 
 // The same name rule as `lookNamePattern` in pr-metadata-check.mjs, kept here as a source file filter for the sweep.

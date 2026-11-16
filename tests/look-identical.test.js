@@ -181,6 +181,24 @@ test('a look default edited in a file that is not a shader generator is held, an
   }
 });
 
+test('a branch inside a shader generator the configs do not build in full is held', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'look-tracer-'));
+  try {
+    cpSync(join(repositoryRoot, 'src'), join(directory, 'src'), { recursive: true });
+    const original = fingerprintInChild(directory);
+    const tracerPath = join(directory, 'src', 'path-tracer-gpu-shader.js');
+    const tracerSource = readFileSync(tracerPath, 'utf8');
+    const lightTreeLine = 'turns = chosen >= 0 ? 1 : 0;';
+    assert.ok(tracerSource.includes(lightTreeLine));
+    writeFileSync(tracerPath, tracerSource.replace(lightTreeLine, 'turns = 0;'));
+    const edited = compareFingerprints(original, fingerprintInChild(directory));
+    assert.equal(edited.lookIdentical, false);
+    assert.ok(edited.changed.includes('file/path-tracer-gpu-shader.js'));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('compareFingerprints names every config or default that differs', () => {
   const base = { version: FINGERPRINT_VERSION, configs: { a: 'x', b: 'y' }, defaults: { 'constant/C': 'z' }, files: {} };
   assert.deepEqual(compareFingerprints(base, structuredClone(base)), { lookIdentical: true, changed: [] });
