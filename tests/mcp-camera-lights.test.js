@@ -205,3 +205,21 @@ test('the raster effects and the path tracer lens read the recipe camera focusDi
   assert.equal(effectsWithFStop({ depthOfField: { blur: 0, focusDistance: 5 } }, camera).depthOfField.focusDistance, 3.5);
   assert.equal(resolveThinLens(camera, { aspect: 1, eye: camera.eye, target: camera.target }).focalDistance, 3.5);
 });
+
+test('a light list over its cap names the cap, why it exists and what to do instead', () => {
+  const eightAreaLights = lightArray(MAX_AREA_LIGHTS + 1, index => ({ position: [index, 2, 0], direction: [0, -1, 0], width: 1, height: 1 }));
+  const message = (() => {
+    try {
+      createAgentScene(baseRecipe({ environment: { areaLights: eightAreaLights } }));
+    } catch (error) {
+      return error.message;
+    }
+    return '';
+  })();
+  assert.match(message, /environment\.areaLights: got "8 entries"/);
+  assert.match(message, /at most 7 lights/);
+  assert.match(message, /one of 32 mask bits per light \(1 sun, 16 point, 8 spot, 7 area\)/);
+  assert.match(message, /merge neighbouring panels into one wider light/);
+  assert.match(message, /HDRI or emissive parts/);
+  assert.match(message, /backend native, which takes 256 lights/);
+});

@@ -22,7 +22,7 @@ test('with no selection every task runs, in suite order', () => {
 
 test('--kinds selects by kind and --topics by topic tag', () => {
   assert.deepEqual(selectTasks({ kinds: 'light' }, BENCH_TASKS), ['render-pick', 'light-pick-hard', 'light-key-fill', 'light-spot-shadow']);
-  assert.deepEqual(selectTasks({ topics: 'relations' }, BENCH_TASKS), ['kettle-resize', 'desk-resize']);
+  assert.deepEqual(selectTasks({ topics: 'relations' }, BENCH_TASKS), ['kettle-resize', 'shelf-faces', 'desk-resize']);
   assert.ok(selectTasks({ topics: 'explosion' }, BENCH_TASKS).includes('explosion-blast'));
 });
 
@@ -125,4 +125,10 @@ test('the explosion-blast task passes with its reference and rejects a missing, 
   const farBlast = structuredClone(REFERENCES['explosion-blast']);
   farBlast.environment.localVolumes[0].center = [3.5, 2, 0];
   assert.deepEqual(await failed(farBlast, { scene_look: 1 }), ['blast between the pillars']);
+  const movedPillar = structuredClone(REFERENCES['explosion-blast']);
+  movedPillar.nodes.find(node => node.id === 'pillar-2').translation = [1, 1.5, -2.5];
+  assert.deepEqual(await failed(movedPillar, { scene_look: 1 }), ['floor and pillars untouched']);
+  const noFloor = structuredClone(REFERENCES['explosion-blast']);
+  noFloor.nodes = noFloor.nodes.filter(node => node.id !== 'floor');
+  assert.deepEqual(await failed(noFloor, { scene_look: 1 }), ['floor and pillars untouched']);
 });

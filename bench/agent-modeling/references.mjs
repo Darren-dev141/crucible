@@ -10,7 +10,8 @@ import { KETTLE_RESIZED, KETTLE_RESIZED_PLAIN } from './kettle.mjs';
 import { LAMP_SOLUTION } from './lamp.mjs';
 import { GALLERY_SOLUTION } from './gallery.mjs';
 import { DUSK_SOLUTION } from './dusk.mjs';
-import { EXPLOSION_SOLUTION } from './explosion.mjs';
+import { EXPLOSION_START } from './explosion.mjs';
+import { createAgentScene, loadAllAgentSceneModules } from '../../src/agent-scene.js';
 import { COLONNADE_SOLUTION } from './colonnade.mjs';
 import { DESK_FINAL, DESK_FINAL_PLAIN } from './desk.mjs';
 import { CABINET_FINAL, CABINET_FINAL_PLAIN } from './cabinet.mjs';
@@ -170,6 +171,16 @@ function robotArmSolver(root, middle, end, target) {
   return { type: 'two-bone', root, middle, end, keepEndRotation: false, target };
 }
 
+/** The recipe a blast at the courtyard centre leaves: the real add-explosion operation applied to the start recipe, so it never drifts from what the operation writes. */
+async function explosionSolution() {
+  await loadAllAgentSceneModules();
+  const scene = createAgentScene(structuredClone(EXPLOSION_START));
+  scene.apply([{ type: 'add-explosion', id: 'explosion', center: [0, 0.2, 0], size: 4 }], { expectedRevision: scene.inspect({}).revision });
+  return scene.exportRecipe();
+}
+
+const EXPLOSION_SOLUTION = await explosionSolution();
+
 export const REFERENCES = {
   ...SCENE_REFERENCES,
   'best-of-three': LAMP_SOLUTION,
@@ -215,6 +226,17 @@ export const REFERENCES = {
     [
       { id: 'base', geometry: 'base', rotation: axisRotation('x', -Math.PI / 2) },
       { id: 'upright', geometry: 'block', translation: [-0.14, 0.095, 0], scale: [0.02, 0.15, 0.1] },
+    ],
+  ),
+  'shelf-faces': scene(
+    [{ id: 'block', type: 'box', bevel: 0 }, { id: 'cup', type: 'cylinder', segments: 32, bevel: 0 }],
+    [
+      { id: 'panel-left', geometry: 'block', translation: [-0.49, 0.6, 0], scale: [0.02, 1.2, 0.3] },
+      { id: 'panel-right', geometry: 'block', translation: [0.49, 0.6, 0], scale: [0.02, 1.2, 0.3] },
+      { id: 'board-low', geometry: 'block', translation: [0, 0.11, 0], scale: [0.96, 0.02, 0.3] },
+      { id: 'board-mid', geometry: 'block', translation: [0, 0.59, 0], scale: [0.96, 0.02, 0.3] },
+      { id: 'board-top', geometry: 'block', translation: [0, 1.19, 0], scale: [0.96, 0.02, 0.3] },
+      { id: 'mug', geometry: 'cup', translation: [0, 0.65, 0], scale: [0.04, 0.1, 0.04] },
     ],
   ),
   workshop: scene(

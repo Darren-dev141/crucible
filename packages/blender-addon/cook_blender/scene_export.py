@@ -121,6 +121,7 @@ def add_light_entry(environment, light_object, light_matrix, report):
     for note in conversions.light_feature_notes(
         light_object.name, light_data.type, getattr(light_data, "use_temperature", False), getattr(light_data, "use_shadow", True),
         getattr(light_data, "diffuse_factor", 1.0), getattr(light_data, "specular_factor", 1.0),
+        getattr(getattr(light_data, "cycles", None), "max_bounces", None), getattr(getattr(bpy.context.scene, "cycles", None), "max_bounces", None),
     ):
         if note not in report["notes"]:
             report["notes"].append(note)

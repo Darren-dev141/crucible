@@ -1,9 +1,11 @@
 name: Test
 
 # Every job runs at once. The last job, named `test`, is the one branch protection requires: it waits for the others and
-# fails when any of them did not succeed. publish.yml calls this workflow, so a release runs the same checks as its pull request.
+# fails when any of them did not succeed. A push to main runs it too, like a release run: no base to compare, so size and change-note skip and the add-on tests always run. publish.yml calls this workflow, so a release runs the same checks as its pull request.
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_call:
 
 permissions:

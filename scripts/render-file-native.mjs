@@ -9,9 +9,10 @@ import { createServer } from 'node:net';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { prepareFileScene } from './file-scene.mjs';
+import { prepareServedFileScene } from './file-scene.mjs';
 import { readNativeCapacity } from './native-capacity.mjs';
 import { collectExportChunks, traceFrameNative } from './agent-native-trace.mjs';
+import { chunkedTriangleBound } from './native-bake-page.js';
 import { MissingAddonError, USAGE, listIgnoredFrameEffects, parseArguments } from './render-file-native-options.mjs';
 
 function freePort() {
@@ -51,7 +52,7 @@ async function readExportChunkInPage({ name, offset }) {
 }
 
 // Runs in the page: packs the loaded scene into the tables the native tracer reads, like the MCP render job does.
-async function exportTablesInPage({ width, height, bounces, seed, instancing, camera, listParts, hideParts, patchMaterials }) {
+async function exportTablesInPage({ width, height, bounces, seed, instancing, camera, listParts, hideParts, patchMaterials, maximumTriangles }) {
   const [{ createCamera, describeIgnoredFeatures }, { buildTraceScene, resolveTexture }, pack, { buildNativeInput }, { buildJobNativeInput, buildFlattenedJobNativeInput }, { exportNativeSceneTables, splitExportForChunks }, gridVolumeInput] = await Promise.all([
     import('/src/path-tracer.js'), import('/src/path-tracer-scene.js'), import('/src/path-tracer-gpu-pack.js'),
     import('/node_modules/@codepawlhq/cook/pack-input.mjs'), import('/node_modules/@codepawlhq/cook/job-input.mjs'), import('/scripts/native-bake-page.js'), import('/node_modules/@codepawlhq/cook/grid-volume-input.mjs'),
@@ -72,7 +73,7 @@ async function exportTablesInPage({ width, height, bounces, seed, instancing, ca
   const hidden = new Set(matchingParts(hideParts, window.__scene.parts));
   const parts = window.__scene.parts.filter(part => !hidden.has(part));
   const tracerCamera = createCamera(camera, width, height);
-  const packed = exportNativeSceneTables({ parts, environment, camera: tracerCamera, options: { width, height, bounces, seed, fireflyClamp: 20, noiseThreshold: 0 }, kernel: 'cycles', instancing, transport: 'chunks',
+  const packed = exportNativeSceneTables({ parts, environment, camera: tracerCamera, options: { width, height, bounces, seed, fireflyClamp: 20, noiseThreshold: 0 }, kernel: 'cycles', instancing, transport: 'chunks', maximumTriangles,
     modules: { buildTraceScene, resolveTexture, buildNativeInput, buildJobNativeInput, buildFlattenedJobNativeInput, pack, gridVolumeInput } });
   // The tables stay in the page for readExportChunkInPage: no single message has to carry the scene.
   const { manifest, tables } = splitExportForChunks(packed);
@@ -164,12 +165,15 @@ async function main() {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const tracer = await loadNativeTracer();
   const { chromium } = await import('playwright');
-  const world = prepareFileScene({ configPath: options.config });
-  const { description } = world;
-  const camera = options.camera ?? { eye: description.eye, target: description.target, fov: description.frame?.fov ?? 45 };
   const { server, port } = await startViteServer(root);
   let browser;
+  let world;
   try {
+    // A GLB above LARGE_ASSET_BYTES must reach the page over HTTP: a Playwright route copies it through the browser protocol,
+    // which closed the tab for a file of about 80 MiB (#1811), the same reason scripts/render-media.mjs serves it this way.
+    world = await prepareServedFileScene({ configPath: options.config, pageOrigin: `http://127.0.0.1:${port}` });
+    const { description } = world;
+    const camera = options.camera ?? { eye: description.eye, target: description.target, fov: description.frame?.fov ?? 45 };
     const launchArguments = ['--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--no-sandbox'];
     if (options.softwareGl) launchArguments.push('--use-angle=swiftshader');
     browser = await chromium.launch({ headless: true, ...(options.chrome ? { executablePath: options.chrome } : {}), args: launchArguments });
@@ -190,7 +194,7 @@ async function main() {
     const packStarted = performance.now();
     const capacityRead = readNativeCapacity(tracer);
     const manifest = await page.evaluate(exportTablesInPage, { width: options.width, height: options.height, bounces: options.bounces, seed: options.seed, instancing: options.instancing, camera,
-      listParts: options.listParts ?? null, hideParts: options.hideParts ?? null, patchMaterials: options.patchMaterials });
+      listParts: options.listParts ?? null, hideParts: options.hideParts ?? null, patchMaterials: options.patchMaterials, maximumTriangles: chunkedTriangleBound(capacityRead.capacity?.maxUniqueTriangles) });
     const exported = await collectExportChunks(manifest, (name, offset) => page.evaluate(readExportChunkInPage, { name, offset }), { capacity: capacityRead.capacity });
     await page.evaluate(() => { window.__nativeExportTables = null; });
     const packSeconds = (performance.now() - packStarted) / 1000;
@@ -211,6 +215,7 @@ async function main() {
     console.log(`FILE_NATIVE ${JSON.stringify(report)}`);
   } finally {
     await browser?.close();
+    await world?.close();
     server.kill();
   }
 }

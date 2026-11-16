@@ -108,7 +108,7 @@ A 224 MiB GLB (5.4 million vertices, 65 small textures) takes about 460 MB of th
 
 A file over `maxBytes` (256 MiB by default) fails before decoding with an error that names the size, the limit and the value to pass. A file with too many texture pixels is scaled down to `maxTexturePixels`, or fails naming that option.
 
-`scripts/render-media.mjs --scene file` serves a GLB above 32 MiB from a local HTTP server that streams it from disk. Handing a file that size to the page through a Playwright route copies it through the browser protocol as one message and closed the whole browser tab (a 225 MB file did, with nothing else loading).
+`scripts/render-media.mjs --scene file` and `scripts/render-file-native.mjs` serve a GLB above 32 MiB from a local HTTP server that streams it from disk. Handing a file that size to the page through a Playwright route copies it through the browser protocol as one message and closed the whole browser tab (a 225 MB file did, with nothing else loading).
 
 ## Loading a large scene without a long freeze
 
@@ -194,7 +194,7 @@ POINTS, LINES, LINE_LOOP and LINE_STRIP primitives are skipped with a warning th
 | `KHR_materials_variants`, `KHR_materials_diffuse_roughness`, `EXT_materials_bump`, `EXT_texture_avif` and any other optional extension | Ignored, named in `warnings`. |
 | `KHR_draco_mesh_compression` | Needs `options.decoders.draco`. |
 | `EXT_meshopt_compression` | Decoded by Crucible: attribute, triangle and index modes with the NONE, OCTAHEDRAL, QUATERNION and EXPONENTIAL filters. The decoder is a separate chunk that loads only when `extensionsUsed` or `extensionsRequired` lists the extension. The fallback buffer is never read, so it may be absent, zero-filled or an unreachable `uri`, and it does not count against `maxBytes`. A buffer view that fails to decode throws a named error. `options.decoders.meshopt` still replaces the built-in decoder. |
-| `KHR_texture_basisu` | Needs `options.decoders.ktx2`. |
+| `KHR_texture_basisu` | Needs `options.decoders.ktx2`. MCP catalog assets are transcoded to PNG on the server first. |
 | `EXT_texture_webp` | The WebP source is decoded by the browser like PNG and JPEG. When the texture also has a PNG or JPEG `source` and the browser cannot decode WebP, that source is used instead. |
 | `KHR_materials_clearcoat`, `_transmission`, `_ior`, `_dispersion`, `_specular`, `_sheen`, `_volume`, `_anisotropy`, `_iridescence` | Read as factors and rendered as material layers, see `docs/material-maps.md`. The textures `clearcoatTexture`, `clearcoatRoughnessTexture`, `clearcoatNormalTexture`, `anisotropyTexture`, `sheenColorTexture` and `sheenRoughnessTexture` are read too, into `material.layerMaps` (their GLSL loads with `material-layer-shaders`); a renderer draws at most three different ones, and none beside splat layers. The transmission, iridescence and specular textures are not read: their factors are used. An `ior` above 2.5 (exporters write 1000 for a mirror-like surface) loads as 2.5 with a warning, and an `ior` of 0 (which glTF allows) loads as 1; anything else below 1 is refused. `specularColorFactor` may be any value up to 1000 (Blender writes 10): the reflectance is capped at 1 after the IOR term, so size beyond that point changes nothing. `occlusionTexture`, `emissiveTexture` and `metallicRoughnessTexture` may use TEXCOORD_1 (the mesh's `lightUvs`, which a light bake also uses); the normal texture may use TEXCOORD_1 too (its tangent frame is built from that set); so may the base color map (also in the shadow alpha pass) and the layer maps, and a texture left on TEXCOORD_1 cannot carry `KHR_texture_transform` (see the text above). The anisotropy tangent frame always follows TEXCOORD_0, so an `anisotropyTexture` on TEXCOORD_1 samples its own set but its direction is right only when both sets are oriented alike. Their textures are ignored, and an iridescent film takes the thickness maximum. Export writes them back. |
 
@@ -204,7 +204,7 @@ A flat, smooth, transmissive part with an `ior` below 1.45 (water is 1.33) also 
 A transmissive part with an `ior` of 1.45 or more, or none (glass is 1.5), is not taken for water. A vertical glass wall shows the environment only, not the building beside it.
 
 Without the matching decoder, a file that uses Draco or KTX2 fails with `Unsupported glTF extension` and the option name. Meshopt needs no option.
-Through MCP an agent cannot pass a decoder, so the server decodes Draco catalog assets itself with the optional `draco3d` package ([mcp.md](mcp.md)).
+Through MCP an agent cannot pass a decoder, so the server decodes Draco catalog assets itself with the optional `draco3d` package, and transcodes KTX2 textures to PNG with the Basis transcoder of the optional `three` package (base mip level only, so the GPU-compressed upload of a `ktx2` loader does not apply) ([mcp.md](mcp.md)).
 
 ### Decoders
 

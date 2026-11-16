@@ -59,7 +59,7 @@ test('an instanced scene above 400,000 unique triangles builds with the native o
 test('an instanced scene is refused above the unique bound that was asked for, with the bound in the message', () => {
   const parts = copiesOf(triangleStack(11), 2);
   assert.throws(() => buildTraceScene(parts, ENVIRONMENT, { instancing: true, maximumTriangles: 10 }),
-    { name: 'RangeError', message: /at most 10 unique triangles, counted once per shared geometry, got 11\. Share geometry between copies or simplify the meshes\./ });
+    { name: 'RangeError', message: /at most 10 unique triangles, counted once per shared geometry, got 11, 1 too many. Share geometry between copies or simplify the meshes\./ });
 });
 
 test('an instanced scene counts every copy against four times the bound', () => {
@@ -76,21 +76,23 @@ test('without the option copies are not counted in total, as before', () => {
 test('a flattened scene takes the native bound too, and says it is the native one', () => {
   assert.equal(buildTraceScene(copiesOf(triangleStack(12), 1), ENVIRONMENT, { maximumTriangles: 12 }).indices.length, 36);
   assert.throws(() => buildTraceScene(copiesOf(triangleStack(13), 1), ENVIRONMENT, { maximumTriangles: 12 }),
-    { name: 'RangeError', message: /A native path trace takes at most 12 triangles in total, got 13\. Share geometry between copies/ });
+    { name: 'RangeError', message: /A native path trace takes at most 12 triangles in total, got 13, 1 too many. Share geometry between copies/ });
 });
 
-test('the native bound has a hard ceiling, and a scene above it is refused', () => {
-  assert.equal(MAX_NATIVE_TRACE_TRIANGLES, 4_000_000);
-  const parts = copiesOf(triangleStack(MAX_NATIVE_TRACE_TRIANGLES + 1), 2);
-  assert.throws(() => buildTraceScene(parts, ENVIRONMENT, { instancing: true, maximumTriangles: MAX_NATIVE_TRACE_TRIANGLES }),
-    { name: 'RangeError', message: /at most 4000000 unique triangles, counted once per shared geometry, got 4000001/ });
+test('the native bound has a hard ceiling, and a scene above its bound is refused with the overage', () => {
+  assert.equal(MAX_NATIVE_TRACE_TRIANGLES, 16_000_000);
+  const parts = copiesOf(triangleStack(41), 2);
+  assert.throws(() => buildTraceScene(parts, ENVIRONMENT, { instancing: true, maximumTriangles: 40 }),
+    { name: 'RangeError', message: /at most 40 unique triangles, counted once per shared geometry, got 41, 1 too many./ });
+  assert.throws(() => buildTraceScene(copiesOf(triangleStack(45), 1), ENVIRONMENT, { maximumTriangles: 40 }),
+    { name: 'RangeError', message: /at most 40 triangles in total, got 45, 5 too many./ });
 });
 
 test('an option value that is not an integer from 1 to the ceiling is refused with the range', () => {
   const parts = copiesOf(triangleStack(3), 2);
   for (const value of [0, -5, 1.5, Number.NaN, Infinity, '1000', null, MAX_NATIVE_TRACE_TRIANGLES + 1]) {
     assert.throws(() => buildTraceScene(parts, ENVIRONMENT, { instancing: true, maximumTriangles: value }),
-      { name: 'RangeError', message: /maximumTriangles is an integer from 1 to 4000000 for the native path tracer.*400000/ }, `value ${String(value)}`);
+      { name: 'RangeError', message: /maximumTriangles is an integer from 1 to 16000000 for the native path tracer.*400000/ }, `value ${String(value)}`);
   }
 });
 

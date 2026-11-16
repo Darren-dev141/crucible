@@ -48,7 +48,7 @@ own mesh report:
 | crate-uv | The crate with even UVs |
 | desk-resize, desk-resize-plain | A 12-part desk (legs, drawers with handles, lamp, book) resized in three inspected steps, graded on contact for every attached pair and on where parts end up. Relations against absolute positions |
 | kettle-resize, kettle-resize-plain | Resize a kettle body so the lid, handle and spout stay against it. The first start recipe holds `relations`, the second absolute positions; the difference in tool calls is what relations are worth |
-| explosion-blast | A courtyard and a request for a blast with no operation name: graded on one `explosion-` grid volume between the pillars and a `scene_look` call (`add-explosion`) |
+| explosion-blast | A courtyard and a request for a blast with no operation name: graded on one `explosion-` grid volume between the pillars, the floor and four pillars left as they were (the blast adds its own debris and scorch nodes, so no part count) and a `scene_look` call (`add-explosion`) |
 | crate-wood | The crate with a wood material pattern, to see whether agents find `pattern` |
 | arm-reach | A jointed arm whose tip moves between two points, to see whether agents find `motion.ik` |
 | leg-plant | A leg that plants its foot on two points with the knee bending forward: `motion.ik` with `bendToward`, `pole` and `limits` |
@@ -61,6 +61,7 @@ own mesh report:
 | slotted-rail | Long: a bar with every edge chamfered and five through slots, in one piece |
 | crate-revision | Long: starts from the crate recipe in the prompt; raise the lid, then drill a blind hole into the body |
 | bracket-revision | Long: starts from the L bracket recipe in the prompt; lengthen the base, recentre it, move to three holes |
+| shelf-faces | A bookcase whose boards and mug are given by their top or bottom faces (underside 0.1 m, upper surface 0.6 m, level with the panel tops), so the agent must turn a face height into a centre or use a `level` relation (#1755) |
 | workshop | Long: a whole scene, a floor slab with a table, a chair and a mug, 12 parts that rest on each other |
 | robot-shot | Long: the robot with both hands placed by IK, then a side-on camera, checked from the exported recipe |
 

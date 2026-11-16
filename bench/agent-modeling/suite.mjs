@@ -18,6 +18,7 @@ export const BENCH_TASKS = [
   { id: 'bracket-revision', kind: 'revision' },
   { id: 'kettle-resize', kind: 'revision', topics: ['relations'] },
   { id: 'workshop', kind: 'scene' },
+  { id: 'shelf-faces', kind: 'scene', topics: ['relations'] },
   { id: 'desk-resize', kind: 'scene', topics: ['relations'] },
   { id: 'terrain-hole-walk', kind: 'scene', topics: ['terrain'] },
   { id: 'explosion-blast', kind: 'scene', topics: ['explosion', 'particles', 'localVolumes'] },

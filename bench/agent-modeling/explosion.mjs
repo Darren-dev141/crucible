@@ -22,22 +22,8 @@ floor, 8 m by 8 m and centred on the origin, with four pillars standing on it. A
 and look at it with scene_look. Leave the floor and the pillars as they are. When it is finished, call scene_export_recipe once: the exported recipe is what gets graded.`;
 
 export const EXPLOSION_CHECKS = [
-  { kind: 'parts', min: 5, max: 5 },
+  // add-explosion adds its own sparks, dust, rubble and scorch nodes, so the check is on the floor and pillars, not a part count.
+  { kind: 'nodesUnchanged', nodes: EXPLOSION_START.nodes, label: 'floor and pillars untouched' },
   { kind: 'blastInside', halfWidth: 2.5, label: 'blast between the pillars' },
   { kind: 'toolCalled', tool: 'scene_look' },
 ];
-
-/** The recipe add-explosion leaves for a blast at the origin: one grid volume of baked explosion-dry-1 frames (hand-written, as the other references are). */
-export const EXPLOSION_SOLUTION = {
-  ...structuredClone(EXPLOSION_START),
-  environment: {
-    localVolumes: [{
-      shape: 'grid',
-      frames: ['explosion-dry-1_0000.67vg', 'explosion-dry-1_0001.67vg'],
-      fps: 24, loop: false,
-      center: [0, 2, 0], size: [4, 4, 4],
-      density: 1, absorption: [1, 1, 1], emission: [1, 0.5, 0.2], emissionStrength: 1,
-      temperatureScale: 1000, blackbodyIntensity: 1, steps: 48, castShadow: true, lightsScene: true,
-    }],
-  },
-};
