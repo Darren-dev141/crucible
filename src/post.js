@@ -3,7 +3,7 @@ import { registeredFeatureCode, requireFeatureCode } from './shader-registry.js'
 export { fullscreenVertex } from './gl-program.js';
 
 // The main function of the post pass; the local volume composite before bloom swaps it for a smaller one.
-const POST_MAIN = `void main() {
+const POST_MAIN_BODY = `void main() {
   vec2 texel = 1.0 / resolution;
   vec3 center = texture(frameTexture, textureCoordinate).rgb;
   vec3 northwest = texture(frameTexture, textureCoordinate + vec2(-1.0, -1.0) * texel).rgb;
@@ -61,7 +61,24 @@ const POST_MAIN = `void main() {
 }
 `;
 
-function postFragmentSource(definitions, explosionFunction, fogDeclarations, fogFunctions, mainBody = POST_MAIN) {
+// A marker step (#1749): the frame writes the linear scene radiance, as it stands after every pass that adds light, with no view
+// transform, look, display-space finishing or clamp. The text is spliced in only when the step is on, so every other program keeps the source it had.
+export const LINEAR_OUTPUT_STEP = 'linearOutput';
+const LINEAR_OUTPUT_ANCHOR = '  if (POST_VOLUME) color = volumeFog(color);\n';
+const LINEAR_OUTPUT_EXIT = `  if (hdrEnabled > 0.5) {
+    float linearAlpha = POST_TRANSPARENT ? coverage : 1.0;
+    outputColor = vec4(color * linearAlpha, linearAlpha);
+    return;
+  }
+`;
+
+function postMainFor(enabledSteps) {
+  if (!enabledSteps.has(LINEAR_OUTPUT_STEP)) return POST_MAIN_BODY;
+  if (!POST_MAIN_BODY.includes(LINEAR_OUTPUT_ANCHOR)) throw new Error('The post shader no longer holds the line that linear output is written after.');
+  return POST_MAIN_BODY.replace(LINEAR_OUTPUT_ANCHOR, LINEAR_OUTPUT_ANCHOR + LINEAR_OUTPUT_EXIT);
+}
+
+function postFragmentSource(definitions, explosionFunction, fogDeclarations, fogFunctions, mainBody = POST_MAIN_BODY) {
   return `#version 300 es
 ${definitions}
 precision highp float;
@@ -264,7 +281,7 @@ export function createPostFragment(steps = POST_STEPS) {
     .map(([step, [macro, condition]]) => `#define ${macro} ${enabled.has(step) ? `(${condition})` : 'false'}`)
     .join('\n');
   const fogCode = fogCodeFor(enabled);
-  return postFragmentSource(definitions, explosionFunctionFor(enabled), fogCode.declarations, fogCode.functions);
+  return postFragmentSource(definitions, explosionFunctionFor(enabled), fogCode.declarations, fogCode.functions, postMainFor(enabled));
 }
 
 export const postFragment = createPostFragment();
