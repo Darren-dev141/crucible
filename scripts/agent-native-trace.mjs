@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { clampLimitsByEngine, requireRenderEngine } from './render-engine.mjs';
+import { estimateRelativeNoise } from '../src/path-tracer-denoise.js';
 import { requireExportFitsCapacity } from './native-capacity.mjs';
 import { mapLookToCookPost } from './native-post-look.mjs';
 import { encodeOpaquePng } from './native-png.mjs';
@@ -365,10 +366,12 @@ async function traceOneFrameNative({ tracer, exported, width, height, samples, b
   const features = { color: withoutAlpha(traced.rgba, pixelCount), albedo: traced.albedo, normal: traced.normal,
     depth: traced.depth, variance: traced.variance };
   normalizeNormals(features.normal);
+  const averageSamples = traced.averageSamples ?? samples;
+  const estimatedNoise = estimateRelativeNoise({ color: features.color, variance: features.variance, averageSamples });
   const report = { width, height, samples, bounces, seed, denoised: false, denoiser: 'none', threads: 1, backend: 'native',
     gpu: traced.adapter, nativeBackend: traced.backend, nativeFeatures: traced.features, setupSeconds: traced.setupSeconds, compileSeconds: traced.compileSeconds,
     uploadSeconds: traced.uploadSeconds, accelerationBuildSeconds: traced.accelerationBuildSeconds,
-    kernel, averageSamples: traced.averageSamples ?? samples, noiseThreshold, triangles: exported.triangles, inputBytes: tableBytes(tables), ...(exported.instances === undefined ? {} : { instances: exported.instances }),
+    kernel, averageSamples, noiseThreshold, ...(estimatedNoise === null ? {} : { estimatedNoise }), triangles: exported.triangles, inputBytes: tableBytes(tables), ...(exported.instances === undefined ? {} : { instances: exported.instances }),
     ...(exported.instancing === undefined ? {} : { instancing: exported.instancing, instancingReason: exported.instancingReason }),
     ...(exported.materialsReason === undefined ? {} : { materialsReason: exported.materialsReason }), tracedSeconds, ignored: exported.ignored,
     ...(route ? { nativeSession: route } : {}), ...(exported.capacityUse ? { nativeCapacity: exported.capacityUse } : {}) };

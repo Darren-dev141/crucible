@@ -212,8 +212,25 @@ export function renderReport({ estimate, settings, metrics }) {
     // The path tracer's report describes the last frame; the samples asked for are in the job's settings.
     if (traced.averageSamples !== undefined) report.samplesDrawn = traced.averageSamples;
     if (settings.renderer) report.samplesRequested = settings.renderer.samples;
+    report.noise = noiseFrom(traced);
   }
   return report;
+}
+
+/**
+ * Path traced frames only. `relative` is the root mean square noise of a pixel over the frame's mean luminance, measured before
+ * any denoiser ran (see estimateRelativeNoise). The 0.03 line sits between a 4 sample and a 16 sample trace of the same lit test
+ * scene (0.038 and 0.020), where the grain stops being visible at full size.
+ */
+export const NOISY_RELATIVE_NOISE = 0.03;
+
+function noiseFrom(traced) {
+  const relative = traced.estimatedNoise;
+  if (!Number.isFinite(relative)) return { relative: null, verdict: 'not measured: it needs at least 2 samples per pixel and a frame that is not black.' };
+  const rounded = round(relative, 4);
+  if (relative < NOISY_RELATIVE_NOISE) return { relative: rounded, verdict: 'clean enough: no change needed.' };
+  const advice = traced.denoised ? 'raise renderer.samples' : 'raise renderer.samples or set renderer.denoise';
+  return { relative: rounded, verdict: `noisy: ${advice}.` };
 }
 
 /** The history with this job added, trimmed to the newest HISTORY_LIMIT entries. */
