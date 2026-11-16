@@ -169,7 +169,7 @@ const ALPHA_UNIFORMS = ['alphaMode', 'alphaCutoff', 'materialOpacity', 'alphaToC
 const DEPTH_ALPHA_UNIFORMS = ['alphaMasked', 'alphaCutoff', 'materialOpacity', 'hasBaseMap', 'baseMap', 'tintPass', 'tintTransmission', 'tintMapSize', 'tintBias', 'opaqueShadow'];
 const MORPH_UNIFORMS = ['morphEnabled', 'morphVertexCount', 'morphTargetCount', 'morphWeights[0]', 'morphSlotTargets[0]', 'morphTargets'];
 const ENVIRONMENT_LOOKUP_UNIFORMS = ['environmentSpecular', 'environmentEnabled', 'environmentIntensity', 'environmentRotation', 'environmentLevelMax'];
-const ENVIRONMENT_UNIFORMS = [...ENVIRONMENT_LOOKUP_UNIFORMS, 'environmentBrdf', 'environmentIrradiance[0]'];
+const ENVIRONMENT_UNIFORMS = [...ENVIRONMENT_LOOKUP_UNIFORMS, 'environmentBrdf', 'environmentIrradiance[0]', 'environmentBounce', 'environmentDiffuseFrame'];
 // Shares a unit with the skin influence texture, which no light-mapped (rigid) batch binds.
 const LIGHT_MAP_UNIT = 6;
 const ENVIRONMENT_SPECULAR_UNIT = 9;
@@ -2212,10 +2212,21 @@ export class CrucibleRenderer {
     const context = this.context;
     context.uniform1f(uniforms.environmentEnabled, map ? 1 : 0);
     if (!map) return;
-    if (uniforms['environmentIrradiance[0]']) context.uniform3fv(uniforms['environmentIrradiance[0]'], map.irradianceWithBounce?.(this.environmentResources.irradiance) ?? this.environmentResources.irradiance);
+    this.applyDiffuseUniforms(map, uniforms, true);
     context.uniform1f(uniforms.environmentIntensity, map.intensity);
     context.uniform2f(uniforms.environmentRotation, Math.cos(map.rotation), Math.sin(map.rotation));
     context.uniform1f(uniforms.environmentLevelMax, this.environmentResources.levelCount - 1);
+  }
+
+  // The diffuse light of the global map: the fitted coefficients (kept for the light shading preset), the map's rotation and intensity, and the
+  // constant bounce a room adds on top of the exact irradiance grid. A reflection probe passes withBounce false, as it never bounced.
+  applyDiffuseUniforms(map, uniforms, withBounce) {
+    const context = this.context;
+    const coefficients = this.environmentResources.irradiance;
+    const bounced = withBounce ? map.irradianceWithBounce?.(coefficients) : null;
+    if (uniforms['environmentIrradiance[0]']) context.uniform3fv(uniforms['environmentIrradiance[0]'], bounced ?? coefficients);
+    if (uniforms.environmentBounce) context.uniform3f(uniforms.environmentBounce, bounced ? bounced[0] - coefficients[0] : 0, bounced ? bounced[1] - coefficients[1] : 0, bounced ? bounced[2] - coefficients[2] : 0);
+    if (uniforms.environmentDiffuseFrame) context.uniform3f(uniforms.environmentDiffuseFrame, Math.cos(map.rotation), Math.sin(map.rotation), map.intensity);
   }
 
   drawEnvironmentBackground(map, frame, exposure) {

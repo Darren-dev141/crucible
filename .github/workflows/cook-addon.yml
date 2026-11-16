@@ -59,9 +59,12 @@ jobs:
       - name: Run the addon tests
         run: |
           start=$(date +%s)
-          # The summary step decides pass or fail: lavapipe loses the device on every trace, and those tests are counted apart.
+          # The summary step decides pass or fail: tests that lose the device on lavapipe are counted apart.
+          # Two test files at a time: lavapipe JIT-compiles the Cook kernel in every process (one peaked at 3.2 GB of RSS, #1186),
+          # and with the default concurrency the light-tree file crashed (SIGSEGV) and byte-for-byte tests differed, while each
+          # passed alone and two runs of one render were byte-identical on lavapipe (#1717).
           set +e
-          node --test --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --test-reporter=tap --test-reporter-destination=addon-tests.tap $(git grep -l "support/cook.js" -- tests)
+          node --test --test-concurrency=2 --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --test-reporter=tap --test-reporter-destination=addon-tests.tap $(git grep -l "support/cook.js" -- tests)
           status=$?
           echo "test_seconds=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
           echo "node --test exit code $status"
