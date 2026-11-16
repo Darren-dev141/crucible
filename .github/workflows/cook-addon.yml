@@ -423,7 +423,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [w256, w128, w512, w256-nopt, w128-nopt, w256-nofma]
+        config: [w256-a, w256-b, w256-c, w256-d, w256-e, nopt-a, nopt-b, nopt-c, nopt-d, nopt-e]
     env:
       # DIAGNOSTIC (#1760): matrix of lavapipe settings, revert before merge.
       MATRIX_CONFIG: ${{ matrix.config }}
@@ -435,11 +435,11 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Apply the matrix config
         run: |
-          case "$MATRIX_CONFIG" in
+          case "${MATRIX_CONFIG%-?}" in
             w256) echo LP_NATIVE_VECTOR_WIDTH=256 ;;
             w128) echo LP_NATIVE_VECTOR_WIDTH=128 ;;
             w512) echo LP_NATIVE_VECTOR_WIDTH=512 ;;
-            w256-nopt) echo LP_NATIVE_VECTOR_WIDTH=256; echo GALLIVM_PERF=nopt ;;
+            nopt) echo LP_NATIVE_VECTOR_WIDTH=256; echo GALLIVM_PERF=nopt ;;
             w128-nopt) echo LP_NATIVE_VECTOR_WIDTH=128; echo GALLIVM_PERF=nopt ;;
             w256-nofma) echo LP_NATIVE_VECTOR_WIDTH=256; echo LP_FORCE_NO_FMA=1 ;;
           esac >> "$GITHUB_ENV"
