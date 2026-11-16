@@ -1,5 +1,7 @@
 import { registerShaderFeatureCode } from './shader-registry.js';
-import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, MAX_LOCAL_VOLUMES } from './local-volumes.js';
+import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY, MAX_LOCAL_VOLUMES } from './local-volumes.js';
+import { createLocalVolumeCompositeFragment } from './post.js';
+import { compileProgram, fullscreenVertex } from './gl-program.js';
 import { LOCAL_VOLUME_RAMP_STOPS } from './local-volume-ramp.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
@@ -102,6 +104,79 @@ function withVolumeFireLights(renderer, environment, volumeTime = 0) {
   const ownLights = environment.pointLights ?? [];
   const fireLights = fireLightsOf(bindLocalVolumeParts(resolved, renderer.sceneParts, { time: volumeTime }), MAX_POINT_LIGHTS - ownLights.length);
   return fireLights.length === 0 ? environment : { ...environment, pointLights: [...ownLights, ...fireLights] };
+}
+
+// Draws the local volumes over the frame into a texture of their own, before bloom extraction, so the glow of an emitting volume blooms (#1046). The final pass then
+// skips its local step and reads this texture. The pass runs only for a frame with bloom and a glowing volume, so every other frame draws as before.
+function compositeLocalVolumes(renderer, frame, environment, sourceTexture) {
+  const context = renderer.context;
+  const composite = (renderer.localVolumeComposite ??= { program: null, uniforms: {}, target: null });
+  if (!composite.program) {
+    composite.program = compileProgram(context, fullscreenVertex, createLocalVolumeCompositeFragment());
+    for (const name of ['frameTexture', 'sceneDepth', 'resolution', 'inverseViewProjection', 'eye']) composite.uniforms[name] = context.getUniformLocation(composite.program, name);
+  }
+  if (!composite.target) composite.target = createCompositeTarget(renderer);
+  context.bindFramebuffer(context.FRAMEBUFFER, composite.target.framebuffer);
+  context.viewport(0, 0, renderer.canvas.width, renderer.canvas.height);
+  context.disable(context.DEPTH_TEST);
+  context.disable(context.CULL_FACE);
+  context.bindVertexArray(null);
+  context.useProgram(composite.program);
+  context.activeTexture(context.TEXTURE0);
+  context.bindTexture(context.TEXTURE_2D, sourceTexture);
+  if (renderer.localVolumeBuffers.blurred) {
+    context.generateMipmap(context.TEXTURE_2D);
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR_MIPMAP_LINEAR);
+  }
+  context.uniform1i(composite.uniforms.frameTexture, 0);
+  context.activeTexture(context.TEXTURE1);
+  context.bindTexture(context.TEXTURE_2D, renderer.depthTexture ?? renderer.whiteTexture);
+  context.uniform1i(composite.uniforms.sceneDepth, 1);
+  context.uniform2f(composite.uniforms.resolution, renderer.canvas.width, renderer.canvas.height);
+  context.uniformMatrix4fv(composite.uniforms.inverseViewProjection, false, renderer.inverseViewProjection);
+  context.uniform3fv(composite.uniforms.eye, frame.eye);
+  bindLocalVolumes(renderer, composite, frame, environment);
+  context.drawArrays(context.TRIANGLES, 0, 3);
+  if (renderer.localVolumeBuffers.blurred) {
+    // Only this pass reads the mip chain; the frame goes back to one level so a later pass never reads a stale one.
+    context.activeTexture(context.TEXTURE0);
+    context.bindTexture(context.TEXTURE_2D, sourceTexture);
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
+  }
+  return composite.target.texture;
+}
+
+function createCompositeTarget(renderer) {
+  const context = renderer.context;
+  const { width, height } = renderer.canvas;
+  const texture = context.createTexture();
+  context.bindTexture(context.TEXTURE_2D, texture);
+  context.texImage2D(context.TEXTURE_2D, 0, context.RGBA16F, width, height, 0, context.RGBA, context.HALF_FLOAT, null);
+  context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
+  context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, context.LINEAR);
+  context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_S, context.CLAMP_TO_EDGE);
+  context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_T, context.CLAMP_TO_EDGE);
+  const framebuffer = context.createFramebuffer();
+  context.bindFramebuffer(context.FRAMEBUFFER, framebuffer);
+  context.framebufferTexture2D(context.FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.TEXTURE_2D, texture, 0);
+  if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) throw new Error('The local volume composite target could not be allocated. Choose a lower quality preset.');
+  return { texture, framebuffer };
+}
+
+// Frees the composite target (at a resize or a release) or the target and the program (at dispose).
+function releaseLocalVolumeComposite(renderer, disposeProgram) {
+  const composite = renderer.localVolumeComposite;
+  if (!composite) return;
+  const context = renderer.context;
+  if (composite.target) {
+    context.deleteTexture(composite.target.texture);
+    context.deleteFramebuffer(composite.target.framebuffer);
+    composite.target = null;
+  }
+  if (disposeProgram && composite.program) {
+    context.deleteProgram(composite.program);
+    renderer.localVolumeComposite = null;
+  }
 }
 
 // Uploads the packed volumes. Their uniforms exist only in a program with the local step compiled in.
@@ -326,23 +401,23 @@ float localVolumeProfile(int index, vec3 position, bool withNoise) {
   return profile;
 }
 // The optical depth of a volume between a point inside it and its far side along a direction, from midpoint taps of its profile.
-vec3 localVolumeDepth(int index, vec3 position, vec3 direction, int taps) {
+vec3 localVolumeDepth(int index, vec3 position, vec3 direction, int taps, bool withNoise) {
   float exitDistance = max(localVolumeInterval(index, position, direction).y, 0.0);
   float profileSum = 0.0;
-  for (int tap = 0; tap < 3; tap++) {
+  for (int tap = 0; tap < ${LOCAL_VOLUME_DETAIL_SHADOW_TAPS}; tap++) {
     if (tap >= taps) break;
-    profileSum += min(localVolumeProfile(index, position + direction * (exitDistance * (float(tap) + 0.5) / float(taps)), false) * ${LOCAL_VOLUME_LIGHT_DEPTH_SATURATION.toFixed(3)}, 1.0);
+    profileSum += min(localVolumeProfile(index, position + direction * (exitDistance * (float(tap) + 0.5) / float(taps)), withNoise) * ${LOCAL_VOLUME_LIGHT_DEPTH_SATURATION.toFixed(3)}, 1.0);
   }
   return localVolumeAbsorption[index].rgb * (profileSum * exitDistance / float(taps));
 }
 // The sky light a point receives through the volume's own depth: the mean over the up and four side directions of what one tap leaves.
 // Without it the sky term is flat, so a thick smoke glows as evenly deep inside as at its edge and hides the key light's side.
 vec3 localVolumeSkyLight(int index, vec3 position) {
-  vec3 open = exp(-localVolumeDepth(index, position, vec3(0.0, 1.0, 0.0), 1));
-  open += exp(-localVolumeDepth(index, position, vec3(1.0, 0.0, 0.0), 1));
-  open += exp(-localVolumeDepth(index, position, vec3(-1.0, 0.0, 0.0), 1));
-  open += exp(-localVolumeDepth(index, position, vec3(0.0, 0.0, 1.0), 1));
-  open += exp(-localVolumeDepth(index, position, vec3(0.0, 0.0, -1.0), 1));
+  vec3 open = exp(-localVolumeDepth(index, position, vec3(0.0, 1.0, 0.0), 1, false));
+  open += exp(-localVolumeDepth(index, position, vec3(1.0, 0.0, 0.0), 1, false));
+  open += exp(-localVolumeDepth(index, position, vec3(-1.0, 0.0, 0.0), 1, false));
+  open += exp(-localVolumeDepth(index, position, vec3(0.0, 0.0, 1.0), 1, false));
+  open += exp(-localVolumeDepth(index, position, vec3(0.0, 0.0, -1.0), 1, false));
   return localSkyAmbient * (open * ${(0.2 * LOCAL_VOLUME_SKY_GAIN).toFixed(3)});
 }
 // The light a scattering volume receives at a point: the sky term and the key light through the shadow map, each through the volume's own depth.
@@ -352,10 +427,42 @@ vec3 localVolumeInScatter(int index, vec3 position, vec3 direction) {
   vec3 sunLight = vec3(0.0);
   if (visibility > 0.001) {
     vec3 lightDirection = normalize(vec3(towardSun.x, towardSun.y * ${LOCAL_VOLUME_SUN_FLATTEN.toFixed(3)}, towardSun.z));
-    vec3 lightDepth = localVolumeDepth(index, position, lightDirection, 3) * ${LOCAL_VOLUME_SHADOW_STRENGTH.toFixed(3)};
-    sunLight = volumeLightColor * (henyeyGreenstein(dot(direction, towardSun), localVolumeGrid[index].w) * visibility * ${LOCAL_VOLUME_KEY_GAIN.toFixed(3)}) * exp(-lightDepth);
+    bool detailShadow = localVolumeGrid[index].y > 0.5 && localVolumeGrid[index].x < 0.5;
+    vec3 lightDepth = localVolumeDepth(index, position, lightDirection, detailShadow ? ${LOCAL_VOLUME_DETAIL_SHADOW_TAPS} : 3, detailShadow) * ${LOCAL_VOLUME_SHADOW_STRENGTH.toFixed(3)};
+    // The octave sum of multiple scattering (scatterOctaves, in the free fourth component of the first axis row, as the octaves beyond the first so a volume without it keeps its bytes); one octave is the single scatter.
+    float cosine = dot(direction, towardSun);
+    int octaves = 1 + int(localVolumeAxes[index * 3].w + 0.5);
+    vec3 phaseSum = vec3(0.0);
+    float weight = 1.0;
+    float extinction = 1.0;
+    float anisotropy = localVolumeGrid[index].w;
+    for (int octave = 0; octave < ${LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES}; octave++) {
+      if (octave >= octaves) break;
+      phaseSum += weight * henyeyGreenstein(cosine, anisotropy) * exp(-lightDepth * extinction);
+      weight *= ${LOCAL_VOLUME_MULTI_SCATTER.toFixed(3)};
+      extinction *= ${LOCAL_VOLUME_MULTI_EXTINCTION.toFixed(3)};
+      anisotropy *= ${LOCAL_VOLUME_MULTI_ANISOTROPY.toFixed(3)};
+    }
+    sunLight = volumeLightColor * (visibility * ${LOCAL_VOLUME_KEY_GAIN.toFixed(3)}) * phaseSum;
   }
   return localVolumeSkyLight(index, position) + sunLight;
+}
+// The share of the key light a surface keeps under the volumes that cast shadows (#1047): exp of the optical depth the volumes put between it and the sun.
+vec3 localVolumeSurfaceShadow(vec3 position, vec3 towardSun) {
+  vec3 depthSum = vec3(0.0);
+  for (int index = 0; index < 8; index++) {
+    if (index >= localVolumeCount) break;
+    if (localVolumeGrid[index].z < 0.5 || localVolumeGrid[index].x > 0.5 || localVolumeCenters[index].w > 1.5) continue;
+    vec2 span = localVolumeInterval(index, position, towardSun);
+    float entry = max(span.x, 0.0);
+    if (span.y <= entry) continue;
+    float profileSum = 0.0;
+    for (int tap = 0; tap < ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}; tap++) {
+      profileSum += min(localVolumeProfile(index, position + towardSun * (entry + (span.y - entry) * (float(tap) + 0.5) / ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}.0), true) * ${LOCAL_VOLUME_LIGHT_DEPTH_SATURATION.toFixed(3)}, 1.0);
+    }
+    depthSum += localVolumeAbsorption[index].rgb * (profileSum * (span.y - entry) / ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}.0);
+  }
+  return exp(-depthSum * ${LOCAL_VOLUME_SHADOW_STRENGTH.toFixed(3)});
 }
 // The light behind a volume, blurred by the optical depth in front of it: taps of the frame spread over a disc whose radius grows with the depth,
 // each counted only where its surface lies at or past the ray's first volume entry, so an object in front of the volume is never smeared into it.
@@ -488,6 +595,10 @@ vec3 localVolumes(vec3 background) {
     blurEntry = min(blurEntry, entry);
   }
   if (blurDepth > 0.0) background = localVolumeBlurred(background, blurDepth, blurEntry, origin, direction);
+  if (depth < 1.0 && surfacePoint.w > 0.0 && max(volumeLightColor.r, max(volumeLightColor.g, volumeLightColor.b)) > 0.0) {
+    vec3 surfaceWorld = surfacePoint.xyz / surfacePoint.w;
+    background *= mix(vec3(1.0), localVolumeSurfaceShadow(surfaceWorld, normalize(volumeLightDirection)), keyVisibility(surfaceWorld));
+  }
   return background * transmittance + radiance;
 }
 `;
@@ -523,7 +634,7 @@ function packLights(renderer) {
 
 registerShaderFeatureCode('volumeFog', {
   // The JavaScript half, which the renderer calls for a frame that draws a volume fog.
-  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeFireLights },
+  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeFireLights, compositeLocalVolumes, releaseLocalVolumeComposite },
   keyDeclarations: KEY_LIGHT_DECLARATIONS,
   keyFunctions: KEY_LIGHT_FUNCTIONS,
   localDeclarations: LOCAL_VOLUME_DECLARATIONS,

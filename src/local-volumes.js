@@ -48,6 +48,8 @@ export function packLocalVolumes(volumes, buffers) {
   buffers.grid.fill(0);
   buffers.rampSetup.fill(0);
   buffers.blurred = volumes.some(volume => volume.blur > 0 && volume.density > 0);
+  // A volume that glows is composited before bloom extraction, so its glow blooms (#1046).
+  buffers.emissive = volumes.some(volume => volume.emissionStrength > 0 && (volume.shape === 'grid' || volume.emission.some(channel => channel > 0)));
   volumes.forEach((volume, index) => {
     const at = index * 4;
     const half = volume.shape === 'sphere' ? [volume.radius, volume.radius, volume.radius] : volume.size.map(extent => extent / 2);
@@ -59,13 +61,18 @@ export function packLocalVolumes(volumes, buffers) {
     buffers.steps.set([volume.steps, packedShape === PACKED_SHAPE_MESH ? buffers.meshParts.length : 0, volume.scatter ?? 0, volume.blur ?? 0], at);
     if (volume.emissionRamp) packEmissionRamp(volume, index, buffers);
     if (packedShape === PACKED_SHAPE_MESH) buffers.meshParts.push({ part: volume.part, label: `environment.localVolumes[${index}]` });
+    if (volume.shape !== 'grid') {
+      buffers.grid[at + 1] = volume.shadowDetail ? 1 : 0;
+      buffers.grid[at + 2] = volume.castShadow === true ? 1 : 0;
+    }
     if (volume.shape === 'grid') {
       if (buffers.gridVolume) throw new RangeError(ONE_GRID_VOLUME_MESSAGE);
       buffers.gridVolume = volume;
       buffers.grid.set([1, volume.temperatureScale, volume.blackbodyIntensity * volume.emissionStrength, volume.anisotropy], at);
     }
     const axes = volume.axes ?? IDENTITY_AXES;
-    for (let axis = 0; axis < 3; axis++) buffers.axes.set([axes[axis * 3], axes[axis * 3 + 1], axes[axis * 3 + 2], 0], (index * 3 + axis) * 4);
+    // The free fourth component of the first axis row carries the number of scatter octaves.
+    for (let axis = 0; axis < 3; axis++) buffers.axes.set([axes[axis * 3], axes[axis * 3 + 1], axes[axis * 3 + 2], axis === 0 ? (volume.scatterOctaves ?? 1) - 1 : 0], (index * 3 + axis) * 4);
   });
   return buffers;
 }
@@ -90,6 +97,21 @@ export const LOCAL_VOLUME_LIGHT_DEPTH_SATURATION = 6;
  * side of the smoke clearly darker than the sunlit side, the way the many scatters of a real smoke take the light from its shade.
  */
 export const LOCAL_VOLUME_SHADOW_STRENGTH = 1.2;
+
+/**
+ * The octave sum that approximates multiple scattering in a volume with `scatterOctaves` above 1 (Wrenninge et al. 2015, "Oz: the great and volumetric"), the one `volumeFog` has:
+ * octave n scatters MULTI_SCATTER^n as much, sees MULTI_EXTINCTION^n of the light's optical depth and has MULTI_ANISOTROPY^n of the anisotropy.
+ */
+export const LOCAL_VOLUME_MULTI_SCATTER = 0.5;
+export const LOCAL_VOLUME_MULTI_EXTINCTION = 0.5;
+export const LOCAL_VOLUME_MULTI_ANISOTROPY = 0.5;
+
+/** How many taps along the key light measure the optical depth a volume puts between a surface and the sun (#1047). */
+export const LOCAL_VOLUME_SURFACE_SHADOW_TAPS = 8;
+
+
+/** The taps along the light of a volume with `shadowDetail` (the others take 3), so the shadow follows the noise and not only the smooth profile. The shader's loop is bounded by the same number. */
+export const LOCAL_VOLUME_DETAIL_SHADOW_TAPS = 8;
 
 /** The share of the mean sky radiance the sky term of a scattering volume keeps. The sky lights the whole volume evenly, so a high share flattens the form the sun gives it. */
 export const LOCAL_VOLUME_SKY_GAIN = 0.5;

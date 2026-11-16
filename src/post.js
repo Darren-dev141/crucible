@@ -2,47 +2,8 @@ import { registeredFeatureCode, requireFeatureCode } from './shader-registry.js'
 
 export { fullscreenVertex } from './gl-program.js';
 
-function postFragmentSource(definitions, explosionFunction, fogDeclarations, fogFunctions) {
-  return `#version 300 es
-${definitions}
-precision highp float;
-in vec2 textureCoordinate;
-uniform sampler2D frameTexture;
-uniform float transparent;
-uniform sampler2D bloomTexture;
-uniform float bloomStrength;
-uniform float hdrEnabled;
-uniform vec3 grade;
-uniform float vignette;
-uniform float grainAmount;
-uniform vec2 resolution;
-uniform float monochrome;
-uniform float fade;
-uniform float cinematic;
-uniform float time;
-uniform float volumeExplosion;
-uniform float explosionProgress;
-uniform mat4 inverseViewProjection;
-uniform vec3 eye;
-uniform sampler2D sceneDepth;
-${fogDeclarations}
-uniform sampler2D occlusionTexture;
-uniform float occlusionStrength;
-uniform vec2 occlusionTexel;
-out vec4 outputColor;
-float luminance(vec3 color) { return dot(color, vec3(0.299, 0.587, 0.114)); }
-float hash(vec3 position) { return fract(sin(dot(position, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-float cloudNoise(vec3 position) {
-  vec3 cell = floor(position);
-  vec3 fraction = fract(position);
-  fraction = fraction * fraction * (3.0 - 2.0 * fraction);
-  float lower = mix(mix(hash(cell), hash(cell + vec3(1,0,0)), fraction.x), mix(hash(cell + vec3(0,1,0)), hash(cell + vec3(1,1,0)), fraction.x), fraction.y);
-  float upper = mix(mix(hash(cell + vec3(0,0,1)), hash(cell + vec3(1,0,1)), fraction.x), mix(hash(cell + vec3(0,1,1)), hash(cell + vec3(1,1,1)), fraction.x), fraction.y);
-  return mix(lower, upper, fraction.z);
-}
-${explosionFunction}
-${fogFunctions}
-void main() {
+// The main function of the post pass; the local volume composite before bloom swaps it for a smaller one.
+const POST_MAIN = `void main() {
   vec2 texel = 1.0 / resolution;
   vec3 center = texture(frameTexture, textureCoordinate).rgb;
   vec3 northwest = texture(frameTexture, textureCoordinate + vec2(-1.0, -1.0) * texel).rgb;
@@ -97,7 +58,51 @@ void main() {
   }
   float alpha = POST_TRANSPARENT ? coverage : 1.0;
   outputColor = vec4(color * (1.0 - fade) * alpha, alpha);
-}`;
+}
+`;
+
+function postFragmentSource(definitions, explosionFunction, fogDeclarations, fogFunctions, mainBody = POST_MAIN) {
+  return `#version 300 es
+${definitions}
+precision highp float;
+in vec2 textureCoordinate;
+uniform sampler2D frameTexture;
+uniform float transparent;
+uniform sampler2D bloomTexture;
+uniform float bloomStrength;
+uniform float hdrEnabled;
+uniform vec3 grade;
+uniform float vignette;
+uniform float grainAmount;
+uniform vec2 resolution;
+uniform float monochrome;
+uniform float fade;
+uniform float cinematic;
+uniform float time;
+uniform float volumeExplosion;
+uniform float explosionProgress;
+uniform mat4 inverseViewProjection;
+uniform vec3 eye;
+uniform sampler2D sceneDepth;
+${fogDeclarations}
+uniform sampler2D occlusionTexture;
+uniform float occlusionStrength;
+uniform vec2 occlusionTexel;
+out vec4 outputColor;
+float luminance(vec3 color) { return dot(color, vec3(0.299, 0.587, 0.114)); }
+float hash(vec3 position) { return fract(sin(dot(position, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+float cloudNoise(vec3 position) {
+  vec3 cell = floor(position);
+  vec3 fraction = fract(position);
+  fraction = fraction * fraction * (3.0 - 2.0 * fraction);
+  float lower = mix(mix(hash(cell), hash(cell + vec3(1,0,0)), fraction.x), mix(hash(cell + vec3(0,1,0)), hash(cell + vec3(1,1,0)), fraction.x), fraction.y);
+  float upper = mix(mix(hash(cell + vec3(0,0,1)), hash(cell + vec3(1,0,1)), fraction.x), mix(hash(cell + vec3(0,1,1)), hash(cell + vec3(1,1,1)), fraction.x), fraction.y);
+  return mix(lower, upper, fraction.z);
+}
+${explosionFunction}
+${fogFunctions}
+${mainBody}
+`;
 }
 
 export const skyFragment = `#version 300 es
@@ -211,6 +216,22 @@ function fogCodeFor(enabledSteps) {
     functions += LOCAL_VOLUMES_STUB;
   }
   return { declarations, functions };
+}
+
+// The local volume pass of a frame whose volumes glow and whose bloom is on, drawn before bloom extraction so the glow blooms.
+const LOCAL_VOLUME_COMPOSITE_MAIN = `void main() {
+  vec4 source = texture(frameTexture, textureCoordinate);
+  outputColor = vec4(localVolumes(source.rgb), source.a);
+}`;
+
+/** The fragment shader that composites the local volumes over the frame and nothing else (no anti-aliasing, bloom, fog or tone map). */
+export function createLocalVolumeCompositeFragment() {
+  const enabled = new Set(['local']);
+  const definitions = Object.entries(POST_STEP_CONDITIONS)
+    .map(([step, [macro, condition]]) => `#define ${macro} ${enabled.has(step) ? `(${condition})` : 'false'}`)
+    .join('\n');
+  const fogCode = fogCodeFor(enabled);
+  return postFragmentSource(definitions, explosionFunctionFor(enabled), fogCode.declarations, fogCode.functions, LOCAL_VOLUME_COMPOSITE_MAIN);
 }
 
 /** The post pass with only the listed steps compiled in; every step is switched by its uniform, as before. */
