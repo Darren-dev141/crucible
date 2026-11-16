@@ -164,7 +164,7 @@ function checkLookTarget(track, recipe) {
     }
   }
   if (kind === 'effects' && property === 'focusDistance' && !(recipe.effects.depthOfField?.blur > 0)) {
-    throw invalidField('motion.tracks.property', 'effects.focusDistance', 'a track only when effects.depthOfField.blur is above 0, such as blur 2; a camera with an fStop focuses on its target, so move the camera target track instead');
+    throw invalidField('motion.tracks.property', 'effects.focusDistance', 'a track only when effects.depthOfField.blur is above 0, such as blur 2; a camera with an fStop focuses on its target, or at its camera.focusDistance, so move the camera target track instead');
   }
   if (kind === 'effects' && property === 'distortionStrength' && !recipe.effects.distortion?.length) {
     throw invalidField('motion.tracks.property', 'effects.distortionStrength', 'a track only when effects.distortion names a source, such as { "shape": "ring" }');

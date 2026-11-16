@@ -9,11 +9,15 @@
 // It assumes a still scene under a moving camera. Light that depends on the view (a sharp reflection, a highlight, what is
 // seen through glass) is carried along with the surface, so it trails the camera by a few frames.
 
-const KERNEL_PARAMS_BYTES = 320;
+// KernelParamsV2 of Cook's pack revision 2 (FORMAT-v2.md): 336 bytes, with the anamorphic aperture ratio at byte 320.
+const KERNEL_PARAMS_BYTES = 336;
 const SEED_BYTES = [28, 32];
 const KERNEL_FLAGS_BYTE = 32;
 const ORTHOGRAPHIC_CAMERA_FLAG = 8;
 const CAMERA_BYTES = [112, 192];
+// packCameraParams rewrites the aperture ratio with the other camera words, so it belongs to the camera too.
+const APERTURE_RATIO_BYTES = [320, 324];
+const CAMERA_RANGES = [CAMERA_BYTES, APERTURE_RATIO_BYTES];
 const TILE_ORIGIN_BYTES = [312, 320];
 const CAMERA_POSITION_BYTE = 112;
 const CAMERA_FORWARD_BYTE = 128;
@@ -78,9 +82,11 @@ export function readCameraView(kernelParams) {
 }
 
 function sameCameraBytes(firstParams, secondParams) {
-  for (let byteOffset = CAMERA_BYTES[0]; byteOffset < CAMERA_BYTES[1]; byteOffset++) {
-    if (firstParams[byteOffset] !== secondParams[byteOffset]) {
-      return false;
+  for (const [start, end] of CAMERA_RANGES) {
+    for (let byteOffset = start; byteOffset < end; byteOffset++) {
+      if (firstParams[byteOffset] !== secondParams[byteOffset]) {
+        return false;
+      }
     }
   }
   return true;
@@ -98,7 +104,7 @@ export function onlyCameraDiffers(firstParams, secondParams) {
   requireKernelParams(firstParams);
   requireKernelParams(secondParams);
   for (let byteOffset = 0; byteOffset < KERNEL_PARAMS_BYTES; byteOffset++) {
-    if (insideRange(byteOffset, SEED_BYTES) || insideRange(byteOffset, CAMERA_BYTES) || insideRange(byteOffset, TILE_ORIGIN_BYTES)) {
+    if (insideRange(byteOffset, SEED_BYTES) || CAMERA_RANGES.some(range => insideRange(byteOffset, range)) || insideRange(byteOffset, TILE_ORIGIN_BYTES)) {
       continue;
     }
     const mask = byteOffset === KERNEL_FLAGS_BYTE ? 0xff & ~ORTHOGRAPHIC_CAMERA_FLAG : 0xff;

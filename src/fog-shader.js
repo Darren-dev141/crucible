@@ -2,6 +2,8 @@ import { registerShaderFeatureCode } from './shader-registry.js';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_STEPS, LOCAL_VOLUME_STEPS_PER_NOISE_CELL, LOCAL_VOLUME_BLUR_PIXELS, LOCAL_VOLUME_BLUR_RATE, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, MAX_LOCAL_VOLUMES } from './local-volumes.js';
 import { LOCAL_VOLUME_RAMP_STOPS } from './local-volume-ramp.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
+import { fireLightsOf } from './local-volume-fire-light.js';
+import { MAX_POINT_LIGHTS } from './light-limits.js';
 import { BLACKBODY_REFERENCE_KELVIN, BLACKBODY_MAXIMUM_GAIN } from './volume-grid.js';
 import { drawMeshVolumes } from './mesh-volume-pass.js';
 import { FogFieldTexture, createFogLightBuffers, packFogLights, volumeShadowAmbient, DEFAULT_FLOW_STRENGTH, DEFAULT_FLOW_PERIOD, resolveFogDetail, fogUsesDetail } from './fog-field.js';
@@ -88,6 +90,18 @@ function prepareLocalVolumes(renderer, input, frame, volumeTime = 0) {
   packLocalVolumes(bindLocalVolumeParts(resolved, renderer.sceneParts, { time: volumeTime }), buffers);
   drawMeshVolumes(renderer, frame);
   return buffers.count;
+}
+
+/**
+ * The frame's environment with the point lights of the local volumes that set `lightsScene` added after the scene's own, as many as fit (#1046).
+ * A frame with no such volume returns the environment it was given.
+ */
+function withVolumeFireLights(renderer, environment, volumeTime = 0) {
+  if (!Array.isArray(environment.localVolumes) || !environment.localVolumes.some(volume => volume?.lightsScene === true)) return environment;
+  const resolved = resolveLocalVolumes(environment.localVolumes, 'environment.localVolumes');
+  const ownLights = environment.pointLights ?? [];
+  const fireLights = fireLightsOf(bindLocalVolumeParts(resolved, renderer.sceneParts, { time: volumeTime }), MAX_POINT_LIGHTS - ownLights.length);
+  return fireLights.length === 0 ? environment : { ...environment, pointLights: [...ownLights, ...fireLights] };
 }
 
 // Uploads the packed volumes. Their uniforms exist only in a program with the local step compiled in.
@@ -509,7 +523,7 @@ function packLights(renderer) {
 
 registerShaderFeatureCode('volumeFog', {
   // The JavaScript half, which the renderer calls for a frame that draws a volume fog.
-  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes },
+  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeFireLights },
   keyDeclarations: KEY_LIGHT_DECLARATIONS,
   keyFunctions: KEY_LIGHT_FUNCTIONS,
   localDeclarations: LOCAL_VOLUME_DECLARATIONS,
