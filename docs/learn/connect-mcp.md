@@ -29,7 +29,7 @@ Every harness below runs the same command. These are the parts of it:
 npx -y --package @codepawlhq/crucible crucible-mcp --backend gpu --memory 192
 ```
 
-`--backend` is `gpu` or `cpu`. Use `cpu` on a machine with no graphics card or on a remote machine. `--memory` is the render budget in MiB, from 32 to 384. The default is 192. These options are optional too:
+`--backend` is `gpu` or `cpu`. Use `cpu` on a machine with no graphics card or on a remote machine. `--memory` is the render budget in MiB, from 32 up to half of the machine's RAM, at most 4096. The default is 192. These options are optional too:
 
 | Option | Value | What it does |
 | --- | --- | --- |

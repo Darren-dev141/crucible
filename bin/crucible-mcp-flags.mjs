@@ -4,7 +4,7 @@ export const MCP_OPTION_FLAGS = Object.freeze([
   { name: '--allow-addon', value: '<package name>', note: 'repeatable, chosen only here' },
   { name: '--backend', value: 'cpu|gpu', note: 'default gpu' },
   { name: '--browser', value: '<local Chrome/Chromium executable path>', note: 'default is the installed Chrome' },
-  { name: '--memory', value: '<32..384 MiB>', note: 'default 192' },
+  { name: '--memory', value: '<32..4096 MiB>', note: 'default 192; the top is half of the machine RAM, at most 4096, and it also raises the Node RSS and heap guard of a job' },
   { name: '--assets', value: '<absolute GLB directory>' },
   { name: '--packs', value: '<absolute folder of data-only packs>' },
   { name: '--jobs', value: '<absolute private output directory>', note: 'required for render jobs' },
