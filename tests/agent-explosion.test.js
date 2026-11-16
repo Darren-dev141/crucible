@@ -200,7 +200,7 @@ const FIRST_RELEASE_HASHES = new Map([
   ['{"start":0.5,"fuel":"oily","seed":7}', 'f677a321407728c72f05370db069291885d96c451b691248ea967754bb4f3e78'],
 ]);
 
-test('sparks false and motionBlur false write exactly the recipe of the first release', () => {
+test('sparks specks and motionBlur false write exactly the recipe of the first release, and false is an alias of specks', () => {
   const plainRecipe = {
     format: 'crucible.scene', schemaVersion: 1,
     geometries: [{ id: 'slab', type: 'box', bevel: 0 }],
@@ -209,9 +209,26 @@ test('sparks false and motionBlur false write exactly the recipe of the first re
     camera: { eye: [13, 10, 13], target: [0, 1.5, 0], fov: 32 },
   };
   for (const [extra, hash] of FIRST_RELEASE_HASHES) {
-    const { recipe } = applyBlast(blast({ ...JSON.parse(extra), sparks: false, motionBlur: false }), structuredClone(plainRecipe));
-    assert.equal(createHash('sha256').update(JSON.stringify(recipe)).digest('hex'), hash, extra);
+    for (const sparks of ['specks', false]) {
+      const { recipe } = applyBlast(blast({ ...JSON.parse(extra), sparks, motionBlur: false }), structuredClone(plainRecipe));
+      assert.equal(createHash('sha256').update(JSON.stringify(recipe)).digest('hex'), hash, `${extra} sparks ${sparks}`);
+    }
   }
+});
+
+test('sparks streaks, specks and none, with true as an alias of streaks', () => {
+  const systems = sparks => applyBlast(blast({ sparks })).recipe.particles.systems;
+  for (const value of ['streaks', true]) assert.equal(systems(value)[0].type, 'sparks', String(value));
+  for (const value of ['specks', false]) {
+    assert.equal(systems(value)[0].type, 'emitter', String(value));
+    assert.equal(systems(value)[0].node, 'blast-sparks');
+  }
+  const none = applyBlast(blast({ sparks: 'none' })).recipe;
+  assert.deepEqual(none.particles.systems.map(system => system.node), ['blast-dust', 'blast-rubble']);
+  assert.ok(!none.nodes.some(node => node.id === 'blast-sparks'));
+  assert.ok(!none.materials.some(material => material.id === 'blast-spark-glow'));
+  assert.ok(!none.particles.systems.some(system => system.type === 'sparks'));
+  assert.equal(createAgentScene(none).inspect({}).particles.systems.length, 2);
 });
 
 test('by default the sparks are streaks born at start and the fireball grid carries velocity under a shutter', () => {
@@ -256,7 +273,8 @@ test('a sparks object overrides count, speed and lifetime, and the sparks stay a
 
 test('bad sparks and motionBlur values name the field and a valid value', () => {
   const cases = [
-    [blast({ sparks: 'yes' }), /sparks.*plain object/],
+    [blast({ sparks: 'yes' }), /sparks.*streaks, specks, none/],
+    [blast({ sparks: 3 }), /sparks.*plain object/],
     [blast({ sparks: { count: 0 } }), /sparks\.count.*1 to 2000/],
     [blast({ sparks: { count: 1.5 } }), /sparks\.count/],
     [blast({ sparks: { count: 5000 } }), /sparks\.count/],

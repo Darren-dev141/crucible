@@ -424,7 +424,7 @@ Final resource references and hierarchy must be valid before publication.
 | `fuel` | `dry` | `oily` bakes more dark smoke, thickens the volume and adds more sparks |
 | `ground` | `center` y | Height of the ground for the dust, rubble landing and the scorch |
 | `shake` | `0.4` | Camera shake 0 to 1 over about 1 s; skipped when the camera already has an eye track, refused when you ask for it |
-| `sparks` | `true` | `true`: 700 spark streaks (900 for `oily`), the `sparks` particle system of the approved preview. An object overrides `count` (1 to 2000), `speed` and `lifetime` (a number or `[min, max]`; 0 to 100 m/s and 0.05 to 5 s). `false` keeps the plain glowing specks of the first release |
+| `sparks` | `"streaks"` | `"streaks"`: 700 spark streaks (900 for `oily`), the `sparks` particle system of the approved preview. `"specks"`: the plain glowing specks of the first release. `"none"`: no sparks and no `id-sparks` node or `id-spark-glow` material. An object `{ count, speed, lifetime }` means streaks with overrides (`count` 1 to 2000, `speed` and `lifetime` a number or `[min, max]`; 0 to 100 m/s and 0.05 to 5 s). `true` and `false` are aliases of `"streaks"` and `"specks"` |
 | `motionBlur` | `true` | The fireball blurs along its simulated velocity under the scene's motion blur shutter: `effects.motionBlur.shutter` if the scene has one, else 0.0417 s (one frame at 24 frames a second), which is written into the recipe. `false` bakes no velocity and leaves `effects` alone |
 | `debris` | none | `{ node }`: a convex mesh node broken into 12 loose pieces thrown outward by impulse events at `start`. Needs a `physics` section with a fixed floor body first; its `duration` grows to cover `start + 3` |
 
