@@ -17,7 +17,7 @@ Passes run in order on the finished frame: after depth of field, motion blur, li
 | Field | Meaning |
 | --- | --- |
 | `name` | Lowercase letter, then letters, digits or hyphens, 32 characters at most. Unique in the scene. |
-| `fragment` | GLSL ES 3.00 text that defines `vec4 userPass(vec2 uv)`. Helper functions and `const` values may come before it. 4096 bytes at most. |
+| `fragment` | GLSL ES 3.00 text that defines `vec4 userPass(vec2 uv)`. Helper functions and `const` values may come before it. 4096 bytes of code at most; comments and extra spaces are not counted (the text as sent may be up to 65536 bytes). |
 | `uniforms` | Named values. A number is a `float`; `[x, y]`, `[x, y, z]` and `[x, y, z, w]` are `vec2`, `vec3` and `vec4`; an int is `{ "type": "int", "value": 4 }`. |
 | `scale` | 0.05 to 1 (default 1). The pass renders at this fraction of the width and height, and whatever reads it enlarges it with nearest filtering. A `scale` of 0.25 on the last pass is a pixel-art downscale. |
 | `objects` | Optional list of 1 to 16 part names (node ids, as the object ID pass lists them). `objectSlotAt(uv)` tells which of them is under a pixel. The preview and render jobs draw the object ID pass first when a pass lists parts. |
@@ -39,7 +39,7 @@ You do not declare uniforms or the version line; the engine writes them. A snipp
 
 The check runs on the text before any compile. A snippet that breaks a rule is refused with the line, the column and a fix.
 
-- At most 4 passes, 4096 bytes per snippet, 16 uniforms per pass. Uniform names match `^[a-z][A-Za-z0-9]{0,31}$`, are not GLSL keywords and do not reuse an input name. Values are finite numbers.
+- At most 4 passes, 4096 bytes of code per snippet (comments and runs of spaces are not counted; the error shows both sizes), 16 uniforms per pass. Uniform names match `^[a-z][A-Za-z0-9]{0,31}$`, are not GLSL keywords and do not reuse an input name. Values are finite numbers.
 - No `#` lines (no `#define`, `#extension`, `#version`). No backslash, and ASCII text only.
 - No `while` or `do`. A `for` loop has the exact form `for (int i = 0; i < 8; i++) { ... }`: a counter that starts at an integer literal, a test against an integer literal, a step of `i++`, `++i`, `i--`, `--i`, `i += N` or `i -= N`, and a body in braces. It runs 64 iterations at most, and the body does not change the counter.
 - Loop work stays under 4096 iterations per pixel: nested loops multiply, and a call to your own helper counts that helper's loops again.
@@ -125,7 +125,7 @@ A material can carry its own fragment code: a GLSL function that changes the sur
 
 | Field | Meaning |
 | --- | --- |
-| `fragment` | GLSL ES 3.00 text that defines `void materialHook(inout vec3 color, inout float alpha, vec2 uv, vec3 worldPosition)`. Helper functions and `const` values may come before it. 4096 bytes at most. |
+| `fragment` | GLSL ES 3.00 text that defines `void materialHook(inout vec3 color, inout float alpha, vec2 uv, vec3 worldPosition)`. Helper functions and `const` values may come before it. 4096 bytes of code at most; comments and extra spaces are not counted (the text as sent may be up to 65536 bytes). |
 | `uniforms` | Named values, as for a post pass: a number is a `float`, `[x, y]` to `[x, y, z, w]` are vectors, `{ "type": "int", "value": 4 }` is an int. At most 16. |
 | `mask` | Optional, `"map"`: the snippet may sample `snippetMask` (a `sampler2D`), which is the material's own map or pattern. Load the image as the material `map`; there are no remote URLs. |
 
