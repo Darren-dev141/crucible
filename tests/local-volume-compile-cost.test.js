@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPostFragment, GRID_MOTION_STEP } from '../src/post.js';
+import { createPostFragment, createLocalVolumeCompositeFragment, localVolumeKindSteps, GRID_MOTION_STEP, GRID_ONLY_STEP, SHAPE_ONLY_STEP } from '../src/post.js';
+import { createLocalVolumeBuffers, packLocalVolumes } from '../src/local-volumes.js';
 import '../src/fog-shader.js';
 
 // The driver builds every inlined copy of a function, and the build of a grid volume's post program took 23 to 32 s on ANGLE d3d11
@@ -45,3 +46,55 @@ for (const [name, source] of Object.entries(sources)) {
     assert.ok(source.length < 32500, `${source.length} characters`);
   });
 }
+
+// A frame whose volumes are all grids or all boxes and spheres compiles only the march it uses (#1768); a mixed frame keeps today's program.
+const kindSources = {
+  grid: createPostFragment(['local', GRID_ONLY_STEP]),
+  shape: createPostFragment(['local', SHAPE_ONLY_STEP]),
+  both: createPostFragment(['local']),
+};
+
+test('a grid-only program has the grid march and none of the box and sphere march', () => {
+  const source = kindSources.grid;
+  assert.equal(occurrences(source, 'localVolumeInScatterGrid(nearest, position, direction)'), 1);
+  assert.equal(occurrences(source, 'localVolumeInScatterShape'), 0);
+  for (const name of ['localVolumeShapeProfile', 'localVolumeNoise(', 'localVolumeWarpedFade']) assert.equal(occurrences(source, name), 0, name);
+  assert.equal(occurrences(source, 'localGridSample(nearest'), 1);
+});
+
+test('a shape-only program has the box and sphere march and none of the grid march', () => {
+  const source = kindSources.shape;
+  assert.equal(occurrences(source, 'localVolumeInScatterShape(nearest, position, direction)'), 1);
+  assert.equal(occurrences(source, 'localVolumeInScatterGrid'), 0);
+  for (const name of ['localVolumeGridProfile', 'localGridSample(', 'localGridBlackbody(']) assert.equal(occurrences(source, name), 0, name);
+});
+
+test('the program of a mixed frame is the one it was before the variants', () => {
+  assert.equal(kindSources.both, sources.still);
+  assert.ok(kindSources.grid.length < kindSources.both.length && kindSources.shape.length < kindSources.both.length);
+});
+
+test('the glow composite takes the same variants and keeps one in-scatter copy', () => {
+  assert.equal(createLocalVolumeCompositeFragment(), createLocalVolumeCompositeFragment(false, 'both'));
+  assert.equal(occurrences(createLocalVolumeCompositeFragment(false, 'grid'), 'localVolumeInScatterShape'), 0);
+  assert.equal(occurrences(createLocalVolumeCompositeFragment(false, 'shape'), 'localVolumeInScatterGrid'), 0);
+  assert.equal(occurrences(createLocalVolumeCompositeFragment(true, 'grid'), 'localGridMotionPosition(nearest'), 1);
+  assert.equal(occurrences(createLocalVolumeCompositeFragment(), 'localVolumeInScatterGrid(nearest, position, direction)'), 1);
+});
+
+test('the marker steps name the kind of volume a frame packs', () => {
+  assert.deepEqual(localVolumeKindSteps('grid'), [GRID_ONLY_STEP]);
+  assert.deepEqual(localVolumeKindSteps('shape'), [SHAPE_ONLY_STEP]);
+  assert.deepEqual(localVolumeKindSteps('both'), []);
+  const kindOf = volumes => packLocalVolumes(volumes, createLocalVolumeBuffers()).kind;
+  const common = { center: [0, 0, 0], size: [1, 1, 1], absorption: [1, 1, 1], emission: [0, 0, 0] };
+  const grid = { ...common, shape: 'grid', gridData: {} };
+  const box = { ...common, shape: 'box' };
+  const mesh = { ...common, shape: 'mesh', part: 'cloud' };
+  assert.equal(kindOf([grid]), 'grid');
+  assert.equal(kindOf([grid, mesh]), 'grid');
+  assert.equal(kindOf([box]), 'shape');
+  assert.equal(kindOf([box, mesh]), 'shape');
+  assert.equal(kindOf([grid, box]), 'both');
+  assert.equal(kindOf([mesh]), 'both');
+});

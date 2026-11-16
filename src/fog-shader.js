@@ -110,16 +110,18 @@ function withVolumeFireLights(renderer, environment, volumeTime = 0) {
 // skips its local step and reads this texture. The pass runs only for a frame with bloom and a glowing volume, so every other frame draws as before.
 function compositeLocalVolumes(renderer, frame, environment, sourceTexture) {
   const context = renderer.context;
-  const composite = (renderer.localVolumeComposite ??= { program: null, uniforms: {}, target: null, motion: false });
+  const composite = (renderer.localVolumeComposite ??= { program: null, uniforms: {}, target: null, motion: false, kind: 'both' });
   const motion = renderer.localVolumeBuffers.gridShutter > 0;
-  if (composite.program && composite.motion !== motion) {
+  const kind = renderer.localVolumeBuffers.kind;
+  if (composite.program && (composite.motion !== motion || composite.kind !== kind)) {
     context.deleteProgram(composite.program);
     composite.program = null;
     composite.uniforms = {};
   }
   if (!composite.program) {
     composite.motion = motion;
-    composite.program = compileProgram(context, fullscreenVertex, createLocalVolumeCompositeFragment(motion));
+    composite.kind = kind;
+    composite.program = compileProgram(context, fullscreenVertex, createLocalVolumeCompositeFragment(motion, kind));
     for (const name of ['frameTexture', 'sceneDepth', 'resolution', 'inverseViewProjection', 'eye']) composite.uniforms[name] = context.getUniformLocation(composite.program, name);
   }
   if (!composite.target) composite.target = createCompositeTarget(renderer);
@@ -424,13 +426,19 @@ const LOCAL_MOTION_SAMPLE_POSITION = `vec3 samplePosition = localGridMotionPosit
 // Each volume is marched on its own between its entry and exit (cut at the first surface) and composited nearest first: the colour
 // behind it is dimmed by exp(-absorption * profile * step) and its emission is added, both per colour channel.
 // With `motion` the grid march reads the point its shutter time selects; without it the source is exactly what it was before the blur existed.
-const localVolumeFunctions = motion => `
+const localVolumeFunctions = (motion, kind = 'both') => {
+  const withGrid = kind !== 'shape';
+  const withShape = kind !== 'grid';
+  const profileSelection = withGrid && withShape
+    ? 'return localVolumeGrid[index].x > 0.5 ? localVolumeGridProfile(index, position) : localVolumeShapeProfile(index, position, withNoise);'
+    : (withGrid ? 'return localVolumeGridProfile(index, position);' : 'return localVolumeShapeProfile(index, position, withNoise);');
+  return `
 // Interleaved gradient noise (Jimenez 2014): the start offsets of neighbouring pixels stay far apart, so the march error is a fine, even dither
 // and not the clumps a white-noise hash leaves, which read as grain at 8 to 16 steps.
 float localVolumeJitter() {
   return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
 }
-// Value noise on a hash of plain multiplies, adds and fract, which rounds the same way on SwiftShader, where it was measured, and is unchecked on hardware GPUs (a sine hash does not: its error
+${withShape ? `// Value noise on a hash of plain multiplies, adds and fract, which rounds the same way on SwiftShader, where it was measured, and is unchecked on hardware GPUs (a sine hash does not: its error
 // grows with the argument). local-volume-noise.js repeats it for the CPU path tracer, so keep the two in step.
 float localVolumeCellHash(vec3 cell) {
   vec3 scrambled = fract(cell * 0.1031);
@@ -445,7 +453,7 @@ float localVolumeNoise(vec3 position) {
   float upper = mix(mix(localVolumeCellHash(cell + vec3(0,0,1)), localVolumeCellHash(cell + vec3(1,0,1)), fraction.x), mix(localVolumeCellHash(cell + vec3(0,1,1)), localVolumeCellHash(cell + vec3(1,1,1)), fraction.x), fraction.y);
   return mix(lower, upper, fraction.z);
 }
-vec3 localVolumeLocal(int index, vec3 vector) {
+` : ''}vec3 localVolumeLocal(int index, vec3 vector) {
   return vec3(dot(localVolumeAxes[index * 3].xyz, vector), dot(localVolumeAxes[index * 3 + 1].xyz, vector), dot(localVolumeAxes[index * 3 + 2].xyz, vector));
 }
 vec2 localVolumeInterval(int index, vec3 origin, vec3 direction) {
@@ -476,12 +484,12 @@ vec2 localVolumeInterval(int index, vec3 origin, vec3 direction) {
   }
   return vec2(entry, exitDistance);
 }
-// Where a fade position (0 at the core, 1 at the outer face) lands once the noise has pushed the edge in and out, most at the middle of the fade (local-volumes.js repeats it).
+${withShape ? `// Where a fade position (0 at the core, 1 at the outer face) lands once the noise has pushed the edge in and out, most at the middle of the fade (local-volumes.js repeats it).
 float localVolumeWarpedFade(float position, float noiseAmount, float noise) {
   float clamped = clamp(position, 0.0, 1.0);
   return clamped + (0.5 - noise) * noiseAmount * ${LOCAL_VOLUME_EDGE_WARP.toFixed(3)} * 4.0 * clamped * (1.0 - clamped);
 }
-// A grid volume (#1045) reads its box as a 3D texture: x density, y temperature, z flame. localVolumeGrid holds, per volume, x 1 for a grid, y the temperature
+` : ''}${withGrid ? `// A grid volume (#1045) reads its box as a 3D texture: x density, y temperature, z flame. localVolumeGrid holds, per volume, x 1 for a grid, y the temperature
 // scale, z the blackbody intensity times the emission strength and w the anisotropy. volume-grid.js (blackbodyRadiance) repeats the blackbody.
 // A grid cell at a world point: x density, y temperature, z flame, all linear taps of the padded texture (a texel centre is at i + 0.5).
 vec3 localGridSample(int index, vec3 position) {
@@ -489,13 +497,13 @@ vec3 localGridSample(int index, vec3 position) {
   vec3 paddedSize = vec3(textureSize(localGridTexture, 0));
   return textureLod(localGridTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
 }
-// The baked blackbody radiance at a world point (volume-grid.js bakedGridEmission), before the blackbody intensity and the emission strength.
+` : ''}${withGrid ? `// The baked blackbody radiance at a world point (volume-grid.js bakedGridEmission), before the blackbody intensity and the emission strength.
 vec3 localGridBlackbody(int index, vec3 position) {
   vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
   vec3 paddedSize = vec3(textureSize(localGridEmissionTexture, 0));
   return textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
 }
-${motion ? LOCAL_MOTION_POSITION_FUNCTION : ''}// The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
+` : ''}${motion ? LOCAL_MOTION_POSITION_FUNCTION : ''}// The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
 // code (0 none, 1 density, 2 temperature, 3 flame), y the stop count and z, w the source range; the stops are baked in local-volume-ramp.js with the exposure and
 // the emission strength applied. The light fades to nothing with the source, so a cold cell gives none.
 vec3 localVolumeRampLight(int index, float value) {
@@ -507,12 +515,12 @@ vec3 localVolumeRampLight(int index, float value) {
   int upper = min(lower + 1, int(setup.y) - 1);
   return mix(localVolumeRamp[index * ${LOCAL_VOLUME_RAMP_STOPS} + lower].rgb, localVolumeRamp[index * ${LOCAL_VOLUME_RAMP_STOPS} + upper].rgb, scaled - float(lower)) * position;
 }
-float localVolumeGridProfile(int index, vec3 position) {
+${withGrid ? `float localVolumeGridProfile(int index, vec3 position) {
   vec3 gridOffset = abs(position - localVolumeCenters[index].xyz);
   vec3 gridHalf = localVolumeExtents[index].xyz;
   return (gridOffset.x > gridHalf.x || gridOffset.y > gridHalf.y || gridOffset.z > gridHalf.z) ? 0.0 : localGridSample(index, position).x;
 }
-float localVolumeShapeProfile(int index, vec3 position, bool withNoise) {
+` : ''}${withShape ? `float localVolumeShapeProfile(int index, vec3 position, bool withNoise) {
   vec3 offset = position - localVolumeCenters[index].xyz;
   if (localVolumeCenters[index].w < 0.5) offset = localVolumeLocal(index, offset);
   vec3 halfSize = localVolumeExtents[index].xyz;
@@ -536,10 +544,10 @@ float localVolumeShapeProfile(int index, vec3 position, bool withNoise) {
   if (noiseAmount > 0.0) profile *= mix(1.0, noise * 2.0, noiseAmount);
   return profile;
 }
-float localVolumeProfile(int index, vec3 position, bool withNoise) {
-  return localVolumeGrid[index].x > 0.5 ? localVolumeGridProfile(index, position) : localVolumeShapeProfile(index, position, withNoise);
+` : ''}float localVolumeProfile(int index, vec3 position, bool withNoise) {
+  ${profileSelection}
 }
-${scatterFunctions('Grid')}${scatterFunctions('Shape')}
+${withGrid ? scatterFunctions('Grid') : ''}${withShape ? scatterFunctions('Shape') : ''}
 // The share of the key light a surface keeps under the volumes that cast shadows (#1047): exp of the optical depth the volumes put between it and the sun.
 vec3 localVolumeSurfaceShadow(vec3 position, vec3 towardSun) {
   vec3 depthSum = vec3(0.0);
@@ -658,7 +666,7 @@ vec3 localVolumes(vec3 background) {
       blurEntry = min(blurEntry, entry);
       continue;
     }
-    if (localVolumeGrid[nearest].x > 0.5) {
+${withGrid ? `    if (localVolumeGrid[nearest].x > 0.5) {
       int gridSteps = int(localVolumeSteps[nearest].x);
       float gridStepSize = (exitDistance - entry) / float(gridSteps);
       float gridJitter = fract(localVolumeJitter() + float(nearest) * 0.618034);
@@ -677,7 +685,7 @@ vec3 localVolumes(vec3 background) {
       blurEntry = min(blurEntry, entry);
       continue;
     }
-    int steps = int(localVolumeSteps[nearest].x);
+` : ''}${withShape ? `    int steps = int(localVolumeSteps[nearest].x);
     float noiseAmount = localVolumeAbsorption[nearest].w;
     if (noiseAmount > 0.0) steps = min(${LOCAL_VOLUME_MAXIMUM_STEPS}, max(steps, int(ceil((exitDistance - entry) * localVolumeEmission[nearest].w * ${LOCAL_VOLUME_STEPS_PER_NOISE_CELL.toFixed(1)}))));
     float stepSize = (exitDistance - entry) / float(steps);
@@ -695,7 +703,7 @@ vec3 localVolumes(vec3 background) {
       blurDepth += localVolumeSteps[nearest].w * dot(extinction, vec3(0.3333));
     }
     blurEntry = min(blurEntry, entry);
-  }
+` : ''}  }
   if (blurDepth > 0.0) background = localVolumeBlurred(background, blurDepth, blurEntry, origin, direction);
   if (depth < 1.0 && surfacePoint.w > 0.0 && max(volumeLightColor.r, max(volumeLightColor.g, volumeLightColor.b)) > 0.0) {
     vec3 surfaceWorld = surfacePoint.xyz / surfacePoint.w;
@@ -704,6 +712,7 @@ vec3 localVolumes(vec3 background) {
   return background * transmittance + radiance;
 }
 `;
+};
 
 // The key light's side of the fog and of a scattering local volume: the shadow map, the light and the phase function. Both steps read these,
 // so post.js compiles this block in whenever either is on.
