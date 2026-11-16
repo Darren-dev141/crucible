@@ -33,6 +33,11 @@ jobs:
   addon:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # llvmpipe's AVX-512 code path miscompiles the Cycles kernel on Zen 5 and Sapphire Rapids-class runners: wrong light values
+      # or a SIGSEGV in a masked gather, depending on which runner GitHub assigns (codepawl/cook#42). AVX code generation is correct on
+      # every CPU probed, so the lavapipe steps use it until Mesa fixes the AVX-512 path.
+      GALLIUM_OVERRIDE_CPU_CAPS: avx
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
