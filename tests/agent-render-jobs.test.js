@@ -227,7 +227,7 @@ test('an image job takes up to 3840x2160 and the frame byte limit grows with its
     const { jobId } = await controller.submit({ ...request(), settings: { kind: 'image', width, height } });
     assert.equal((await terminal(controller, jobId)).settings.height, height);
   }
-  await assert.rejects(controller.submit({ ...request(), settings: { kind: 'video', width: 1920, height: 1081 } }), /1920x1080 \(only an image job goes up to 3840x2160\)/);
+  await assert.rejects(controller.submit({ ...request(), settings: { kind: 'video', width: 1920, height: 1081 } }), /1920x1080 \(only an image job goes up to 3840x2160; a square frame fits up to 1440x1440\)/);
   assert.equal(frameByteLimitFor(1920, 1080, 12), 12);
   assert.equal(frameByteLimitFor(2880, 1620, 12), 36);
   assert.equal(frameByteLimitFor(3840, 2160, 12), 48);

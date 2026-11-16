@@ -1,5 +1,6 @@
 import { answerCapabilities } from './capabilities-topics.mjs';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
+import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { readEnvironmentVariable } from '../src/environment-variable.js';
 import { McpServer } from '@modelcontextprotocol/server';
 import { resolveJobRoot } from './agent-job-root.mjs';
@@ -15,7 +16,7 @@ import packageMetadata from '../package.json' with { type: 'json' };
 import { MODIFIER_OPERATIONS } from '../src/mesh-operations.js';
 import { VIEW_TRANSFORM_NAMES, LOOK_NAMES } from '../src/view-transform-names.js';
 import { BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES, CATALOG_FILE_ID } from '../src/look-catalog.js';
-import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError } from '../src/agent-scene-capabilities.js';
+import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError, MAXIMUM_STILLS_FRAMES } from '../src/agent-scene-capabilities.js';
 import { MATERIAL_LAYER_SCALAR_RANGES, MATERIAL_LAYER_COLOR_RANGES } from '../src/material-layers.js';
 import { SUBSURFACE_RANGES } from '../src/subsurface-limits.js';
 import { responseFormatField, chosenFormat, conciseReview, conciseJobStatus, conciseJobResult, withoutNotes } from './mcp-response-format.mjs';
@@ -172,7 +173,7 @@ const materialFields = {
   retro: z.record(z.string(), z.unknown()).nullable().optional().describe('PS1 look, raster only: vertexSnap [w, h] and affineUV; scene_capabilities materialRetro.'),
   pattern: listed('pattern', materialPattern, 'Procedural texture; box mapping needs no UVs. type is a preset or graph (give graph); also mapping, colors, size, count, bump, seed, axis, resolution; see scene_capabilities pattern.', coreOf(materialPattern.shape, ['type'])).optional(),
   map: z.strictObject({ sequence: z.strictObject({
-    frames: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(2).max(64),
+    frames: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(2).max(TEXTURE_SEQUENCE_LIMITS.maxFrames),
     fps: z.number().positive().max(60),
     loop: z.boolean().optional(),
   }) }).optional().describe('Image sequence colour map of catalog images; scene_capabilities textureSequence.'),
@@ -873,6 +874,7 @@ const renderSettings = z.strictObject({
   audio: z.strictObject({ file: z.string().max(68), offset: z.number().min(0).max(3600).optional(), track: z.enum(['aac', 'pcm']).optional() }).optional().describe('Video only: a file in the --audio folder, mixed in from offset seconds.'),
   encoder: z.enum(VIDEO_ENCODERS).optional().describe('Video only: cpu (default) or nvenc.'),
   passes: z.array(z.enum(RENDER_PASS_NAMES)).min(1).max(RENDER_PASS_NAMES.length).optional().describe('image and stills: also write a raw PNG per pass; opaque geometry only.'),
+  stillCount: z.number().int().min(2).max(MAXIMUM_STILLS_FRAMES).optional(),
   transparent: z.boolean().optional().describe('image and stills: lit image with alpha; no sky, auto ground or volume fog.'),
   format: z.enum(RENDER_OUTPUT_FORMATS).optional().describe('image and stills: png (default), png16 or exr (depth in metres).'),
   multilayer: z.boolean().optional().describe('With format exr and passes: pack Combined and every pass into one EXR per frame.'),
