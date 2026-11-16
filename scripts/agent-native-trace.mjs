@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { clampLimitsByEngine, requireRenderEngine } from './render-engine.mjs';
+import { requireExportFitsCapacity } from './native-capacity.mjs';
 import { mapLookToCookPost } from './native-post-look.mjs';
 import { encodeOpaquePng } from './native-png.mjs';
 import { NATIVE_JOB_MAXIMUM_INSTANCES, NATIVE_JOB_MAXIMUM_TRIANGLES } from './native-bake-page.js';
@@ -116,11 +117,13 @@ function tableBytesFrom(table) {
  * bytes, which traceFrameNative takes like the base64 of a one-message export. `readChunk(name, offset)` resolves with the
  * base64 of one chunk. No single string holds a whole table, so the scene is bounded by memory, not by a message.
  */
-export async function collectExportChunks(manifest, readChunk) {
+export async function collectExportChunks(manifest, readChunk, { capacity } = {}) {
   const { chunks, ...exported } = manifest;
   if (!chunks || !(chunks.chunkBytes > 0)) {
     throw new TypeError('collectExportChunks: the export carries no `chunks` manifest. Export the scene with transport "chunks".');
   }
+  // With the adapter capacity, a scene that cannot fit fails here, before any table is read from the page.
+  const capacityUse = capacity ? requireExportFitsCapacity(manifest, capacity) : undefined;
   const tables = {};
   for (const [name, byteLength] of Object.entries(chunks.tables)) {
     const bytes = new Uint8Array(byteLength);
@@ -134,17 +137,18 @@ export async function collectExportChunks(manifest, readChunk) {
     }
     tables[name] = bytes;
   }
-  return { ...exported, tables };
+  return { ...exported, tables, ...(capacityUse ? { capacityUse } : {}) };
 }
 
 /**
  * Exports the scene of a render job from its page in chunks and returns it with byte tables. `input` is what the page's
- * `exportNativeScene` takes. The page lets go of its copy when the read ends, whether it succeeded or not.
+ * `exportNativeScene` takes. The page lets go of its copy when the read ends, whether it succeeded or not. `capacity` (from
+ * readNativeCapacity) makes a scene the adapter cannot hold fail before its tables are read.
  */
-export async function fetchNativeExport(page, input) {
+export async function fetchNativeExport(page, input, { capacity } = {}) {
   const manifest = await page.evaluate(request => window.__agentPreview.exportNativeScene(request), { ...input, chunked: true });
   try {
-    return await collectExportChunks(manifest, (name, offset) => page.evaluate(request => window.__agentPreview.readNativeExportChunk(request), { name, offset }));
+    return await collectExportChunks(manifest, (name, offset) => page.evaluate(request => window.__agentPreview.readNativeExportChunk(request), { name, offset }), { capacity });
   } finally {
     await page.evaluate(() => window.__agentPreview.releaseNativeExport()).catch(() => {});
   }
@@ -349,7 +353,7 @@ async function traceOneFrameNative({ tracer, exported, width, height, samples, b
     kernel, averageSamples: traced.averageSamples ?? samples, noiseThreshold, triangles: exported.triangles, inputBytes: tableBytes(tables), ...(exported.instances === undefined ? {} : { instances: exported.instances }),
     ...(exported.instancing === undefined ? {} : { instancing: exported.instancing, instancingReason: exported.instancingReason }),
     ...(exported.materialsReason === undefined ? {} : { materialsReason: exported.materialsReason }), tracedSeconds, ignored: exported.ignored,
-    ...(route ? { nativeSession: route } : {}) };
+    ...(route ? { nativeSession: route } : {}), ...(exported.capacityUse ? { nativeCapacity: exported.capacityUse } : {}) };
   const rawLinear = features.color;
   let linear = features.color;
   const denoiseStarted = performance.now();
