@@ -1,4 +1,4 @@
-import { CLOSED_ROOM_SHARE } from './closed-room.js';
+import { CLOSED_ROOM_SHARE, partMatrixLookup } from './closed-room.js';
 import { fittedClosedRoomShare, fittedRoomHasWalls } from './fitted-closed-room.js';
 import { buildWorld, cosineDirection, radicalInverse, sceneScale } from './light-bake.js';
 import { worldBounds } from './probe-trace.js';
@@ -235,13 +235,13 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
   if (occluders.length < 2) return unchanged('nothing above the floor');
   // A closed room has no sky to see: its walls and lamps give the light, and the shader's room term already handles it.
   // The fitted test leaves out a lawn beside the room and heavy props, as the sun bounce does.
-  const roomShare = fittedClosedRoomShare(parts, new Map(parts.map(part => [part.name, part.matrix])));
+  const roomShare = fittedClosedRoomShare(parts, partMatrixLookup(parts));
   const closedRoom = roomShare !== null && roomShare >= CLOSED_ROOM_SHARE;
   if (closedRoom && !includeClosedRooms && !onlyClosedRooms) return unchanged('closed room');
   // Open ground gets light back from sunlit facades and streets that a sky trace does not hold, so it comes out too dark.
   if (onlyClosedRooms && !closedRoom) return unchanged('open scene');
   // The walls, ceiling and props are traced as well only in a room that has walls all round: a roof on columns reads as closed to the ray test above, but its floor keeps the light it had.
-  const everySurface = surfaces === 'all' && closedRoom && fittedRoomHasWalls(parts, new Map(parts.map(part => [part.name, part.matrix])));
+  const everySurface = surfaces === 'all' && closedRoom && fittedRoomHasWalls(parts, partMatrixLookup(parts));
   const strength = requestedStrength ?? (onlyClosedRooms ? (everySurface ? ROOM_SURFACE_SKY_STRENGTH : FLOOR_SKY_ROOM_STRENGTH) : FLOOR_SKY_STRENGTH);
   // With every surface, every face of every part is cut (a ceiling slab counts as a floor, so its room side needs the cut too).
   const cutPartIndices = everySurface ? parts.map((part, index) => index).filter(index => floorIndices.includes(index) || (isFloorMaterial(parts[index].material) && hasPlainMesh(parts[index]))) : floorIndices;

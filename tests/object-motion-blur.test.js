@@ -25,17 +25,17 @@ test('only a non-zero objects value loads the object blur module', () => {
   assert.equal(needs({ motionBlur: { objects: 0.25, shutter: 0.1 } }), true);
 });
 
-function fakeRenderer(names) {
-  return { batches: [{ parts: names.map(name => ({ name })) }], drawsInOpaqueLoop: () => true, postStages: [], passSupport: {} };
+function fakeRenderer(names, parts = names.map(name => ({ name }))) {
+  return { batches: [{ parts }], drawsInOpaqueLoop: () => true, postStages: [], passSupport: {} };
 }
 
 test('each part gets the transform back to where it was, and a part that did not move gets the identity', () => {
   const parts = [{ name: 'prop', matrix: mat4.fromTranslation(mat4.create(), [1, 0, 0]) }, { name: 'wall', matrix: mat4.create() }];
   const current = sampleWorldMatrices(parts);
   parts[0].matrix[12] = 5;
-  assert.equal(current.get('prop')[12], 1, 'Sampled matrices are copies.');
-  const previous = new Map([['prop', mat4.fromTranslation(mat4.create(), [-1, 0, 0])], ['wall', mat4.create()]]);
-  const packed = packObjectMotion(fakeRenderer(['prop', 'wall']), current, previous);
+  assert.equal(current.get(parts[0])[12], 1, 'Sampled matrices are copies.');
+  const previous = new Map([[parts[0], mat4.fromTranslation(mat4.create(), [-1, 0, 0])], [parts[1], mat4.create()]]);
+  const packed = packObjectMotion(fakeRenderer(['prop', 'wall'], parts), current, previous);
   assert.equal(packed.count, 2);
   assert.equal(packed.rows, 1);
   assert.deepEqual([...packed.matrices.slice(0, 16)], [...mat4.fromTranslation(mat4.create(), [-2, 0, 0])]);
