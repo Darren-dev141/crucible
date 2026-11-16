@@ -1,0 +1,1 @@
+- The MCP server keeps baked add-explosion frames in a cache folder, so a second process that needs the same blast loads it instead of simulating for about 5 seconds (#1768)

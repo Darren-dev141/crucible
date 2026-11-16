@@ -23,6 +23,8 @@ import { resolveAddons } from './mcp-addons.mjs';
 import { createCallLogger, CALL_LOG_ENVIRONMENT_VARIABLE } from './mcp-call-log.mjs';
 import { startUpdateCheck, updateNoticeText, describeUpdateCheck } from '../src/mcp-update-check.js';
 import { installVolumeGridFiles } from '../src/mcp-volume-grids.js';
+import { setExplosionBakeStore } from '../src/explosion-grids.js';
+import { bakeCacheDirectory, createExplosionBakeCache } from '../src/explosion-bake-cache.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from '../src/light-limits.js';
 import { currentFormatName, warnLegacyOnce } from '../src/legacy-names.js';
 import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
@@ -1115,6 +1117,9 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
   const { createAgentRuntime, validateLaunchPaths } = await import('./agent-runtime.mjs');
   validateLaunchPaths(options);
   setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
+  // Add-explosion bakes take about 5 s a process; a cache folder lets the next process read them instead (#1768).
+  const bakeCache = bakeCacheDirectory();
+  if (bakeCache) setExplosionBakeStore(createExplosionBakeCache(bakeCache));
   // Not awaited: the check fills in while the client connects and never delays or fails the start.
   const updateCheck = startUpdateCheck({ currentVersion: version });
   const handle = serveStdio(() => createAgentMcpServer(createAgentRuntime({ ...options, previewUrl }), { version, branches: options.branches !== 'off', relations: options.relations !== 'off', findings: options.findings !== 'off', updateAvailable: updateCheck.current }), {
