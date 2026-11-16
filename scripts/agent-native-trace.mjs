@@ -202,6 +202,23 @@ function withoutAlpha(rgba, pixelCount) {
 }
 
 /**
+ * The colour with every negative value raised to zero. Dispersive glass keeps signed spectral weights (as Cycles does), so a
+ * trace can hold small negative pixels at the most saturated fringes. The film stays signed; this clamp sits in front of what
+ * cannot take them: OIDN, and the display transforms (agx and neutral shift hue and brightness on a negative channel). The
+ * wavelet and a-trous filters only average, so they keep the signs. A buffer with no negative value comes back as the same
+ * array, so a render without dispersion is untouched.
+ */
+export function clampNegativeColor(color) {
+  let clamped = null;
+  for (let index = 0; index < color.length; index++) {
+    if (!(color[index] < 0)) continue;
+    clamped ??= color.slice();
+    clamped[index] = 0;
+  }
+  return clamped ?? color;
+}
+
+/**
  * The native kernel a job traces with: "cycles" (the Cycles-matching kernel) unless JS67_NATIVE_KERNEL=legacy asks for the
  * older one. Any other value is passed on so `traceNative` rejects it with its own message.
  */
@@ -325,7 +342,8 @@ async function displayBytes({ traced, linear, width, height, nativePost, postTra
   const reason = nativePost === false ? 'native post was switched off for this frame'
     : postTrace.reason ?? 'this frame did not render through a session';
   report.display = { path: 'javascript', reason };
-  const scaled = look.exposure === 1 ? linear : linear.map(value => value * look.exposure);
+  const displayed = clampNegativeColor(linear);
+  const scaled = look.exposure === 1 ? displayed : displayed.map(value => value * look.exposure);
   return toneMapToRgba8(scaled, width, height, { viewTransform: look.viewTransform, look: look.look });
 }
 
@@ -359,7 +377,7 @@ async function traceOneFrameNative({ tracer, exported, width, height, samples, b
   const denoiseStarted = performance.now();
   if (denoise === 'oidn') {
     try {
-      const filtered = await denoiseFrameWithOidn({ tracer, denoiser, width, height, color: features.color, albedo: features.albedo, normal: features.normal });
+      const filtered = await denoiseFrameWithOidn({ tracer, denoiser, width, height, color: clampNegativeColor(features.color), albedo: features.albedo, normal: features.normal });
       linear = filtered.linear;
       Object.assign(report, { denoised: true, denoiser: 'oidn', oidnVersion: denoiser.OIDN_VERSION, oidnMode: filtered.mode, ...(filtered.note ? { denoiserNote: filtered.note } : {}) });
     } catch (error) {
