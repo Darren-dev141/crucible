@@ -358,7 +358,7 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   motionLook: Object.freeze({
     light: 'id point:N, spot:N or area:N (index in its list): position, color, intensity; direction on spot and area',
     sun: 'direction, color, intensity (lightDirection, keyColor, keyIntensity)',
-    environment: 'skyTop, skyBottom, fogColor, fogDensity, volumeFogDensity, ambientIntensity, fillIntensity, environmentIntensity, environmentRotation',
+    environment: 'skyTop, skyBottom, fogColor, fogDensity, volumeFogDensity, ambientIntensity, fillIntensity, environmentIntensity, environmentRotation (the key light is the sun kind, not environment)',
     effects: 'exposure, focusDistance (needs effects.depthOfField.blur above 0; an fStop camera focuses on its target)',
     note: 'Same keyframes and easing as other tracks. After sampleMotion, scene.environment and scene.effects hold the sampled values.',
   }),
