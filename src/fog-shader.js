@@ -6,7 +6,7 @@ import { LOCAL_VOLUME_RAMP_STOPS } from './local-volume-ramp.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
-import { BLACKBODY_REFERENCE_KELVIN, BLACKBODY_MAXIMUM_GAIN } from './volume-grid.js';
+import { BLACKBODY_RADIANCE_SCALE, BLACKBODY_HUE_TABLE, BLACKBODY_TABLE_FIRST_KELVIN, BLACKBODY_TABLE_STEP_KELVIN, BLACKBODY_TABLE_COUNT } from './volume-grid.js';
 import { drawMeshVolumes } from './mesh-volume-pass.js';
 import { FogFieldTexture, createFogLightBuffers, packFogLights, volumeShadowAmbient, DEFAULT_FLOW_STRENGTH, DEFAULT_FLOW_PERIOD, resolveFogDetail, fogUsesDetail } from './fog-field.js';
 
@@ -205,6 +205,15 @@ function bindLocalVolumes(renderer, post, frame, environment) {
   context.uniform1i(locate('localGridTexture'), 8);
 }
 
+/** The luminance 1 blackbody hues of volume-grid.js as GLSL vec3 constructors, in table order. */
+function blackbodyHueGlsl() {
+  const entries = [];
+  for (let entry = 0; entry < BLACKBODY_TABLE_COUNT; entry++) {
+    entries.push(`vec3(${[0, 1, 2].map((channel) => BLACKBODY_HUE_TABLE[entry * 3 + channel].toFixed(5)).join(', ')})`);
+  }
+  return entries.join(', ');
+}
+
 // The 3D texture of a grid volume: RGBA16F, r density, g temperature, b flame (the density when the grid has no flame channel), linear and clamped, uploaded
 // once per grid. A frame with no grid volume gets a 1 x 1 x 1 texture, so the sampler is always valid.
 function localGridTexture(renderer, grid) {
@@ -350,14 +359,14 @@ vec3 localGridSample(int index, vec3 position) {
   vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
   return textureLod(localGridTexture, unit, 0.0).rgb;
 }
+const vec3 localBlackbodyHue[${BLACKBODY_TABLE_COUNT}] = vec3[${BLACKBODY_TABLE_COUNT}](${blackbodyHueGlsl()});
 vec3 localGridBlackbody(float kelvin) {
   if (kelvin <= 0.0) return vec3(0.0);
-  float hundreds = max(kelvin, 1000.0) / 100.0;
-  float red = hundreds <= 66.0 ? 255.0 : 329.698727446 * pow(hundreds - 60.0, -0.1332047592);
-  float green = hundreds <= 66.0 ? 99.4708025861 * log(hundreds) - 161.1195681661 : 288.1221695283 * pow(hundreds - 60.0, -0.0755148492);
-  float blue = hundreds >= 66.0 ? 255.0 : (hundreds <= 19.0 ? 0.0 : 138.5177312231 * log(hundreds - 10.0) - 305.0447927307);
-  float gain = min(pow(kelvin / ${BLACKBODY_REFERENCE_KELVIN.toFixed(1)}, 4.0), ${BLACKBODY_MAXIMUM_GAIN.toFixed(1)});
-  return pow(clamp(vec3(red, green, blue), 0.0, 255.0) / 255.0, vec3(2.2)) * gain;
+  float position = clamp((kelvin - ${BLACKBODY_TABLE_FIRST_KELVIN.toFixed(1)}) / ${BLACKBODY_TABLE_STEP_KELVIN.toFixed(1)}, 0.0, ${(BLACKBODY_TABLE_COUNT - 1).toFixed(1)});
+  int lower = min(int(floor(position)), ${BLACKBODY_TABLE_COUNT - 2});
+  float scaledKelvin = kelvin * 0.001;
+  float scaledFourth = scaledKelvin * scaledKelvin * scaledKelvin * scaledKelvin;
+  return mix(localBlackbodyHue[lower], localBlackbodyHue[lower + 1], position - float(lower)) * (${(BLACKBODY_RADIANCE_SCALE * 1e12).toExponential(9)} * scaledFourth);
 }
 // The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
 // code (0 none, 1 density, 2 temperature, 3 flame), y the stop count and z, w the source range; the stops are baked in local-volume-ramp.js with the exposure and
