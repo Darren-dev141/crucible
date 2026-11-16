@@ -1,19 +1,13 @@
-import { layerTextureSupport, registerShaderFeatureCode } from './shader-registry.js';
+import { layerTextureSupport, liquidWaterSupport, registerShaderFeatureCode } from './shader-registry.js';
 import { worldBounds } from './probe-trace.js';
+import { WATER_MAXIMUM_ROUGHNESS, WATER_BLUR_LIMIT_ROUGHNESS, WATER_MAXIMUM_BLUR_LEVEL, WATER_FADE_START_ROUGHNESS, waterMirrorUniformsGlsl, waterMirrorFunctionsGlsl } from './water-mirror-glsl.js';
+
+export { WATER_MAXIMUM_ROUGHNESS, WATER_BLUR_LIMIT_ROUGHNESS, WATER_MAXIMUM_BLUR_LEVEL, WATER_FADE_START_ROUGHNESS };
 
 // Water reflection: a large, flat, smooth surface (a lake, a river, a polished floor) shows the scene around it. The scene is
 // drawn a second time from the camera's mirror image into a target at reduced size, and the surface samples that picture.
 // This module is optional. A scene without such a surface never loads it, and the renderer's only links to it are the material
 // field `waterReflection`, which batches parts by it, and `frame.reflectionTarget`, which sends one draw into the target.
-
-/** A surface this smooth is a sharp mirror for the scene (sharper than the 0.075 floor the shader gives every material). */
-export const WATER_MAXIMUM_ROUGHNESS = 0.1;
-/** Above `WATER_MAXIMUM_ROUGHNESS` the mirror picture blurs with roughness, up to this one. A surface rougher than this is not water and gets no mirror. */
-export const WATER_BLUR_LIMIT_ROUGHNESS = 0.5;
-/** The mirror picture is sampled this many mip levels down at `WATER_BLUR_LIMIT_ROUGHNESS` (each level halves the picture, so the blur spans about 2^5 target pixels). */
-export const WATER_MAXIMUM_BLUR_LEVEL = 5;
-/** From this roughness the mirror picture fades out to the environment's own reflection, reaching nothing at `WATER_BLUR_LIMIT_ROUGHNESS`. */
-export const WATER_FADE_START_ROUGHNESS = 0.35;
 
 /** The mip level the mirror picture is sampled at for a roughness: 0 up to 0.1, rising linearly to `WATER_MAXIMUM_BLUR_LEVEL` at 0.5. */
 export function waterMirrorLevel(roughness) {
@@ -40,11 +34,6 @@ export const WATER_MIRROR_MINIMUM_PIXEL_RADIUS = 5;
 // How the picture is treated before it reaches the surface (see afterEmission). Fresnel starts at the reflectance of water.
 const FRESNEL_BASE = '0.02';
 const REFLECTION_GAIN = '1.0';
-const RIPPLE_SLOPE = '0.012';
-const RIPPLE_REACH = '0.004';
-const BLUR_TAPS = 8;
-const BLUR_ACROSS = '0.0015';
-const BLUR_DOWN = '0.0045';
 // Geometry below this height above the water plane is left out of the reflection, so the lake bed never covers the sky.
 const CLIP_MARGIN = 0.05;
 const WATER_BATCH_FLAG = 'waterReflection';
@@ -55,8 +44,16 @@ function footprintOf({ minimum, maximum }) {
   return (maximum[0] - minimum[0]) * (maximum[2] - minimum[2]);
 }
 
+/** A surface that transmits light is water, not a glass roof or skylight, when its index of refraction is below this (water is 1.33, glass 1.5). */
+export const WATER_MAXIMUM_TRANSMISSIVE_IOR = 1.45;
+
+/** Water that transmits light (glTF KHR_materials_transmission with an ior near 1.33) draws in the liquid pass, which samples the same mirror picture. */
+function isWaterLikeTransmission(material) {
+  return !(material.transmission > 0) || (material.ior ?? 1.5) < WATER_MAXIMUM_TRANSMISSIVE_IOR;
+}
+
 function isSmoothSurface(material) {
-  return !EXCLUDED_TAGS.has(material.tag) && !(material.transmission > 0) && (material.roughness ?? 1) < WATER_BLUR_LIMIT_ROUGHNESS;
+  return !EXCLUDED_TAGS.has(material.tag) && isWaterLikeTransmission(material) && (material.roughness ?? 1) < WATER_BLUR_LIMIT_ROUGHNESS;
 }
 
 function isFlatSurface({ minimum, maximum }) {
@@ -127,11 +124,7 @@ export function applyWaterReflection(parts) {
 }
 
 registerShaderFeatureCode('waterReflection', Object.freeze({
-  declarations: `uniform sampler2D waterReflection;
-uniform mat4 waterReflectionMatrix;
-uniform vec2 waterClip;
-uniform float waterReflectionEnabled;
-`,
+  declarations: `${waterMirrorUniformsGlsl}${waterMirrorFunctionsGlsl}`,
   // While the mirror image is drawn, nothing under the water plane is part of it.
   mainSetup: '  if (waterClip.y > 0.5 && worldPosition.y < waterClip.x + ' + CLIP_MARGIN.toFixed(2) + ') discard;\n',
   // Above roughness 0.1 the picture is sampled from a coarser mip level (rougher water, blurrier reflection) and fades to the
@@ -140,21 +133,8 @@ uniform float waterReflectionEnabled;
   // Still water is not a mirror: small ripples shake the picture (more with distance), a few taps smear it (more up and down,
   // as ripples stretch a reflection), and Fresnel makes it strong at grazing angles and faint when looking down into the water.
   afterEmission: `  if (waterReflectionEnabled > 0.5) {
-    float eyeDistance = length(worldPosition - eye);
-    vec2 slope = vec2(sin(worldPosition.x * 0.31 + worldPosition.z * 0.17 + time * 0.4) + 0.6 * sin(worldPosition.x * 0.83 - worldPosition.z * 0.5 - time * 0.7),
-      sin(worldPosition.z * 0.27 - worldPosition.x * 0.11 + time * 0.5) + 0.6 * sin(worldPosition.z * 0.91 + worldPosition.x * 0.43 - time * 0.6)) * ${RIPPLE_SLOPE};
-    vec3 shaken = worldPosition + vec3(slope.x, 0.0, slope.y) * (1.0 + eyeDistance * ${RIPPLE_REACH});
-    vec4 mirrorClip = waterReflectionMatrix * vec4(shaken, 1.0);
-    vec2 mirrorCentre = mirrorClip.xy / mirrorClip.w * 0.5 + 0.5;
-    float mirrorLevel = ${WATER_MAXIMUM_BLUR_LEVEL.toFixed(1)} * clamp((roughness - ${WATER_MAXIMUM_ROUGHNESS.toFixed(2)}) / ${(WATER_BLUR_LIMIT_ROUGHNESS - WATER_MAXIMUM_ROUGHNESS).toFixed(2)}, 0.0, 1.0);
-    float mirrorWeight = 1.0 - clamp((roughness - ${WATER_FADE_START_ROUGHNESS.toFixed(2)}) / ${(WATER_BLUR_LIMIT_ROUGHNESS - WATER_FADE_START_ROUGHNESS).toFixed(2)}, 0.0, 1.0);
-    vec3 mirrored = vec3(0.0);
-    for (int tap = 0; tap < ${BLUR_TAPS}; tap++) {
-      float angle = float(tap) * 2.39996;
-      vec2 offset = vec2(cos(angle), sin(angle)) * sqrt((float(tap) + 0.5) / ${BLUR_TAPS}.0);
-      mirrored += textureLod(waterReflection, mirrorCentre + offset * vec2(${BLUR_ACROSS}, ${BLUR_DOWN}), mirrorLevel).rgb;
-    }
-    mirrored = (hdrEnabled > 0.5 ? mirrored / ${BLUR_TAPS}.0 : pow(mirrored / ${BLUR_TAPS}.0, vec3(2.2))) / max(exposure, 1e-4);
+    float mirrorWeight = waterMirrorWeight(roughness);
+    vec3 mirrored = waterMirrorColor(worldPosition, roughness);
     float fresnelWeight = (${FRESNEL_BASE} + (1.0 - ${FRESNEL_BASE}) * pow(1.0 - max(viewDirection.y, 0.0), 5.0)) * mirrorWeight;
     vec3 skyLight = ENVIRONMENT_ENABLED ? environmentLighting(normal, specularNormal, baseReflectance, viewDirection, reflect(-viewDirection, specularNormal), vec3(0.0), metallic, roughness, occlusion, ambientIntensity, skyReflection) : vec3(0.0);
     radiance = ENVIRONMENT_ENABLED ? max(radiance - skyLight * mirrorWeight, vec3(0.0)) + mirrored * ${REFLECTION_GAIN} * fresnelWeight : mix(radiance, mirrored * ${REFLECTION_GAIN}, fresnelWeight);
@@ -341,6 +321,26 @@ function bindWater(renderer, mapState) {
     context.uniformMatrix4fv(locations.matrix, false, state.matrix);
   }
 }
+
+// The liquid pass draws transmissive water with its own program; each batch tells it whether the mirror picture is ready for that batch.
+const LIQUID_MIRROR_TEXTURE_UNIT = REFLECTION_TEXTURE_UNIT;
+liquidWaterSupport.bind = (renderer, uniforms, batch) => {
+  const state = rendererStates.get(renderer);
+  if (!state || !uniforms.waterReflectionEnabled) {
+    return;
+  }
+  const context = renderer.context;
+  const sampled = Boolean(batch.parts[0]?.material.waterReflection) && state.ready && !state.drawing;
+  context.uniform2f(uniforms.waterClip, state.height, state.drawing ? 1 : 0);
+  context.uniform1f(uniforms.waterReflectionEnabled, sampled ? 1 : 0);
+  if (sampled) {
+    context.activeTexture(context.TEXTURE0 + LIQUID_MIRROR_TEXTURE_UNIT);
+    context.bindTexture(context.TEXTURE_2D, state.target.texture);
+    context.uniform1i(uniforms.waterReflection, LIQUID_MIRROR_TEXTURE_UNIT);
+    context.uniformMatrix4fv(uniforms.waterReflectionMatrix, false, state.matrix);
+    context.activeTexture(context.TEXTURE0);
+  }
+};
 
 const previousBind = layerTextureSupport.bind;
 layerTextureSupport.bind = (renderer, mapState, layerState, batch) => {

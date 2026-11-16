@@ -1,5 +1,5 @@
 import { computeIrradianceCoefficients, createEnvironmentMap, evaluateIrradiance } from './environment.js'
-import { CLOSED_ROOM_SHARE, closedRoomShare } from './closed-room.js'
+import { CLOSED_ROOM_SHARE, closedRoomShare, partMatrixLookup } from './closed-room.js'
 import { worldBounds } from './probe-trace.js'
 
 // The ground of a scene is its floor: a part that spans the scene (the same test as the automatic floor of agent scenes),
@@ -122,7 +122,7 @@ function isDrawnWithBakedLight(parts) {
 }
 
 function isClosedRoom(parts) {
-  const share = closedRoomShare(parts, new Map(parts.map(part => [part.name, part.matrix])))
+  const share = closedRoomShare(parts, partMatrixLookup(parts))
   return share !== null && share >= CLOSED_ROOM_SHARE
 }
 

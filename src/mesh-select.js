@@ -79,7 +79,8 @@ export function selectFaces(mesh, rule) {
         if (typeof node.tag !== 'string' || keys.length !== 1) throw ruleError('"tag" needs one tag name.');
         const attribute = mesh.attributes.face[TAG_PREFIX + node.tag];
         if (!attribute) throw new RangeError(`Unknown tag ${node.tag}. Known tags: ${meshTags(mesh).join(', ') || 'none'}.`);
-        mask.set(attribute.data);
+        // A tag byte is any nonzero value; the rules below combine masks bitwise, so store plain 0 or 1.
+        for (let face = 0; face < mesh.faceCount; face++) mask[face] = attribute.data[face] ? 1 : 0;
         return mask;
       }
       case 'normal': {

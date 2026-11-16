@@ -98,22 +98,22 @@ function drawFrame(parts, view, extent, size, buffers) {
     for (let triangle = 0; triangle < indices.length; triangle += 3) {
       const a = indices[triangle];
       const b = indices[triangle + 1];
-      const c = indices[triangle + 2];
-      const area = (screenX[b] - screenX[a]) * (screenY[c] - screenY[a]) - (screenX[c] - screenX[a]) * (screenY[b] - screenY[a]);
+      const thirdVertex = indices[triangle + 2];
+      const area = (screenX[b] - screenX[a]) * (screenY[thirdVertex] - screenY[a]) - (screenX[thirdVertex] - screenX[a]) * (screenY[b] - screenY[a]);
       if (Math.abs(area) < 1e-9) continue;
-      const minimumX = Math.max(0, Math.floor(Math.min(screenX[a], screenX[b], screenX[c])));
-      const maximumX = Math.min(size - 1, Math.ceil(Math.max(screenX[a], screenX[b], screenX[c])));
-      const minimumY = Math.max(0, Math.floor(Math.min(screenY[a], screenY[b], screenY[c])));
-      const maximumY = Math.min(size - 1, Math.ceil(Math.max(screenY[a], screenY[b], screenY[c])));
+      const minimumX = Math.max(0, Math.floor(Math.min(screenX[a], screenX[b], screenX[thirdVertex])));
+      const maximumX = Math.min(size - 1, Math.ceil(Math.max(screenX[a], screenX[b], screenX[thirdVertex])));
+      const minimumY = Math.max(0, Math.floor(Math.min(screenY[a], screenY[b], screenY[thirdVertex])));
+      const maximumY = Math.min(size - 1, Math.ceil(Math.max(screenY[a], screenY[b], screenY[thirdVertex])));
       // Both barycentric weights are linear in the pixel position, so a step along a row adds a constant.
       const inverseArea = 1 / area;
-      const weightAAcross = (screenY[b] - screenY[c]) * inverseArea;
-      const weightBAcross = (screenY[c] - screenY[a]) * inverseArea;
-      const weightADown = (screenX[c] - screenX[b]) * inverseArea;
-      const weightBDown = (screenX[a] - screenX[c]) * inverseArea;
+      const weightAAcross = (screenY[b] - screenY[thirdVertex]) * inverseArea;
+      const weightBAcross = (screenY[thirdVertex] - screenY[a]) * inverseArea;
+      const weightADown = (screenX[thirdVertex] - screenX[b]) * inverseArea;
+      const weightBDown = (screenX[a] - screenX[thirdVertex]) * inverseArea;
       const firstSampleX = minimumX + 0.5;
-      const weightAAtOrigin = (screenX[b] * screenY[c] - screenX[c] * screenY[b]) * inverseArea;
-      const weightBAtOrigin = (screenX[c] * screenY[a] - screenX[a] * screenY[c]) * inverseArea;
+      const weightAAtOrigin = (screenX[b] * screenY[thirdVertex] - screenX[thirdVertex] * screenY[b]) * inverseArea;
+      const weightBAtOrigin = (screenX[thirdVertex] * screenY[a] - screenX[a] * screenY[thirdVertex]) * inverseArea;
       for (let pixelY = minimumY; pixelY <= maximumY; pixelY++) {
         const sampleY = pixelY + 0.5;
         let weightA = weightAAtOrigin + firstSampleX * weightAAcross + sampleY * weightADown - weightAAcross;
@@ -123,29 +123,29 @@ function drawFrame(parts, view, extent, size, buffers) {
           weightB += weightBAcross;
           const weightC = 1 - weightA - weightB;
           if (weightA < 0 || weightB < 0 || weightC < 0) continue;
-          const pixelDepth = weightA * depth[a] + weightB * depth[b] + weightC * depth[c];
+          const pixelDepth = weightA * depth[a] + weightB * depth[b] + weightC * depth[thirdVertex];
           const bufferIndex = pixelY * size + pixelX;
           if (pixelDepth <= depthBuffer[bufferIndex]) continue;
           let red = part.baseColor[0];
           let green = part.baseColor[1];
           let blue = part.baseColor[2];
           if (colors) {
-            red *= weightA * colors[a * 3] + weightB * colors[b * 3] + weightC * colors[c * 3];
-            green *= weightA * colors[a * 3 + 1] + weightB * colors[b * 3 + 1] + weightC * colors[c * 3 + 1];
-            blue *= weightA * colors[a * 3 + 2] + weightB * colors[b * 3 + 2] + weightC * colors[c * 3 + 2];
+            red *= weightA * colors[a * 3] + weightB * colors[b * 3] + weightC * colors[thirdVertex * 3];
+            green *= weightA * colors[a * 3 + 1] + weightB * colors[b * 3 + 1] + weightC * colors[thirdVertex * 3 + 1];
+            blue *= weightA * colors[a * 3 + 2] + weightB * colors[b * 3 + 2] + weightC * colors[thirdVertex * 3 + 2];
           }
           if (part.map) {
-            const u = weightA * uvs[a * 2] + weightB * uvs[b * 2] + weightC * uvs[c * 2];
-            const v = weightA * uvs[a * 2 + 1] + weightB * uvs[b * 2 + 1] + weightC * uvs[c * 2 + 1];
+            const u = weightA * uvs[a * 2] + weightB * uvs[b * 2] + weightC * uvs[thirdVertex * 2];
+            const v = weightA * uvs[a * 2 + 1] + weightB * uvs[b * 2 + 1] + weightC * uvs[thirdVertex * 2 + 1];
             const texel = sampleTexel(part.map, u, v, part.wrap);
             if (texel.alpha / 255 < part.cutoff) continue;
             red *= texel.red;
             green *= texel.green;
             blue *= texel.blue;
           }
-          let normalX = weightA * normals[a * 3] + weightB * normals[b * 3] + weightC * normals[c * 3];
-          let normalY = weightA * normals[a * 3 + 1] + weightB * normals[b * 3 + 1] + weightC * normals[c * 3 + 1];
-          let normalZ = weightA * normals[a * 3 + 2] + weightB * normals[b * 3 + 2] + weightC * normals[c * 3 + 2];
+          let normalX = weightA * normals[a * 3] + weightB * normals[b * 3] + weightC * normals[thirdVertex * 3];
+          let normalY = weightA * normals[a * 3 + 1] + weightB * normals[b * 3 + 1] + weightC * normals[thirdVertex * 3 + 1];
+          let normalZ = weightA * normals[a * 3 + 2] + weightB * normals[b * 3 + 2] + weightC * normals[thirdVertex * 3 + 2];
           const normalLength = Math.hypot(normalX, normalY, normalZ) || 1;
           normalX /= normalLength;
           normalY /= normalLength;

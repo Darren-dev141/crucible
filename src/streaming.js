@@ -192,6 +192,9 @@ export function createStreaming(options = {}) {
   const budgetBytes = Math.floor(boundedNumber(options.budgetBytes, 'createStreaming budgetBytes', 1, STREAMING_LIMITS.maximumBudgetBytes));
   const hysteresis = boundedNumber(options.hysteresis ?? STREAMING_LIMITS.defaultHysteresis, 'createStreaming hysteresis', 0, STREAMING_LIMITS.maximumHysteresis);
   const maximumConcurrentLoads = boundedNumber(options.maximumConcurrentLoads ?? STREAMING_LIMITS.defaultConcurrentLoads, 'createStreaming maximumConcurrentLoads', 1, STREAMING_LIMITS.maximumConcurrentLoads);
+  if (!Number.isInteger(maximumConcurrentLoads)) {
+    throw new RangeError(`createStreaming maximumConcurrentLoads must be a whole number, got ${maximumConcurrentLoads}. Pass 2 or 3.`);
+  }
   if (options.focus !== undefined && typeof options.focus !== 'function') {
     throw new TypeError('createStreaming focus must be a function () => [x, y, z], or left out and set with setFocus.');
   }

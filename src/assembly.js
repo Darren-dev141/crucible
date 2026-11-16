@@ -20,7 +20,7 @@ function sectionLayout(section) {
     'lens assembly': { axis: 2, sign: 1, spread: 1.8, tier: 0.14, lift: 0.1 },
   };
   const layout = layouts[family];
-  if (!layout) throw new Error(`No detail layout for assembly section: ${section}`);
+  if (!layout?.spread) throw new Error(`No detail layout for assembly section: ${section}`);
   return layout;
 }
 
@@ -76,7 +76,7 @@ export function addDetailOffsets(parts) {
       }
     }
     const lane = part.assembly.section.endsWith('track assembly') ? trackLanes[part.name] : undefined;
-    detailOffset[layout.axis] = layout.sign * ((lane ?? 0.12 + family.tier * layout.tier) + family.count * 0.018);
+    detailOffset[layout.axis] = layout.sign * ((Number.isFinite(lane) ? lane : 0.12 + family.tier * layout.tier) + family.count * 0.018);
     detailOffset[1] += layout.lift;
     family.count++;
     return { ...part, assembly: { ...part.assembly, detailOffset } };

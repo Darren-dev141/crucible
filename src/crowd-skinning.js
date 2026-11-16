@@ -14,6 +14,7 @@ import './skinning.js';
 const FLOATS_PER_MATRIX = 16;
 const TEXELS_PER_MATRIX = 4;
 const DEFAULT_FRAME_RATE = 30;
+const MAXIMUM_PALETTE_FRAMES = 7200; // 2 minutes at 60 fps
 const DEFAULT_LEVEL_CELLS = Object.freeze([0.02, 0.05]);
 const JOINT_STRIDE = 4096;
 const WEIGHT_STEPS = 4095;
@@ -179,6 +180,9 @@ export function bakeCrowdPalette(rig, poseAt, { duration, loop = true, frameRate
   if (!Number.isFinite(duration) || duration <= 0) throw new RangeError('Crowd duration must be positive.');
   if (!Number.isFinite(frameRate) || frameRate <= 0) throw new RangeError('Crowd frame rate must be positive.');
   const frameCount = Math.max(2, Math.round(duration * frameRate) + (loop ? 0 : 1));
+  if (frameCount > MAXIMUM_PALETTE_FRAMES) {
+    throw new RangeError(`Crowd palette would bake ${frameCount} frames (duration ${duration} s at ${frameRate} fps), over the limit of ${MAXIMUM_PALETTE_FRAMES}. Lower frameRate or use a shorter clip.`);
+  }
   const frameStep = loop ? duration / frameCount : duration / (frameCount - 1);
   const matricesPerFrame = rig.jointCount * FLOATS_PER_MATRIX;
   const data = new Float32Array(frameCount * matricesPerFrame);
@@ -218,6 +222,7 @@ function measureCrowdBounds(rig, palette) {
 
 /** The two frames and the blend between them for a clip time: [firstTexel, secondTexel, blend], as the shader reads them. */
 export function crowdFrameBlend(palette, seconds, output = [0, 0, 0]) {
+  if (!Number.isFinite(seconds)) seconds = 0; // a frame never throws: a bad clip time shows the first frame
   const lastFrame = palette.frameCount - 1;
   let position;
   if (palette.loop) {
@@ -374,6 +379,7 @@ export function createCrowdParts({ rig, palette, instances, lods = true, cells, 
     setTimes(times, eye = null) {
       blends.forEach((blend, index) => {
         let seconds = typeof times === 'function' ? times(index) : times[index];
+        if (!Number.isFinite(seconds)) throw new RangeError(`setTimes instance ${index} needs finite seconds, got ${seconds}. Pass the clip time in seconds.`);
         if (farPose && eye) {
           const matrix = instances[index].matrix;
           if (Math.hypot(matrix[12] - eye[0], matrix[13] - eye[1], matrix[14] - eye[2]) > farPose.distance) {

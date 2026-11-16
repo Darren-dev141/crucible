@@ -1,6 +1,15 @@
 // The GLSL that every lit program carries to read an environment map, kept apart from the code that builds one so a
 // renderer without an environment map does not carry the builder. environment.js registers that code when it loads.
 
+// One RGBA16F texture, bound where the split-sum lookup used to be, holds two tables so the lit program needs no extra sampler:
+// the split-sum lookup in the first rows and, below it, the diffuse irradiance of the map as a small equirectangular grid.
+// The grid has one padding column on each side that copies the opposite edge, so linear filtering wraps around the seam.
+export const ENVIRONMENT_BRDF_SIZE = 128;
+export const ENVIRONMENT_IRRADIANCE_WIDTH = 64;
+export const ENVIRONMENT_IRRADIANCE_HEIGHT = 32;
+export const ENVIRONMENT_LOOKUP_WIDTH = ENVIRONMENT_BRDF_SIZE;
+export const ENVIRONMENT_LOOKUP_HEIGHT = ENVIRONMENT_BRDF_SIZE + ENVIRONMENT_IRRADIANCE_HEIGHT;
+
 export const equirectangularGlsl = `
 vec3 directionFromEquirectangular(vec2 coordinates) {
   float azimuth = (coordinates.x - 0.5) * 6.28318530718;
@@ -31,23 +40,34 @@ export const environmentShadingGlsl = `
 uniform sampler2D environmentBrdf;
 uniform float environmentEnabled;
 uniform vec3 environmentIrradiance[9];
+uniform vec3 environmentBounce;
+// Cosine and sine of the map's rotation, then its intensity. A reflection probe replaces environmentRotation and environmentIntensity, but the diffuse light is still the global map's.
+uniform vec3 environmentDiffuseFrame;
+const vec2 ENVIRONMENT_LOOKUP_SIZE = vec2(${ENVIRONMENT_LOOKUP_WIDTH}.0, ${ENVIRONMENT_LOOKUP_HEIGHT}.0);
+const vec2 ENVIRONMENT_IRRADIANCE_SIZE = vec2(${ENVIRONMENT_IRRADIANCE_WIDTH}.0, ${ENVIRONMENT_IRRADIANCE_HEIGHT}.0);
+vec3 environmentDiffuseDirection(vec3 direction) {
+  return vec3(environmentDiffuseFrame.x * direction.x - environmentDiffuseFrame.y * direction.z, direction.y, environmentDiffuseFrame.y * direction.x + environmentDiffuseFrame.x * direction.z);
+}
+// The split-sum lookup is the top square of the table, clamped to its own edge texels so filtering never reads the irradiance rows below it.
+vec2 environmentBrdfLookup(float normalView, float roughness) {
+  vec2 texel = clamp(vec2(normalView, roughness) * ${ENVIRONMENT_BRDF_SIZE}.0, 0.5, ${ENVIRONMENT_BRDF_SIZE}.0 - 0.5);
+  return texture(environmentBrdf, texel / ENVIRONMENT_LOOKUP_SIZE).rg;
+}
+// The exact cosine-weighted light of the map around a direction, read from the grid below the lookup square.
+vec3 environmentIrradianceGrid(vec3 mapped) {
+  vec2 coordinates = equirectangularFromDirection(mapped);
+  float column = coordinates.x * ENVIRONMENT_IRRADIANCE_SIZE.x + 1.0;
+  float row = ${ENVIRONMENT_BRDF_SIZE}.0 + clamp(coordinates.y * ENVIRONMENT_IRRADIANCE_SIZE.y, 0.5, ENVIRONMENT_IRRADIANCE_SIZE.y - 0.5);
+  return texture(environmentBrdf, vec2(column, row) / ENVIRONMENT_LOOKUP_SIZE).rgb;
+}
 vec3 environmentDiffuse(vec3 normal) {
-  vec3 mapped = environmentDirection(normal);
-  // The light shading preset keeps the first four terms (the average and the direction of the light), not the second order ones.
+  vec3 mapped = environmentDiffuseDirection(normal);
+  // The light shading preset keeps the first four terms (the average and the direction of the light) of the spherical harmonic fit.
   if (LIGHT_SHADING) {
     vec3 firstOrder = environmentIrradiance[0] + environmentIrradiance[1] * mapped.y + environmentIrradiance[2] * mapped.z + environmentIrradiance[3] * mapped.x;
-    return max(firstOrder, vec3(0.0)) * environmentIntensity;
+    return max(firstOrder, vec3(0.0)) * environmentDiffuseFrame.z;
   }
-  vec3 result = environmentIrradiance[0]
-    + environmentIrradiance[1] * mapped.y
-    + environmentIrradiance[2] * mapped.z
-    + environmentIrradiance[3] * mapped.x
-    + environmentIrradiance[4] * (mapped.x * mapped.y)
-    + environmentIrradiance[5] * (mapped.y * mapped.z)
-    + environmentIrradiance[6] * (3.0 * mapped.z * mapped.z - 1.0)
-    + environmentIrradiance[7] * (mapped.x * mapped.z)
-    + environmentIrradiance[8] * (mapped.x * mapped.x - mapped.y * mapped.y);
-  return max(result, vec3(0.0)) * environmentIntensity;
+  return (environmentIrradianceGrid(mapped) + environmentBounce) * environmentDiffuseFrame.z;
 }
 // Light a rough microfacet loses on its first bounce and gets back on a second one, as a factor on single-scatter specular.
 vec3 multipleScatterGain(vec2 lookup, vec3 baseReflectance) {
@@ -71,7 +91,7 @@ vec3 environmentLighting(vec3 normal, vec3 specularNormal, vec3 baseReflectance,
     return irradiance * (fittedColor + color * (1.0 - metallic) * (1.0 - fittedColor)) * occlusion * ambient;
   }
   float normalView = clamp(dot(normal, viewDirection), 0.001, 1.0);
-  vec2 lookup = texture(environmentBrdf, vec2(normalView, roughness)).rg;
+  vec2 lookup = environmentBrdfLookup(normalView, roughness);
   vec3 singleScatter = baseReflectance * lookup.x + lookup.y;
   vec3 specularColor = singleScatter * multipleScatterGain(lookup, baseReflectance) * specularWeight;
   vec3 specular = environmentRadiance(reflected, roughness * environmentLevelMax) * specularColor;

@@ -46,6 +46,9 @@ test('primitive validation rejects unsafe allocations and invalid shapes before 
   assert.throws(() => cylinder(16, 0.025, 0), /bevelSegments/);
   assert.throws(() => box(-0.1), /bevel/);
   assert.throws(() => box(1e-50), /underflow/);
+  // The floor is a round 1e-16, just above where 0.5 - bevel underflows to 0.5 (about 3e-17); 1e-16 itself builds.
+  assert.throws(() => box(5e-17), /from 1e-16 to 0.5: a smaller bevel underflows/);
+  assert.ok(box(1e-16).normals.every(Number.isFinite));
   assert.throws(() => box(0.08, 1000000), /subdivisions/);
 });
 import { createModel } from '../src/model.js';

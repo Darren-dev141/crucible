@@ -75,14 +75,13 @@ export function sphere(segments = 64, rings = 40) {
   integer(segments, 3, 2048, 'segments');
   integer(rings, 2, 2048, 'rings');
   primitiveBudget((segments + 1) * (rings + 1));
-  const result = surface(segments, rings, (longitude, latitude) => {
+  return surface(segments, rings, (longitude, latitude) => {
     const angle = periodicAngle(longitude);
     const elevation = latitude * Math.PI;
     const radial = latitude === 0 || latitude === 1 ? 0 : Math.sin(elevation);
     const position = [radial * Math.cos(angle), Math.cos(elevation), radial * Math.sin(angle)];
     return { position, normal: position };
   });
-  return result;
 }
 
 // A flat unit sheet in XY facing +Z with a regular grid of vertices: the rest shape for cloth and for flat banners.
@@ -307,8 +306,9 @@ export function cylinder(segments = 80, bevel = 0.025, bevelSegments = 6) {
 
 export function box(bevel = 0.08, subdivisions = 6) {
   finiteFloat(bevel, 'bevel');
-  if (bevel < 0 || bevel > 0.5 || bevel > 0 && Math.fround(bevel) === 0) {
-    throw new RangeError('Box bevel must be within zero and 0.5 without Float32 underflow.');
+  // A bevel below about 3e-17 leaves the core at exactly 0.5, so every face normal would divide by zero; 1e-16 is the round floor.
+  if (bevel < 0 || bevel > 0.5 || bevel > 0 && bevel < 1e-16) {
+    throw new RangeError('Box bevel must be 0 or from 1e-16 to 0.5: a smaller bevel underflows and gives NaN normals.');
   }
   integer(subdivisions, 1, 128, 'subdivisions');
   primitiveBudget(bevel === 0 ? 24 : 6 * (2 * subdivisions + 2) ** 2);

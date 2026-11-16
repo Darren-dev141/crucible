@@ -3,10 +3,10 @@
 // more than the checks it saves. tests/material-snapshot.test.js keeps the lists in step with the renderer's material fields.
 
 /** Material fields that the renderer compares with the batch a part was committed to. */
-export const SNAPSHOT_VALUE_FIELDS = Object.freeze(['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap', 'tag', 'alphaMode', 'alphaCutoff', 'opacity', 'doubleSided', 'occlusionStrength', 'moss', 'boxMapScale', 'boxMapAxis', 'lightMapScale', 'layerMaps', 'lightMask', 'clearcoat', 'clearcoatRoughness', 'transmission', 'thickness', 'ior', 'sheenRoughness', 'specular', 'anisotropy', 'anisotropyRotation', 'iridescence', 'iridescenceIor', 'iridescenceThickness', 'attenuationDistance', 'toon']);
+export const SNAPSHOT_VALUE_FIELDS = Object.freeze(['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap', 'tag', 'alphaMode', 'alphaCutoff', 'opacity', 'doubleSided', 'occlusionStrength', 'moss', 'boxMapScale', 'boxMapAxis', 'lightMapScale', 'layerMaps', 'lightMask', 'clearcoat', 'clearcoatRoughness', 'transmission', 'thickness', 'ior', 'sheenRoughness', 'specular', 'anisotropy', 'anisotropyRotation', 'iridescence', 'iridescenceIor', 'iridescenceThickness', 'attenuationDistance', 'toon', 'emissionFresnel']);
 
 /** Fields holding an array or descriptor, which can change in place. A material that sets one is never snapshotted. */
-export const SNAPSHOT_REFERENCE_FIELDS = Object.freeze(['normalScale', 'mossColor', 'lightMap', 'attenuationColor', 'sheenColor', 'specularColor', 'subsurface', 'wear']);
+export const SNAPSHOT_REFERENCE_FIELDS = Object.freeze(['normalScale', 'mossColor', 'lightMap', 'attenuationColor', 'sheenColor', 'specularColor', 'subsurface', 'wear', 'emissionMask']);
 
 function hasNoReferenceFields(material) {
   return material.normalScale === undefined &&
@@ -16,7 +16,8 @@ function hasNoReferenceFields(material) {
     material.sheenColor === undefined &&
     material.specularColor === undefined &&
     material.subsurface === undefined &&
-    material.wear === undefined;
+    material.wear === undefined &&
+    material.emissionMask === undefined;
 }
 
 export class MaterialSnapshot {
@@ -57,6 +58,7 @@ export class MaterialSnapshot {
     this.iridescenceThickness = material.iridescenceThickness;
     this.attenuationDistance = material.attenuationDistance;
     this.toon = material.toon;
+    this.emissionFresnel = material.emissionFresnel;
   }
 
   matches(material) {
@@ -91,6 +93,7 @@ export class MaterialSnapshot {
       this.iridescenceIor === material.iridescenceIor &&
       this.iridescenceThickness === material.iridescenceThickness &&
       this.attenuationDistance === material.attenuationDistance &&
-      this.toon === material.toon;
+      this.toon === material.toon &&
+      this.emissionFresnel === material.emissionFresnel;
   }
 }

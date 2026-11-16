@@ -4,15 +4,20 @@
 
 export const SOFT_BODY_LIMITS = Object.freeze({ maxPressure: 3, rotationIterations: 20 });
 
-/** Throws unless every edge of the triangle list is shared by exactly two triangles, naming the first open edge. */
+/**
+ * Throws unless every edge of the triangle list is shared by exactly two triangles that traverse it in opposite
+ * directions (so the winding is consistent), naming the first offending edge.
+ */
 export function assertClosedMesh(triangles, particleCount) {
   const uses = new Map();
+  const directionBalance = new Map();
   for (let corner = 0; corner < triangles.length; corner += 3) {
     for (let side = 0; side < 3; side++) {
       const first = triangles[corner + side];
       const second = triangles[corner + (side + 1) % 3];
       const key = first < second ? first * particleCount + second : second * particleCount + first;
       uses.set(key, (uses.get(key) ?? 0) + 1);
+      directionBalance.set(key, (directionBalance.get(key) ?? 0) + (first < second ? 1 : -1));
     }
   }
   for (const [key, count] of uses) {
@@ -20,6 +25,11 @@ export function assertClosedMesh(triangles, particleCount) {
       const low = Math.floor(key / particleCount);
       const high = key - low * particleCount;
       throw new RangeError(`Cloth softBody.pressure needs a closed mesh, but the edge between particles ${low} and ${high} is used by ${count} triangle(s). Close the holes, or set pressure to 0 and keep only shape matching.`);
+    }
+    if (directionBalance.get(key) !== 0) {
+      const low = Math.floor(key / particleCount);
+      const high = key - low * particleCount;
+      throw new RangeError(`Cloth softBody.pressure needs triangles wound the same way, but the two triangles on the edge between particles ${low} and ${high} run the same direction. Flip one of them so every triangle winds outward.`);
     }
   }
 }
@@ -30,10 +40,10 @@ export function signedVolume(positions, triangles) {
   for (let corner = 0; corner < triangles.length; corner += 3) {
     const a = triangles[corner] * 3;
     const b = triangles[corner + 1] * 3;
-    const c = triangles[corner + 2] * 3;
-    volume += (positions[a] * (positions[b + 1] * positions[c + 2] - positions[b + 2] * positions[c + 1])
-      + positions[a + 1] * (positions[b + 2] * positions[c] - positions[b] * positions[c + 2])
-      + positions[a + 2] * (positions[b] * positions[c + 1] - positions[b + 1] * positions[c])) / 6;
+    const thirdVertexOffset = triangles[corner + 2] * 3;
+    volume += (positions[a] * (positions[b + 1] * positions[thirdVertexOffset + 2] - positions[b + 2] * positions[thirdVertexOffset + 1])
+      + positions[a + 1] * (positions[b + 2] * positions[thirdVertexOffset] - positions[b] * positions[thirdVertexOffset + 2])
+      + positions[a + 2] * (positions[b] * positions[thirdVertexOffset + 1] - positions[b + 1] * positions[thirdVertexOffset])) / 6;
   }
   return volume;
 }
@@ -48,13 +58,13 @@ export function solveVolume(positions, triangles, inverseMasses, restVolume, pre
   for (let corner = 0; corner < triangles.length; corner += 3) {
     const a = triangles[corner] * 3;
     const b = triangles[corner + 1] * 3;
-    const c = triangles[corner + 2] * 3;
-    const bcX = positions[b + 1] * positions[c + 2] - positions[b + 2] * positions[c + 1];
-    const bcY = positions[b + 2] * positions[c] - positions[b] * positions[c + 2];
-    const bcZ = positions[b] * positions[c + 1] - positions[b + 1] * positions[c];
-    const caX = positions[c + 1] * positions[a + 2] - positions[c + 2] * positions[a + 1];
-    const caY = positions[c + 2] * positions[a] - positions[c] * positions[a + 2];
-    const caZ = positions[c] * positions[a + 1] - positions[c + 1] * positions[a];
+    const thirdVertexOffset = triangles[corner + 2] * 3;
+    const bcX = positions[b + 1] * positions[thirdVertexOffset + 2] - positions[b + 2] * positions[thirdVertexOffset + 1];
+    const bcY = positions[b + 2] * positions[thirdVertexOffset] - positions[b] * positions[thirdVertexOffset + 2];
+    const bcZ = positions[b] * positions[thirdVertexOffset + 1] - positions[b + 1] * positions[thirdVertexOffset];
+    const caX = positions[thirdVertexOffset + 1] * positions[a + 2] - positions[thirdVertexOffset + 2] * positions[a + 1];
+    const caY = positions[thirdVertexOffset + 2] * positions[a] - positions[thirdVertexOffset] * positions[a + 2];
+    const caZ = positions[thirdVertexOffset] * positions[a + 1] - positions[thirdVertexOffset + 1] * positions[a];
     const abX = positions[a + 1] * positions[b + 2] - positions[a + 2] * positions[b + 1];
     const abY = positions[a + 2] * positions[b] - positions[a] * positions[b + 2];
     const abZ = positions[a] * positions[b + 1] - positions[a + 1] * positions[b];
@@ -65,9 +75,9 @@ export function solveVolume(positions, triangles, inverseMasses, restVolume, pre
     gradients[b] += caX / 6;
     gradients[b + 1] += caY / 6;
     gradients[b + 2] += caZ / 6;
-    gradients[c] += abX / 6;
-    gradients[c + 1] += abY / 6;
-    gradients[c + 2] += abZ / 6;
+    gradients[thirdVertexOffset] += abX / 6;
+    gradients[thirdVertexOffset + 1] += abY / 6;
+    gradients[thirdVertexOffset + 2] += abZ / 6;
   }
   let denominator = 0;
   for (let particle = 0; particle < inverseMasses.length; particle++) {

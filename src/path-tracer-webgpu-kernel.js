@@ -8,14 +8,15 @@
 // The megakernel has a texel entry point (`bakeTexels`) that starts a path at every lightmap texel, for the light bake.
 
 import { LIGHT_TREE_FIRST_HIT_LIGHTS, LIGHT_TREE_MINIMUM_SHARE } from './path-tracer-light-tree.js';
-import { SUBSURFACE_FUNCTIONS, VOLUME_FUNCTIONS } from './path-tracer-webgpu-medium.js';
+import { PHASE_FUNCTIONS, SUBSURFACE_FUNCTIONS, VOLUME_FUNCTIONS } from './path-tracer-webgpu-medium.js';
+import { LOCAL_VOLUME_FUNCTIONS } from './path-tracer-webgpu-local-volumes.js';
 
 export const WORKGROUP_SIZE = 8;
 export const WAVEFRONT_WORKGROUP_SIZE = 64;
 /** vec4 slots of path state per path; the wavefront section below names each one. */
 export const PATH_STATE_VECTORS = 9;
 
-const buildCommonSource = ({ hasVolume = false } = {}) => /* wgsl */ `
+const buildCommonSource = ({ hasVolume = false, hasLocalVolumes = false } = {}) => /* wgsl */ `
 const PI: f32 = 3.14159265358979;
 const TWO_PI: f32 = 6.28318530717959;
 const TRIANGLE_TEXELS: i32 = 10;
@@ -505,6 +506,67 @@ fn sampleEnvironment(rowUnit: f32, columnUnit: f32, columnJitter: f32, rowJitter
   return environmentPdf(sampledDirection);
 }
 
+// ---- Light portals (#1144) ----
+// The window rectangles of the scene sit at the end of environmentTables: sixteen floats each (position, width, normal, height, across, along),
+// then the count in the last float. A scene with a portal draws the sky's next-event light through them, as the CPU tracer and Cook do.
+const PORTAL_FLOATS: u32 = 16u;
+
+fn portalCount() -> u32 {
+  return u32(environmentTables[arrayLength(&environmentTables) - 1u]);
+}
+
+fn portalRecord(index: u32) -> u32 {
+  return arrayLength(&environmentTables) - 1u - PORTAL_FLOATS * (portalCount() - index);
+}
+
+fn portalVector(base: u32) -> vec3<f32> {
+  return vec3<f32>(environmentTables[base], environmentTables[base + 1u], environmentTables[base + 2u]);
+}
+
+// The solid-angle density of a direction from the point through the portals: the sum over the portals it crosses of d^2 / (area cos), over their count.
+fn portalPdf(point: vec3<f32>, towards: vec3<f32>) -> f32 {
+  let count = portalCount();
+  var pdf = 0.0;
+  for (var index = 0u; index < count; index++) {
+    let base = portalRecord(index);
+    let normal = portalVector(base + 4u);
+    let facing = dot(towards, normal);
+    if (facing > -1e-9) { continue; }
+    let position = portalVector(base);
+    let toPlane = dot(position - point, normal);
+    if (toPlane >= 0.0) { continue; }
+    let distance = toPlane / facing;
+    let offset = point + towards * distance - position;
+    let width = environmentTables[base + 3u];
+    let height = environmentTables[base + 7u];
+    if (abs(dot(offset, portalVector(base + 8u))) > width * 0.5 || abs(dot(offset, portalVector(base + 12u))) > height * 0.5) { continue; }
+    pdf += distance * distance / (width * height * -facing);
+  }
+  return pdf / f32(count);
+}
+
+// Draws a direction from the point through one portal chosen uniformly into sampledDirection; returns its pdf, or 0 when the point is outside the room.
+fn samplePortalDirection(point: vec3<f32>, portalUnit: f32, acrossUnit: f32, alongUnit: f32) -> f32 {
+  let count = portalCount();
+  let base = portalRecord(min(count - 1u, u32(portalUnit * f32(count))));
+  let width = environmentTables[base + 3u];
+  let height = environmentTables[base + 7u];
+  let windowPoint = portalVector(base) + portalVector(base + 8u) * ((acrossUnit - 0.5) * width) + portalVector(base + 12u) * ((alongUnit - 0.5) * height);
+  let delta = windowPoint - point;
+  let reach = sqrt(dot(delta, delta));
+  if (!(reach > 1e-9)) { return 0.0; }
+  let towards = delta / reach;
+  let pdf = portalPdf(point, towards);
+  if (!(pdf > 0.0)) { return 0.0; }
+  sampledDirection = towards;
+  return pdf;
+}
+
+// Where a camera ray starts: at the eye, or with a clip start (forward.w, a distance along the view axis) where the ray has gone that far along it.
+fn cameraOrigin(rayDirection: vec3<f32>) -> vec3<f32> {
+  return params.eye.xyz + rayDirection * (params.forward.w / dot(rayDirection, params.forward.xyz));
+}
+
 // ---- Microfacet pieces ----
 
 fn ggxDistribution(alpha: f32, cosineHalf: f32) -> f32 {
@@ -819,7 +881,8 @@ fn addDirect(depth: i32, normal: vec3<f32>, distance: f32, weightMode: i32) {
   shadowPending = true;
 }
 
-${hasVolume ? VOLUME_FUNCTIONS : ''}
+${hasVolume ? VOLUME_FUNCTIONS : hasLocalVolumes ? PHASE_FUNCTIONS : ''}
+${hasLocalVolumes ? LOCAL_VOLUME_FUNCTIONS : ''}
 fn flushShadowRay() {
   if (!shadowPending) { return; }
   shadowPending = false;
@@ -1012,11 +1075,18 @@ fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
       }
       distance -= params.environmentRotationAndRays.z;
     } else {
-      let rowUnit = nextRandom();
-      let columnUnit = nextRandom();
-      let columnJitter = nextRandom();
-      let rowJitter = nextRandom();
-      environmentSampledPdf = sampleEnvironment(rowUnit, columnUnit, columnJitter, rowJitter);
+      if (portalCount() > 0u) {
+        let portalUnit = nextRandom();
+        let acrossUnit = nextRandom();
+        let alongUnit = nextRandom();
+        environmentSampledPdf = samplePortalDirection(hitPoint, portalUnit, acrossUnit, alongUnit);
+      } else {
+        let rowUnit = nextRandom();
+        let columnUnit = nextRandom();
+        let columnJitter = nextRandom();
+        let rowJitter = nextRandom();
+        environmentSampledPdf = sampleEnvironment(rowUnit, columnUnit, columnJitter, rowJitter);
+      }
       lightDirection = sampledDirection;
       if (!(environmentSampledPdf > 0.0)) { return; }
       lightRadiance = environmentRadiance(lightDirection);
@@ -1027,12 +1097,12 @@ fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
   addDirect(depth, normal, distance, weightMode);
 }
 
-fn addEscape(depth: i32, previousPdf: f32, afterMirror: bool) {
+fn addEscape(depth: i32, previousPdf: f32, afterMirror: bool, rayOrigin: vec3<f32>) {
   if (params.emittersFlagsSample.z == 0) { return; }
   let sky = environmentRadiance(direction);
   var weight = 1.0;
   if (!afterMirror) {
-    let environmentSide = environmentPdf(direction) * selectionProbability;
+    let environmentSide = select(environmentPdf(direction), portalPdf(rayOrigin, direction), portalCount() > 0u) * selectionProbability;
     weight = previousPdf * previousPdf / (previousPdf * previousPdf + environmentSide * environmentSide);
   }
   addRadiance(depth, throughput * sky * weight);
@@ -1064,7 +1134,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let screenX = ((f32(id.x) + jitterX) / f32(width) * 2.0 - 1.0) * params.cameraAndClamp.x;
   let screenY = (1.0 - (f32(id.y) + jitterY) / f32(height) * 2.0) * params.cameraAndClamp.y;
   let rayDirection = normalize(params.forward.xyz + params.right.xyz * screenX + params.above.xyz * screenY);
-  tracePath(params.eye.xyz, rayDirection, pixel, sampleIndex, true);
+  tracePath(cameraOrigin(rayDirection), rayDirection, pixel, sampleIndex, true);
   if (!(all(radiance >= vec3<f32>(0.0)) && all(radiance < vec3<f32>(1e30)))) { radiance = vec3<f32>(0.0); }
   if (!(featureDepth >= 0.0 && featureDepth < 1e30)) { featureDepth = 0.0; }
   if (!(all(featureNormal >= vec3<f32>(-1.5)) && all(featureNormal < vec3<f32>(1.5)))) { featureNormal = vec3<f32>(0.0, 0.0, 1.0); }
@@ -1109,25 +1179,31 @@ fn bakeTexels(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgro
 `;
 
 // `realtime` is the set of WGSL pieces of path-tracer-realtime-webgpu-kernel.js (REALTIME_KERNEL_PIECES); the real-time tracer passes them in, so other bundles do not carry them.
-export const buildMegakernelSource = ({ hasVolume = false, hasSubsurface = false, texelBake = false, realtime = null } = {}) => buildCommonSource({ hasVolume }) + /* wgsl */ `
+export const buildMegakernelSource = ({ hasVolume = false, hasLocalVolumes = false, hasSubsurface = false, texelBake = false, realtime = null } = {}) => buildCommonSource({ hasVolume, hasLocalVolumes }) + /* wgsl */ `
 ${realtime ? realtime.declarations + realtime.addLights : `// The first hit lights from every emitter; later hits draw one, and divide by the chance of drawing it.
 fn addLights(depth: i32, normal: vec3<f32>) {
   let emitterCount = params.emittersFlagsSample.x;
-  if (lightsFromEveryEmitter(depth, emitterCount)) {
+  // One loop with one flushShadowRay call, so the shadow ray traversal is inlined into the megakernel once: with a call per branch
+  // FXC (Dawn's D3D12 compiler without dxcompiler.dll) fails on the kernel with E_FAIL (#1350).
+  let everyEmitter = lightsFromEveryEmitter(depth, emitterCount);
+  var firstEmitter = 0;
+  var endEmitter = 0;
+  if (everyEmitter) {
     selectionProbability = 1.0;
-    for (var emitter = 0; emitter < emitterCount; emitter++) {
-      sampleEmitter(depth, normal, emitter);
-      flushShadowRay();
+    endEmitter = emitterCount;
+  } else {
+    let chosen = chooseEmitter(normal);
+    if (chosen >= 0) {
+      firstEmitter = chosen;
+      endEmitter = chosen + 1;
     }
-    return;
   }
-  let chosen = chooseEmitter(normal);
-  if (chosen >= 0) {
-    sampleEmitter(depth, normal, chosen);
+  for (var emitter = firstEmitter; emitter < endEmitter; emitter++) {
+    sampleEmitter(depth, normal, emitter);
     flushShadowRay();
   }
   // The sky is drawn with its uniform share whatever light was chosen: that share weighs the next escape ray.
-  selectionProbability = 1.0 / f32(emitterCount);
+  if (!everyEmitter) { selectionProbability = 1.0 / f32(emitterCount); }
 }`}
 ${hasSubsurface ? SUBSURFACE_FUNCTIONS : ''}
 // cameraRays is true when the path starts at the camera, so its first leg steps through shadow-only parts.
@@ -1150,9 +1226,10 @@ fn tracePath(origin: vec3<f32>, startDirection: vec3<f32>, pixel: u32, sampleInd
   for (var depth = 0; depth <= bounces; depth++) {
     let found = intersectScene(position, direction, cameraRays && depth == 0);
     ${hasVolume ? 'let inFog = scatterInFog(position, select(params.environmentRotationAndRays.w, hitDistance, found));' : 'let inFog = false;'}
+    ${hasLocalVolumes ? `crossLocalVolumes(depth, position, select(select(params.environmentRotationAndRays.w, hitDistance, found), distance(position, hitPoint), inFog));` : ''}
     if (!inFog && !found) {
       if (depth == 0) { firstLegEscaped = 1.0; }
-      addEscape(depth, previousPdf, afterMirror);
+      addEscape(depth, previousPdf, afterMirror, position);
       break;
     }
     var isGlass = false;
@@ -1337,7 +1414,7 @@ fn generatePaths(@builtin(global_invocation_id) id: vec3<u32>) {
   let rayDirection = normalize(params.forward.xyz + params.right.xyz * screenX + params.above.xyz * screenY);
   resetRandom(pixel, sampleIndex, seed);
   let base = id.x * PATH_STATE_VECTORS;
-  storeVector(base, vec4<f32>(params.eye.xyz, 0.0));
+  storeVector(base, vec4<f32>(cameraOrigin(rayDirection), 0.0));
   storeVector(base + 1u, vec4<f32>(rayDirection, 1.0));
   storeVector(base + 2u, vec4<f32>(1.0, 1.0, 1.0, 1e30));
   storeVector(base + 3u, vec4<f32>(0.0));
@@ -1398,7 +1475,7 @@ fn extendPaths(@builtin(global_invocation_id) id: vec3<u32>) {
   throughput = loadVector(base + 2u).xyz;
   radiance = radianceData.xyz;
   selectionProbability = directionSelection.w;
-  addEscape(currentDepth(), originPrevious.w, (flags & FLAG_AFTER_MIRROR) != 0u);
+  addEscape(currentDepth(), originPrevious.w, (flags & FLAG_AFTER_MIRROR) != 0u, originPrevious.xyz);
   storeVector(base + 3u, vec4<f32>(radiance, radianceData.w));
   pathMeta.y = flags & ~(FLAG_ALIVE | FLAG_HIT);
   pathState[base + 8u] = pathMeta;

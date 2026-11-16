@@ -14,11 +14,12 @@ import { USER_PASS_CAPABILITIES } from '../src/user-pass.js';
 import { GAME_CAPABILITIES } from '../src/game-setup-notes.js';
 import { MESH_BLEND_CAPABILITIES } from '../src/mesh-blend.js';
 import { MATERIAL_SNIPPET_CAPABILITIES } from '../src/material-snippet.js';
-import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_MEMORY_MIB, BAKE_WORKER_MAXIMUM_SECONDS } from '../src/agent-scene-capabilities.js';
+import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, MAXIMUM_MEMORY_MIB, BAKE_WORKER_MAXIMUM_SECONDS } from '../src/agent-scene-capabilities.js';
 import { PATH_TRACER_CAPABILITIES } from '../src/path-tracer-capabilities.js';
 import { chooseDenoiser, finishWithOidn } from './agent-path-trace-denoise.mjs';
 import { createNativeSequence } from './agent-native-sequence.mjs';
 import { chooseNativeTemporal, createTemporalAccumulator, temporalFrameSeed } from './agent-native-temporal.mjs';
+import { readNativeCapacity } from './native-capacity.mjs';
 import { chooseNativeInstancing, chooseNativeKernel, chooseTraceBackend, createNativeTracerLocator, fetchNativeExport, isNativeTimeLimitError, traceFrameNative, traceTexelsNative } from './agent-native-trace.mjs';
 import { addonCapabilities, addonFileFor, addonImportMap } from './mcp-addons.mjs';
 import { createAgentAssetCatalog } from './agent-asset-catalog.mjs';
@@ -34,10 +35,11 @@ import { TEXTURE_SEQUENCE_CAPABILITIES } from '../src/texture-sequence-limits.js
 import { writeWebBuild } from './web-export.mjs';
 import { gameAssetIds } from '../src/game-assets.js';
 import { resolveJobRoot } from './agent-job-root.mjs';
-import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings } from './agent-render-jobs.mjs';
+import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError } from './agent-render-jobs.mjs';
 import { RENDER_QUALITY_NOTE, applyQuality, tierReport } from './agent-render-quality.mjs';
 import { RENDER_BUDGET_NOTE, chooseBudgetSettings, parseBudget } from './agent-render-budget.mjs';
 import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
+import { objectIdMetrics } from './agent-object-id-metrics.mjs';
 import { encodeRenderOutput, encodeMultilayerExr } from './render-output-encoders.mjs';
 import { createFrameEncoder } from './frame-encoder.mjs';
 import { DEFAULT_PAGE_ENCODER_QUANTIZER, createFrameReceiver, startVideoEncoderInPage } from './gpu-frame-reader.mjs';
@@ -61,8 +63,6 @@ const LOOK_MINIMUM_SIDE = 64;
 const MAXIMUM_MOTION_SOURCES = 4;
 // A job writes files, not MCP image responses, so a 1920x1080 PNG may be larger than an inline image.
 const MAXIMUM_JOB_FRAME_BYTES = 12 * 1024 * 1024;
-// The object ID pass lists the part behind each ID in the job metrics; longer lists are cut and flagged.
-const MAXIMUM_OBJECT_NAMES = 1000;
 // A path trace shares the machine with the person using it, so it takes half of the eight-thread ceiling.
 const PATH_TRACER_THREADS = 8;
 const MAXIMUM_QUEUED_CALLS = 16;
@@ -103,6 +103,25 @@ const VENDOR_FILES = Object.freeze({
   '/vendor/rapier.js': { resolve: require => join(dirname(require.resolve('@dimforge/rapier3d-compat')), 'rapier.mjs'), type: 'application/javascript; charset=utf-8' },
 });
 
+/** Checks the launch paths that need no job folder; the CLI runs it before serving so a bad value exits with its message. */
+export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg', audio }) {
+  if (browser !== undefined && (typeof browser !== 'string' || !existsSync(browser))) {
+    throw new Error('The configured browser executable does not exist.');
+  }
+  if (assets !== undefined && (typeof assets !== 'string' || !isAbsolute(assets))) {
+    throw new TypeError('Asset root must be an explicit absolute directory path.');
+  }
+  if (packs !== undefined && (typeof packs !== 'string' || !isAbsolute(packs))) {
+    throw new TypeError('Packs root must be an explicit absolute directory path.');
+  }
+  if (typeof ffmpeg !== 'string' || !ffmpeg || (ffmpeg !== 'ffmpeg' && (!isAbsolute(ffmpeg) || !existsSync(ffmpeg)))) {
+    throw new TypeError('FFmpeg must be on PATH or configured with an existing absolute executable path.');
+  }
+  if (audio !== undefined) {
+    createAudioLibrary(audio);
+  }
+}
+
 export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', browser: browserPath, memory = 192, assets: assetRoot, packs: packsRoot,
   jobs: jobRoot, ffmpeg = 'ffmpeg', audio: audioRoot, gpuQueue, openPage = openInDefaultBrowser, addons: addonSet = { addons: [], skipped: [] },
   previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url) } = {}) {
@@ -115,15 +134,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   if (!Number.isInteger(memory) || memory < 32 || memory > MAXIMUM_MEMORY_MIB) {
     throw new RangeError(`memory must be an integer from 32 to ${MAXIMUM_MEMORY_MIB} MiB.`);
   }
-  if (browserPath !== undefined && (typeof browserPath !== 'string' || !existsSync(browserPath))) {
-    throw new Error('The configured browser executable does not exist.');
-  }
-  if (assetRoot !== undefined && (typeof assetRoot !== 'string' || !isAbsolute(assetRoot))) {
-    throw new TypeError('Asset root must be an explicit absolute directory path.');
-  }
-  if (packsRoot !== undefined && (typeof packsRoot !== 'string' || !isAbsolute(packsRoot))) {
-    throw new TypeError('Packs root must be an explicit absolute directory path.');
-  }
+  validateLaunchPaths({ browser: browserPath, assets: assetRoot, packs: packsRoot, ffmpeg });
   jobRoot = resolveJobRoot(jobRoot);
   const importMapScript = addonSet.addons.length === 0 ? '' : `<script type="importmap">${JSON.stringify(addonImportMap(packageMetadata.exports))}</script>`;
   // The one inline script is the import map; its hash is allowed so script-src stays 'self'. No addons, no hash.
@@ -131,9 +142,6 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   const registeredByAddon = {};
   const refusedAddons = [];
   const audioLibrary = audioRoot === undefined ? undefined : createAudioLibrary(audioRoot);
-  if (typeof ffmpeg !== 'string' || !ffmpeg || (ffmpeg !== 'ffmpeg' && (!isAbsolute(ffmpeg) || !existsSync(ffmpeg)))) {
-    throw new TypeError('FFmpeg must be on PATH or configured with an existing absolute executable path.');
-  }
   // One unit of GPU work (a look, a review, a bake, a render job) waits for the person's own GPU queue when --gpu-queue is set.
   // The server takes the card before it enters its own call queue, so a long wait never blocks other calls, and a unit that
   // runs while the server already holds the card (a look during a render job) joins that hold instead of queueing against itself.
@@ -691,6 +699,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       const width = settings.kind === 'video' ? Math.floor(created.render.width / 2) * 2 : created.render.width;
       const height = settings.kind === 'video' ? Math.floor(created.render.height / 2) * 2 : created.render.height;
       if (width < 64 || height < 64) throw new Error('Render budget reduced the job below its minimum output size.');
+      const oversizeError = oversizeFrameBudgetError({ requested: { width: settings.width, height: settings.height }, rendered: { width, height },
+        plan: created.render, memoryMiB: memory, maximumMemoryMiB: MAXIMUM_MEMORY_MIB });
+      if (oversizeError) throw oversizeError;
       await jobPage.setViewportSize({ width, height });
       session = await jobPage.context().newCDPSession(jobPage);
       const region = settings.region;
@@ -700,6 +711,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       if (region && (region.x + region.width > width || region.y + region.height > height)) {
         throw new Error(`The region lies outside the rendered frame, which the memory budget reduced to ${width}x${height}.`);
       }
+      const frameByteLimit = frameByteLimitFor(settings.width, settings.height, MAXIMUM_JOB_FRAME_BYTES);
       const outputWidth = region?.width ?? width;
       const outputHeight = region?.height ?? height;
       const format = settings.format ?? 'png';
@@ -771,7 +783,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             const blendsOverTime = usesSession && settings.kind === 'video' && chooseNativeKernel() === 'cycles' && chooseNativeTemporal();
             const frameSeed = blendsOverTime ? temporalFrameSeed(tracerOptions.seed, frame) : tracerOptions.seed;
             try {
-              const exported = await fetchNativeExport(jobPage, { ...frameInput, options: { width, height, bounces: tracerOptions.bounces, seed: frameSeed, fireflyClamp: 20, noiseThreshold: tracerOptions.noiseThreshold, samples: tracerOptions.samples, instancing: chooseNativeInstancing(), kernel: chooseNativeKernel() } });
+              const exported = await fetchNativeExport(jobPage, { ...frameInput, options: { width, height, bounces: tracerOptions.bounces, seed: frameSeed, fireflyClamp: 20, noiseThreshold: tracerOptions.noiseThreshold, samples: tracerOptions.samples, instancing: chooseNativeInstancing(), kernel: chooseNativeKernel() } }, { capacity: readNativeCapacity(trace.tracer).capacity });
               exportedScene = true;
               if (usesSession) nativeSequence ??= createNativeSequence({ tracer: trace.tracer });
               if (blendsOverTime) {
@@ -782,9 +794,12 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
               traced = await traceFrameNative({ tracer: trace.tracer, sequence: nativeSequence, temporal: nativeTemporal, exported, width, height, samples: tracerOptions.samples, bounces: tracerOptions.bounces,
                 seed: frameSeed, denoise: choice.denoise === true ? 'wavelet' : choice.denoise === false ? 'none' : choice.denoise, denoiser: choice.denoiser,
                 maxSeconds: tracerOptions.maxSeconds, noiseThreshold: tracerOptions.noiseThreshold });
+              nativeMemoryAllowance.grantForAdapter(traced.report.gpu);
             } catch (error) {
               // Past maxSeconds the job fails as it does on every backend; falling back would only run it twice as long.
               if (isNativeTimeLimitError(error)) throw error;
+              // A scene over the adapter capacity fails the job with its own message; the gpu backend is not tried instead.
+              if (error.nativeCapacity) throw error;
               nativeSequence?.close();
               nativeSequence = undefined;
               nativeTemporal?.restart('a frame rendered on another backend');
@@ -816,7 +831,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           }
           if (traced.report.nativeSession) (metrics.nativeSessionRoutes ??= []).push(traced.report.nativeSession.path);
           const tracedBytes = Buffer.from(traced.data, 'base64');
-          if (tracedBytes.length > MAXIMUM_JOB_FRAME_BYTES) throw new Error('Path traced frame exceeded 12 MiB.');
+          if (tracedBytes.length > frameByteLimit) throw new Error(`Path traced frame exceeded ${frameByteLimit / 1024 ** 2} MiB.`);
           if (encoder) {
             await encoder.writeFrame(tracedBytes);
           } else {
@@ -859,7 +874,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             ...(settings.kind === 'video' ? { quality: 95 } : { optimizeForSpeed: true }) });
           const captureBytes = Buffer.from(captured.data, 'base64');
           metrics.captureSeconds += (performance.now() - captureStarted) / 1000;
-          if (captureBytes.length > MAXIMUM_JOB_FRAME_BYTES) throw new Error('Captured job frame exceeded 12 MiB.');
+          if (captureBytes.length > frameByteLimit) throw new Error(`Captured job frame exceeded ${frameByteLimit / 1024 ** 2} MiB.`);
           signal.throwIfAborted();
           return captureBytes;
         }
@@ -880,7 +895,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           const encodedBytes = encodeRenderOutput({ format, pixels, width: read.width, height: read.height, pass,
             hasAlpha: settings.transparent === true, depthRange: RENDER_PASS_DEPTH_RANGE });
           metrics.captureSeconds += (performance.now() - captureStarted) / 1000;
-          if (encodedBytes.length > MAXIMUM_JOB_FRAME_BYTES * HIGH_PRECISION_FRAME_FACTOR) throw new Error('Rendered frame exceeded the high-precision size limit.');
+          if (encodedBytes.length > frameByteLimit * HIGH_PRECISION_FRAME_FACTOR) throw new Error('Rendered frame exceeded the high-precision size limit.');
           signal.throwIfAborted();
           return encodedBytes;
         }
@@ -904,15 +919,14 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
               passPixels[pass] = (await readFloatPass(pass)).pixels;
               if (pass === 'depth') metrics.depthRangeMetres = RENDER_PASS_DEPTH_RANGE;
               if (pass === 'objectId') {
-                metrics.objectNames = passInfo.objectNames.slice(0, MAXIMUM_OBJECT_NAMES);
-                metrics.objectNamesTruncated = passInfo.objectNames.length > MAXIMUM_OBJECT_NAMES;
+                Object.assign(metrics, objectIdMetrics(passInfo));
               }
               if (pass === 'cryptomatte') metrics.cryptomatte = passInfo.cryptomatte;
               if (pass === 'wireframe') metrics.wireframe = passInfo.wireframe;
             }
             const encodedBytes = encodeMultilayerExr({ width: beautyRead.width, height: beautyRead.height, beauty: beautyRead.pixels, passes: passPixels, hasAlpha: settings.transparent === true, depthRange: RENDER_PASS_DEPTH_RANGE });
             metrics.captureSeconds += (performance.now() - captureStarted) / 1000;
-            if (encodedBytes.length > MAXIMUM_JOB_FRAME_BYTES * HIGH_PRECISION_FRAME_FACTOR) throw new Error('Rendered frame exceeded the high-precision size limit.');
+            if (encodedBytes.length > frameByteLimit * HIGH_PRECISION_FRAME_FACTOR) throw new Error('Rendered frame exceeded the high-precision size limit.');
             await writeArtifact(`${stem}.exr`, encodedBytes);
           } else {
           await writeArtifact(`${stem}.${artifactExtension}`, bytes);
@@ -925,8 +939,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             if (pass === 'wireframe') metrics.wireframe = passInfo.wireframe;
             if (pass === 'depth') metrics.depthRangeMetres = RENDER_PASS_DEPTH_RANGE;
             if (pass === 'objectId') {
-              metrics.objectNames = passInfo.objectNames.slice(0, MAXIMUM_OBJECT_NAMES);
-              metrics.objectNamesTruncated = passInfo.objectNames.length > MAXIMUM_OBJECT_NAMES;
+              Object.assign(metrics, objectIdMetrics(passInfo));
             }
           }
         }
@@ -1025,7 +1038,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           use: 'scene_asset_catalog lists packs: name, version, license, author, description and item ids. GLBs, images, looks and environments carry assetId values that work in scene_create_asset, look, hdri and texture fields. Materials and recipes are read with scene_asset_catalog { pack, material } or { pack, recipe }: pass a recipe to scene_create, and a material as a materials entry or a scene_apply set-material. Packs are installed by the user (unzip into the --packs folder); a tool call never downloads one. Invalid packs are skipped and listed under packs.rejected with the reason.',
         },
         jobs: { configured: Boolean(jobRoot), kinds: ['image', 'stills', 'video'], passes: RENDER_PASS_NAMES, pathTracer: PATH_TRACER_CAPABILITIES, maximumActiveJobs: 1, estimate: RENDER_ESTIMATE_NOTE, budget: RENDER_BUDGET_NOTE, quality: RENDER_QUALITY_NOTE, tiers: await deviceTiers(),
-          maximumWidth: MAXIMUM_JOB_SIDE, maximumHeight: MAXIMUM_JOB_SIDE, maximumPixels: MAXIMUM_JOB_PIXELS,
+          maximumWidth: MAXIMUM_JOB_SIDE, maximumHeight: MAXIMUM_JOB_SIDE, maximumPixels: MAXIMUM_JOB_PIXELS, maximumSequenceWidth: MAXIMUM_SEQUENCE_JOB_SIDE, maximumSequenceHeight: MAXIMUM_SEQUENCE_JOB_SIDE, maximumSequencePixels: MAXIMUM_SEQUENCE_JOB_PIXELS,
           maximumDuration: MAXIMUM_VIDEO_SECONDS, maximumFps: MAXIMUM_JOB_FPS, maximumFrames: MAXIMUM_JOB_FRAMES, maximumStills: 8,
           encoder: 'H.264', encoders: VIDEO_ENCODERS, audio: Boolean(audioRoot), timeline: true, previewSuspendedDuringJob: true,
           glbExport: { maximumBytes: MAXIMUM_GLB_BYTES, maximumKept: MAXIMUM_KEPT_GLBS, maximumTextureSize: 4096 },
@@ -1348,6 +1361,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       }));
     },
     restore(input) {
+      const targets = ['checkpointId', 'revision', 'branch'].filter(field => input[field] !== undefined);
+      if (targets.length > 1) {
+        return Promise.reject(new TypeError(`scene_restore: pass exactly one of checkpointId, revision or branch; got ${targets.join(' and ')}.`));
+      }
       return enqueue(async () => {
         await requirePreviewRenderer();
         if (input.branch !== undefined) {

@@ -1,7 +1,7 @@
 import { faceCentroids, faceNormals, vertexNormals } from './mesh-normals.js';
 import { edgeCornerTable, cornerFaces } from './mesh-topology.js';
 import { seededRandom } from './mesh-fields.js';
-import { createMeshQueryIndex } from './mesh-query.js';
+import { createMeshQueryIndex, withoutDegenerateTriangles } from './mesh-query.js';
 import { triangulatedSurface } from './mesh-surface-distance.js';
 import { meshBounds } from './mesh-data.js';
 
@@ -119,9 +119,11 @@ function measureOcclusion(mesh, selectedFlags, { rays, distance, seed }) {
   const bounds = meshBounds(mesh);
   const extent = Math.hypot(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2]);
   const reach = distance ?? extent * DEFAULT_DISTANCE_SHARE;
-  const surface = triangulatedSurface(mesh);
-  const index = createMeshQueryIndex({ positions: new Float32Array(surface.positions), indices: surface.indices });
+  const surface = withoutDegenerateTriangles(triangulatedSurface(mesh));
   const weights = new Float32Array(mesh.vertexCount);
+  // A mesh made only of zero-area faces has nothing a ray could hit.
+  if (surface.indices.length === 0) return weights;
+  const index = createMeshQueryIndex({ positions: new Float32Array(surface.positions), indices: surface.indices });
   let triangleTests = 0;
   try {
     for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {

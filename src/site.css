@@ -1,7 +1,7 @@
 /* The home page, the showcase, the marketplace and the docs wear the Crucible brand. Every colour and font here comes from
    the shared brand theme (~/Documents/brand/theme/tokens.json, checked with theme/check-brand.mjs): Paper in light,
    charcoal in dark, Molten as the one accent, Plus Jakarta Sans for headings, Inter for text, JetBrains Mono for code
-   and Fredoka only for the wordmark. The names stay the site's own: --window is the page, --bg a panel, --surface a pressed fill. */
+   and the same Plus Jakarta Sans Bold for the wordmark. The names stay the site's own: --window is the page, --bg a panel, --surface a pressed fill. */
 
 :root[data-theme="crucible"] {
   color-scheme: light;
@@ -62,7 +62,7 @@
 body.site {
   --font: 'Inter', system-ui, sans-serif;
   --display: 'Plus Jakarta Sans', system-ui, sans-serif;
-  --wordmark: 'Fredoka', system-ui, sans-serif;
+  --wordmark: 'Plus Jakarta Sans', system-ui, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, monospace;
   --radius: 8px;
   --panel-radius: 12px;
@@ -169,7 +169,7 @@ body.site .icon { width: 18px; height: 18px; margin: 0; }
   padding: 16px 0;
   background: var(--window);
 }
-.site .brand { display: inline-flex; align-items: center; gap: 8px; font-family: var(--wordmark); font-size: 22px; font-weight: 600; letter-spacing: -0.01em; line-height: 1; color: var(--text); }
+.site .brand { display: inline-flex; align-items: center; gap: 8px; font-family: var(--wordmark); font-size: 22px; font-weight: 700; letter-spacing: -0.035em; line-height: 1; color: var(--text); }
 .site .brand .brand-mark { width: 28px; height: 28px; margin: 0; }
 .site .version { padding: 2px 8px; border-radius: 6px; background: var(--tint); color: var(--muted); font-family: var(--mono); font-size: 12px; }
 .site .navigation nav { display: flex; align-items: center; gap: 20px; margin-left: auto; }

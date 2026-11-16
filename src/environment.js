@@ -3,10 +3,20 @@
 // `rotation` turns the environment about +Y in radians.
 
 import { registerShaderFeatureCode } from './shader-registry.js';
-import { equirectangularGlsl, environmentLookupGlsl, environmentShadingGlsl, registerEnvironmentSupport } from './environment-shading.js';
+import {
+  ENVIRONMENT_BRDF_SIZE,
+  ENVIRONMENT_IRRADIANCE_HEIGHT,
+  ENVIRONMENT_IRRADIANCE_WIDTH,
+  ENVIRONMENT_LOOKUP_HEIGHT,
+  ENVIRONMENT_LOOKUP_WIDTH,
+  equirectangularGlsl,
+  environmentLookupGlsl,
+  environmentShadingGlsl,
+  registerEnvironmentSupport,
+} from './environment-shading.js';
 
 export const ENVIRONMENT_ROUGHNESS_LEVELS = 7;
-export const ENVIRONMENT_BRDF_SIZE = 128;
+export { ENVIRONMENT_BRDF_SIZE, ENVIRONMENT_IRRADIANCE_HEIGHT, ENVIRONMENT_IRRADIANCE_WIDTH };
 export const MAXIMUM_ENVIRONMENT_SIZE = 16384;
 const MAXIMUM_SPECULAR_WIDTH = 1024;
 const HALF_FLOAT_MAXIMUM = 65504;
@@ -58,7 +68,7 @@ export function environmentSpecularLayout(map) {
   const height = Math.max(2, Math.round(map.height * scale));
   const levelCount = Math.min(ENVIRONMENT_ROUGHNESS_LEVELS, Math.floor(Math.log2(Math.max(width, height))) + 1);
   const levels = [];
-  let bytes = ENVIRONMENT_BRDF_SIZE * ENVIRONMENT_BRDF_SIZE * 4;
+  let bytes = ENVIRONMENT_LOOKUP_WIDTH * ENVIRONMENT_LOOKUP_HEIGHT * 8;
   for (let level = 0; level < levelCount; level++) {
     const levelWidth = Math.max(1, width >> level);
     const levelHeight = Math.max(1, height >> level);
@@ -68,7 +78,7 @@ export function environmentSpecularLayout(map) {
   return { width, height, levelCount, levels, bytes };
 }
 
-// Persistent GPU bytes: the prefiltered half-float chain and the BRDF lookup. The source upload is freed once prefiltering ends.
+// Persistent GPU bytes: the prefiltered half-float chain and the lookup texture (split-sum table and irradiance grid). The source upload is freed once prefiltering ends.
 export function estimateEnvironmentBytes(map, textureLimit = MAXIMUM_ENVIRONMENT_SIZE) {
   assertEnvironmentMap(map);
   if (map.width > textureLimit || map.height > textureLimit) {
@@ -132,6 +142,91 @@ export function computeIrradianceCoefficients(map) {
   return runToEnd(irradianceSteps(map));
 }
 
+const MAXIMUM_IRRADIANCE_SOURCE_WIDTH = 128;
+const IRRADIANCE_ROWS_PER_GRID_STEP = 4;
+
+// Averages the map down to at most 128 by 64 texels, weighting rows by their solid angle, so the cosine integral below
+// costs about four million multiply-adds however large the map is. Light is conserved, so a sun stays as bright overall.
+function irradianceSourceTexels(map) {
+  const { width, height, channels, data } = map;
+  const scale = Math.min(1, MAXIMUM_IRRADIANCE_SOURCE_WIDTH / width);
+  const sourceWidth = Math.max(4, Math.round(width * scale));
+  const sourceHeight = Math.max(2, Math.round(height * scale));
+  const sums = new Float64Array(sourceWidth * sourceHeight * 3);
+  const weights = new Float64Array(sourceWidth * sourceHeight);
+  for (let row = 0; row < height; row++) {
+    const rowWeight = Math.sin((row + 0.5) / height * Math.PI);
+    const targetRow = Math.min(sourceHeight - 1, Math.floor(row * sourceHeight / height));
+    for (let column = 0; column < width; column++) {
+      const target = targetRow * sourceWidth + Math.min(sourceWidth - 1, Math.floor(column * sourceWidth / width));
+      const offset = (row * width + column) * channels;
+      sums[target * 3] += data[offset] * rowWeight;
+      sums[target * 3 + 1] += data[offset + 1] * rowWeight;
+      sums[target * 3 + 2] += data[offset + 2] * rowWeight;
+      weights[target] += rowWeight;
+    }
+  }
+  const texelCount = sourceWidth * sourceHeight;
+  const directions = new Float64Array(texelCount * 3);
+  const radiance = new Float64Array(texelCount * 3);
+  const pixelSolidAngleScale = (2 * Math.PI / sourceWidth) * (Math.PI / sourceHeight);
+  for (let row = 0; row < sourceHeight; row++) {
+    const polar = (row + 0.5) / sourceHeight * Math.PI;
+    const sinePolar = Math.sin(polar);
+    for (let column = 0; column < sourceWidth; column++) {
+      const texel = row * sourceWidth + column;
+      const azimuth = ((column + 0.5) / sourceWidth - 0.5) * 2 * Math.PI;
+      directions[texel * 3] = sinePolar * Math.sin(azimuth);
+      directions[texel * 3 + 1] = Math.cos(polar);
+      directions[texel * 3 + 2] = -sinePolar * Math.cos(azimuth);
+      // The cosine integral is divided by pi once here, so the grid holds the light a white surface sends back.
+      const lightWeight = sinePolar * pixelSolidAngleScale / Math.PI;
+      const averageWeight = Math.max(weights[texel], 1e-12);
+      for (let channel = 0; channel < 3; channel++) radiance[texel * 3 + channel] = sums[texel * 3 + channel] / averageWeight * lightWeight;
+    }
+  }
+  return { texelCount, directions, radiance };
+}
+
+// The map's diffuse light by direction, as a ENVIRONMENT_IRRADIANCE_WIDTH by ENVIRONMENT_IRRADIANCE_HEIGHT equirectangular
+// grid of RGB floats: for each texel, the cosine-weighted sum of the map around it divided by pi. This is an exact
+// convolution, so a strong sun does not ring the way a nine-term spherical harmonic fit does.
+function* irradianceGridSteps(map) {
+  assertEnvironmentMap(map);
+  const { texelCount, directions, radiance } = irradianceSourceTexels(map);
+  const grid = new Float32Array(ENVIRONMENT_IRRADIANCE_WIDTH * ENVIRONMENT_IRRADIANCE_HEIGHT * 3);
+  for (let row = 0; row < ENVIRONMENT_IRRADIANCE_HEIGHT; row++) {
+    const polar = (row + 0.5) / ENVIRONMENT_IRRADIANCE_HEIGHT * Math.PI;
+    const sinePolar = Math.sin(polar);
+    for (let column = 0; column < ENVIRONMENT_IRRADIANCE_WIDTH; column++) {
+      const azimuth = ((column + 0.5) / ENVIRONMENT_IRRADIANCE_WIDTH - 0.5) * 2 * Math.PI;
+      const normalX = sinePolar * Math.sin(azimuth);
+      const normalY = Math.cos(polar);
+      const normalZ = -sinePolar * Math.cos(azimuth);
+      let red = 0;
+      let green = 0;
+      let blue = 0;
+      for (let texel = 0; texel < texelCount; texel++) {
+        const cosine = directions[texel * 3] * normalX + directions[texel * 3 + 1] * normalY + directions[texel * 3 + 2] * normalZ;
+        if (cosine <= 0) continue;
+        red += radiance[texel * 3] * cosine;
+        green += radiance[texel * 3 + 1] * cosine;
+        blue += radiance[texel * 3 + 2] * cosine;
+      }
+      const target = (row * ENVIRONMENT_IRRADIANCE_WIDTH + column) * 3;
+      grid[target] = red;
+      grid[target + 1] = green;
+      grid[target + 2] = blue;
+    }
+    if (row % IRRADIANCE_ROWS_PER_GRID_STEP === IRRADIANCE_ROWS_PER_GRID_STEP - 1) yield;
+  }
+  return grid;
+}
+
+export function computeIrradianceGrid(map) {
+  return runToEnd(irradianceGridSteps(map));
+}
+
 /** Runs a step generator to its end without pausing and returns its result. */
 function runToEnd(steps) {
   let step = steps.next();
@@ -176,6 +271,22 @@ function paddedHalfFloatRows(map, firstRow, rowCount) {
   return padded;
 }
 
+
+// The irradiance grid as RGBA rows with a padding column on each side that copies the opposite edge of the row.
+function paddedIrradianceRows(grid) {
+  const paddedWidth = ENVIRONMENT_IRRADIANCE_WIDTH + 2;
+  const padded = new Float32Array(paddedWidth * ENVIRONMENT_IRRADIANCE_HEIGHT * 4);
+  for (let row = 0; row < ENVIRONMENT_IRRADIANCE_HEIGHT; row++) {
+    for (let paddedColumn = 0; paddedColumn < paddedWidth; paddedColumn++) {
+      const column = (paddedColumn - 1 + ENVIRONMENT_IRRADIANCE_WIDTH) % ENVIRONMENT_IRRADIANCE_WIDTH;
+      const source = (row * ENVIRONMENT_IRRADIANCE_WIDTH + column) * 3;
+      const target = (row * paddedWidth + paddedColumn) * 4;
+      for (let channel = 0; channel < 3; channel++) padded[target + channel] = Math.min(Math.max(grid[source + channel], 0), HALF_FLOAT_MAXIMUM);
+      padded[target + 3] = 1;
+    }
+  }
+  return padded;
+}
 
 export const environmentPrefilterFragment = `#version 300 es
 precision highp float;
@@ -342,7 +453,7 @@ function* environmentResourceSteps(context, map, { compileProgram, fullscreenVer
   context.generateMipmap(context.TEXTURE_2D);
   yield;
   const specularTexture = createHalfFloatTexture(context, context.RGBA16F, layout.levelCount, layout.width, layout.height, { wrapHorizontally: true });
-  const brdfTexture = createHalfFloatTexture(context, context.RG16F, 1, ENVIRONMENT_BRDF_SIZE, ENVIRONMENT_BRDF_SIZE, { wrapHorizontally: false });
+  const brdfTexture = createHalfFloatTexture(context, context.RGBA16F, 1, ENVIRONMENT_LOOKUP_WIDTH, ENVIRONMENT_LOOKUP_HEIGHT, { wrapHorizontally: false });
   const framebuffer = context.createFramebuffer();
   const prefilterProgram = compileProgram(context, fullscreenVertex, environmentPrefilterFragment);
   const brdfProgram = compileProgram(context, fullscreenVertex, environmentBrdfFragment);
@@ -374,6 +485,9 @@ function* environmentResourceSteps(context, map, { compileProgram, fullscreenVer
   context.finish();
   yield;
   const irradiance = yield* irradianceSteps(map.irradianceSource ?? map);
+  const irradianceGrid = yield* irradianceGridSteps(map.irradianceSource ?? map);
+  context.bindTexture(context.TEXTURE_2D, brdfTexture);
+  context.texSubImage2D(context.TEXTURE_2D, 0, 0, ENVIRONMENT_BRDF_SIZE, ENVIRONMENT_IRRADIANCE_WIDTH + 2, ENVIRONMENT_IRRADIANCE_HEIGHT, context.RGBA, context.FLOAT, paddedIrradianceRows(irradianceGrid));
   return {
     data: map.data,
     irradianceSource: map.irradianceSource,
@@ -382,6 +496,7 @@ function* environmentResourceSteps(context, map, { compileProgram, fullscreenVer
     levelCount: layout.levelCount,
     bytes: layout.bytes,
     irradiance,
+    irradianceGrid,
     prefilterMilliseconds: performance.now() - started,
     dispose() {
       context.deleteTexture(specularTexture);

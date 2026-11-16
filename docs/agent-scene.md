@@ -66,7 +66,7 @@ Call `loadAgentSceneModules(operations)` before `apply` when the operations add 
 ## Recipe contract
 
 The recipe must contain `format`, `schemaVersion`, `geometries`, `materials`, and `nodes`.
-The optional `camera` object supplies a perspective camera, or an orthographic one with `projection: 'orthographic'` and `orthoScale` (view height in metres, default 4). The lens is `fov` (vertical degrees) or `focalLength` in millimetres with `sensorWidth` (default 36); giving both is an error. `shift: [x, y]` moves the frame by a fraction of its width and height, positive right and up. `fStop` (0.7 to 64) turns on depth of field focused on `target` (1.4 or lower is full blur) and cannot be combined with `effects.depthOfField.blur`. The path tracer draws perspective cameras without shift.
+The optional `camera` object supplies a perspective camera, or an orthographic one with `projection: 'orthographic'` and `orthoScale` (view height in metres, default 4). The lens is `fov` (vertical degrees) or `focalLength` in millimetres with `sensorWidth` (default 36); giving both is an error. `shift: [x, y]` moves the frame by a fraction of its width and height, positive right and up. `fStop` (0.7 to 64) turns on depth of field focused on `target` (1.4 or lower is full blur); `focusDistance` (metres along the view axis, positive, needs `fStop`) puts the focus plane there instead, so the subject can stay sharp without moving `target`, in the rasterizer and the path tracer alike (it is not the `effects.depthOfField.focusDistance` of the blur effect, nor a motion track: the lens keeps it while camera tracks move the camera) and cannot be combined with `effects.depthOfField.blur`. The path tracer draws perspective cameras without shift.
 All objects reject unknown keys.
 Inputs must contain plain, finite, acyclic JSON data without accessors, sparse arrays, or executable values.
 JSON nesting has a fixed maximum of 64 levels.
@@ -239,7 +239,7 @@ Normal transforms must also remain finite.
 Cached local geometry bounds provide a conservative world Float32 check from eight corners per mesh.
 The check bounds the sum of absolute matrix products, so intermediate shader arithmetic cannot overflow before cancellation.
 
-The camera contains `eye`, `target`, `up`, `fov`, `near`, and `far`, plus the optional `projection`, `orthoScale`, `focalLength`, `sensorWidth`, `shift` and `fStop` when the recipe sets them.
+The camera contains `eye`, `target`, `up`, `fov`, `near`, and `far`, plus the optional `projection`, `orthoScale`, `focalLength`, `sensorWidth`, `shift`, `fStop` and `focusDistance` when the recipe sets them.
 Its defaults are `[4, 3, 5]`, `[0, 0, 0]`, `[0, 1, 0]`, `45`, `0.1`, and `1000`.
 FOV uses degrees and ranges between zero and 180.
 The clipping range must satisfy `0 < near < far` at Float32 precision.
@@ -300,6 +300,7 @@ A node with an `asset` field places a GLB from the `--assets` catalog inside the
 ```
 
 - `id` is an id from `scene_asset_catalog`. `materials` override source materials by glTF material name (`color`, `metallic`, `roughness`, `opacity`, `emission`, `emissiveColor`, and `tag`: `foliage` or `grass` makes the leaves of an imported tree sway in `environment.wind` and cast moving shadows, like grown ones); `scene_inspect` lists the names. Placements with the same overrides share one material. An override with an `id` (1 to 128 characters, one per placement, not an existing material id) gets a material of its own that a `motion` material track names: `{ "kind": "material", "id": "stool-heat", "property": "emission" }` (also `emissiveColor`, `color`, `metallic`, `roughness`) fades a heat glow without another `scene_create`; textures and shading stay.
+- `flatten` flattens every material of the placement in one call, so an imported asset with many materials needs no override per name: `{ "unlit": true }` draws them without lighting, `{ "color": [0.8, 0.8, 0.8] }` paints them one linear colour, and both together give a flat unlit silhouette for a sketch-to-3D composite. It drops normal, metallic-roughness, occlusion and emissive maps and any glow; `color` also drops the base map, and `unlit` alone keeps it. Other placements in the scene are unchanged, and a named override in `materials` still wins over `flatten`. To flatten the whole scene, give each placement the same `flatten`.
 - `emissionMask` on an override (and on a recipe material) makes the glow follow a ramp along one axis: `{ "axis": "y", "from": 0.2, "to": 0.5 }` multiplies `emission` by a smooth step that is 0 at `from` and 1 at `to` (a `from` above `to` flips it), so a part glows only at the end that would cool last while its texture and shading stay. The axis and the numbers are metres in the part's own space (the coordinates its mesh stores, at the placement's scale), so read them from the bounds in `scene_inspect`. Without `emissionMask` nothing changes and the shader pays nothing. The rasterizer applies it; the path tracers and GLB export ignore it (the path tracer says so in its notes). Errors name the field and what to pass, such as `emissionMask.axis` needing `x`, `y` or `z`.
 - Placements of the same asset share geometry and materials, so they draw as one instanced batch per material (`drawBatches` in the render status stays flat as copies are added). Skins and morphs keep working.
 - `clip` plays that clip, held at its first frame until scene time `start`, then at `speed`, looping unless `loop` is false. Each placement that plays a clip gets a decoded copy of its own (its geometry is not shared), because a pose is state of one decoded asset. A seek gives the same frame as playing to that time. `set-motion` tracks still move the node itself, so a walking figure is a clip plus a motion track on the same node.
@@ -331,7 +332,7 @@ An asset placement with a `crowd` field fills its group node with `count` (1 to 
 { "id": "people", "asset": { "id": "<catalog asset id>", "crowd": { "clip": 3, "count": 200, "seed": 7, "spacing": 2, "farDistance": 25, "farRate": 6 } } }
 ```
 
-- `clip` is a clip index, `layout` is `grid` or `scatter`, and the pose is a pure function of scene time, `seed` and the recipe camera, so a render at a time equals the frame reached by playing. People farther than `farDistance` from the recipe camera hold each pose for `1 / farRate` seconds.
+- `clip` is a clip index, `layout` is `grid` or `scatter`, and the pose is a pure function of scene time, `seed` and the recipe camera, so a render at a time equals the frame reached by playing. People farther than `farDistance` from the recipe camera hold each pose for `1 / farRate` seconds. The distance is measured from each person's world position at that time, so it follows a parent group that moves or has a motion track.
 - The crowd takes one decoded copy of the asset, the generated part nodes (count times materials) count against `maxNodes`, and `scene_inspect` lists it under `assets` with `kind: "crowd"`, `instances`, `batches`, `frames`, `paletteBytes` and `boundsRadius`.
 
 ### Seams between meshes
@@ -347,6 +348,8 @@ Five node fields change how a node renders; `add-node` and `set-node` take them,
 - `holdout: true` writes zero colour and zero alpha where the mesh covers, and still hides what is behind it and still casts its shadow. `shadowCatcher: true` draws only the shadow it receives, black with the shadow as premultiplied alpha, and casts none. Both are for compositing over footage and need a transparent canvas: `new CrucibleRenderer(canvas, parts, { transparent: true })`. A node is never both. The shadow catcher shows the sun shadow only.
 
 - `shadowOnly: true` (mesh nodes) keeps the node in the shadow passes and leaves it out of the picture, the same as Blender's Ray Visibility > Camera off. Use it for a gobo, such as a window frame outside the shot that throws bars of sun onto a wall. It is also left out of depth, object ID and wireframe passes. It defaults to false, so no scene changes. A node cannot set `shadowOnly` together with `castShadow: false`, `holdout` or `shadowCatcher`. Every backend honours it: the raster renderer, and Cook on the cpu, gpu (WebGL2), webgpu and native backends (both native kernels). Cook leaves the node out of camera rays (the first hit of each path) and keeps it for shadow and bounce rays, so a mirror or glass can still show it. No backend lists it as an ignored feature.
+
+- `rayVisibility` (mesh nodes, native path tracer only) hides a node from one ray kind: `'glass'` is the shorthand for `{ "shadow": false }`, so sun and sky are sampled through a window pane while it still shows and refracts; the object form takes booleans for `camera`, `diffuse`, `glossy`, `transmission`, `shadow` and `volumeScatter`. An emissive node cannot hide from diffuse, glossy or transmission rays, and `shadowOnly` needs shadow rays on. The raster renderer ignores it. See [path-tracer.md](https://github.com/codepawl/crucible/blob/main/docs/path-tracer.md).
 
 Parts with different `castShadow`, `receiveShadow`, `holdout`, `shadowCatcher` or `shadowOnly` values batch apart; `visible` never splits a batch. `receiveShadow`, `holdout`, `shadowCatcher` and `shadowOnly` changes need `replaceParts`, not `updateParts`.
 
@@ -398,7 +401,7 @@ Final resource references and hierarchy must be valid before publication.
 | --- | --- |
 | `set-node` | `id`, optional `translation`, `rotation`, `scale`, `parent`, `label`, `geometry`, `material` |
 | `set-material` | `id`, optional `color`, `metallic`, `roughness`, `emission`, `emissiveColor`, `pattern`, `map` |
-| `set-camera` | Optional `eye`, `target`, `up`, `fov`, `near`, `far`, `projection`, `orthoScale`, `focalLength`, `sensorWidth`, `shift`, `fStop` directly on the command; `focalLength` replaces `fov` and `fov` replaces `focalLength` |
+| `set-camera` | Optional `eye`, `target`, `up`, `fov`, `near`, `far`, `projection`, `orthoScale`, `focalLength`, `sensorWidth`, `shift`, `fStop`, `focusDistance` directly on the command; `focalLength` replaces `fov` and `fov` replaces `focalLength` |
 | `add-geometry` | `geometry`, containing a complete geometry record |
 | `remove-geometry` | `id` |
 | `add-material` | `material`, containing a complete material record |

@@ -45,7 +45,7 @@ export function createBranchStore() {
       const recipeKey = JSON.stringify(recipe);
       const shared = [...branches.entries()].some(([otherName, other]) => otherName !== name && other.recipeKey === recipeKey);
       branches.set(name, { recipeKey, baseKey: JSON.stringify(baseRecipe), operations: structuredClone(operations), baseRevision });
-      if (!snapshots.has(recipeKey)) snapshots.set(recipeKey, recipe);
+      if (!snapshots.has(recipeKey)) snapshots.set(recipeKey, structuredClone(recipe));
       pruneSnapshots();
       return { shared };
     },

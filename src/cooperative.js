@@ -13,6 +13,7 @@ export const CHUNK_ELEMENTS = 49152;
 
 /** Returns `checkpoint()`: it yields to the page once more than `sliceMilliseconds` have passed since anything last yielded, else it returns at once. */
 export function createSlicer(sliceMilliseconds = 8) {
+  if (!Number.isFinite(sliceMilliseconds)) throw new TypeError('Slice milliseconds must be finite, such as 8.');
   return async function checkpoint() {
     if (performance.now() - lastYieldAt <= sliceMilliseconds) return;
     await yieldToPage();

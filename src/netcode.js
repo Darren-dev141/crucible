@@ -812,6 +812,8 @@ export function createNetcode(options) {
 
     init(context) {
       side.setStep?.(context.fixedStepSeconds);
+      // A second init must not leave the first subscription behind, or every message is handled twice.
+      netcode.dispose();
       unsubscribe = settings.transport.receive((peerId, message) => side.receiveMessage(peerId, message));
     },
     fixedUpdate(step, context) {

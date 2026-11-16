@@ -21,8 +21,11 @@ export function facePolygons(mesh) {
   return polygons;
 }
 
-/** Build MeshData from polygons, dropping vertices that no polygon uses. */
-export function buildPolygonMesh(mesh, polygons, extraPositions = []) {
+/**
+ * Build MeshData from polygons, dropping vertices that no polygon uses. Point attributes follow their vertex; an extra
+ * vertex copies the values of `extraSources[index]` (a source vertex number) when that is given.
+ */
+export function buildPolygonMesh(mesh, polygons, extraPositions = [], extraSources = []) {
   const used = new Set();
   for (const polygon of polygons) {
     for (const vertex of polygon.vertices) used.add(vertex);
@@ -33,7 +36,8 @@ export function buildPolygonMesh(mesh, polygons, extraPositions = []) {
     const position = vertex < mesh.vertexCount
       ? [mesh.positions[vertex * 3], mesh.positions[vertex * 3 + 1], mesh.positions[vertex * 3 + 2]]
       : extraPositions[vertex - mesh.vertexCount];
-    remap.set(vertex, builder.addVertex(...position));
+    const sourceVertex = vertex < mesh.vertexCount ? vertex : (extraSources[vertex - mesh.vertexCount] ?? -1);
+    remap.set(vertex, builder.addVertex(...position, sourceVertex));
   }
   for (const polygon of polygons) {
     builder.addFace(polygon.vertices.map(vertex => remap.get(vertex)), {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { BROWSER_HEAP_LIMIT_BYTES, NODE_RSS_LIMIT_BYTES, createNativeMemoryAllowance, exceedsMemoryGuard, memoryGuardMessage, nativeNodeAllowanceBytes, sampleBrowserHeap } from '../scripts/agent-memory-guard.mjs';
+import { BROWSER_HEAP_LIMIT_BYTES, NODE_RSS_LIMIT_BYTES, SOFTWARE_ADAPTER_ALLOWANCE_BYTES, createNativeMemoryAllowance, isSoftwareAdapter, exceedsMemoryGuard, memoryGuardMessage, nativeNodeAllowanceBytes, sampleBrowserHeap } from '../scripts/agent-memory-guard.mjs';
 
 const MEBIBYTE = 1024 ** 2;
 
@@ -50,11 +50,25 @@ test('the Node limit is unchanged and still enforced', () => {
   assert.equal(exceedsMemoryGuard({ nodeBytes: NODE_RSS_LIMIT_BYTES, browserHeapBytes: BROWSER_HEAP_LIMIT_BYTES }), false);
 });
 
-test('a native job gets 256 MiB plus 1 KiB a pixel on top of the Node limit, capped at 2 GiB', () => {
-  assert.equal(nativeNodeAllowanceBytes({ width: 960, height: 540 }), 256 * MEBIBYTE + 960 * 540 * 1024);
-  assert.equal(nativeNodeAllowanceBytes({ width: 1, height: 1 }), 256 * MEBIBYTE + 1024);
+test('a native job gets 640 MiB plus 1 KiB a pixel on top of the Node limit, capped at 2 GiB', () => {
+  assert.equal(nativeNodeAllowanceBytes({ width: 960, height: 540 }), 640 * MEBIBYTE + 960 * 540 * 1024);
+  assert.equal(nativeNodeAllowanceBytes({ width: 1, height: 1 }), 640 * MEBIBYTE + 1024);
   assert.equal(nativeNodeAllowanceBytes({ width: 7680, height: 4320 }), 2048 * MEBIBYTE);
   assert.throws(() => nativeNodeAllowanceBytes({ width: 0, height: 540 }), /positive integer width and height/);
+});
+
+// Peak Node RSS of native + OIDN video jobs of the demo room, 24 frames at 16 samples, RTX 3060, Windows (#1186).
+const MEASURED_NATIVE_PEAKS = [
+  { width: 960, height: 540, peakMebibytes: 1224 },
+  { width: 1280, height: 720, peakMebibytes: 1360 },
+  { width: 1920, height: 1080, peakMebibytes: 2149 },
+];
+
+test('every measured native + OIDN video job fits its limit with at least 15 percent to spare', () => {
+  for (const { width, height, peakMebibytes } of MEASURED_NATIVE_PEAKS) {
+    const limitMebibytes = (NODE_RSS_LIMIT_BYTES + nativeNodeAllowanceBytes({ width, height })) / MEBIBYTE;
+    assert.ok(limitMebibytes >= peakMebibytes * 1.15, `${width} x ${height}: limit ${limitMebibytes} MiB, measured peak ${peakMebibytes} MiB`);
+  }
 });
 
 test('a native 960 x 540 job at 800 MiB of Node RSS passes while the same RSS stops a non-native job', () => {
@@ -115,4 +129,45 @@ test('the runtime wires one shared allowance into both guards and has no per-job
   assert.equal((source.match(/createNativeMemoryAllowance\(\)/g) || []).length, 1);
   assert.equal((source.match(/nativeMemoryAllowance\.grantForFrame\(/g) || []).length, 1);
   assert.equal((source.match(/nativeAllowanceBytes: nativeMemoryAllowance\.bytes/g) || []).length, 2);
+});
+
+test('a trace on a software adapter adds its device memory to the allowance, a GPU adds nothing', () => {
+  const onGpu = createNativeMemoryAllowance();
+  onGpu.grantForFrame({ width: 960, height: 540 });
+  onGpu.grantForAdapter('NVIDIA GeForce RTX 3060');
+  assert.equal(onGpu.bytes, nativeNodeAllowanceBytes({ width: 960, height: 540 }));
+  const onLavapipe = createNativeMemoryAllowance();
+  onLavapipe.grantForFrame({ width: 960, height: 540 });
+  onLavapipe.grantForAdapter('llvmpipe (LLVM 21.1.8, 256 bits)');
+  assert.equal(onLavapipe.bytes, nativeNodeAllowanceBytes({ width: 960, height: 540 }) + SOFTWARE_ADAPTER_ALLOWANCE_BYTES);
+  onLavapipe.grantForAdapter(undefined);
+  assert.equal(onLavapipe.bytes, nativeNodeAllowanceBytes({ width: 960, height: 540 }) + SOFTWARE_ADAPTER_ALLOWANCE_BYTES, 'the allowance never shrinks');
+  assert.equal(isSoftwareAdapter('SwiftShader Device (Subzero)'), true);
+  assert.equal(isSoftwareAdapter('AMD Radeon RX 7800 XT'), false);
+});
+
+test('the first 960 x 540 job on a fresh lavapipe runner (3226 MiB, #1186) passes with 15 percent to spare', () => {
+  const allowance = createNativeMemoryAllowance();
+  allowance.grantForFrame({ width: 960, height: 540 });
+  allowance.grantForAdapter('llvmpipe (LLVM 21.1.8, 256 bits)');
+  const limitMebibytes = (NODE_RSS_LIMIT_BYTES + allowance.bytes) / MEBIBYTE;
+  assert.ok(limitMebibytes >= 3226 * 1.15, `limit ${limitMebibytes} MiB`);
+  assert.equal(exceedsMemoryGuard({ nodeBytes: 3226 * MEBIBYTE, browserHeapBytes: 0, nativeAllowanceBytes: allowance.bytes }), false);
+});
+
+test('a real leak on a software adapter still trips the guard', () => {
+  const allowance = createNativeMemoryAllowance();
+  allowance.grantForFrame({ width: 960, height: 540 });
+  allowance.grantForAdapter('llvmpipe (LLVM 21.1.8, 256 bits)');
+  const leakedBytes = NODE_RSS_LIMIT_BYTES + allowance.bytes + MEBIBYTE;
+  assert.equal(exceedsMemoryGuard({ nodeBytes: leakedBytes, browserHeapBytes: 0, nativeAllowanceBytes: allowance.bytes }), true);
+  assert.match(memoryGuardMessage({ subject: 'Render job', nodeBytes: leakedBytes, browserHeapBytes: 0, nativeAllowanceBytes: allowance.bytes }), /exceeded its Node RSS guard/);
+  // Even at the largest frame the whole limit stays bounded, so a runaway job cannot grow without end.
+  allowance.grantForFrame({ width: 4096, height: 4096 });
+  assert.ok(NODE_RSS_LIMIT_BYTES + allowance.bytes <= (512 + 2048 + 2304) * MEBIBYTE);
+});
+
+test('the runtime grants the adapter allowance from the native trace report before it samples memory', () => {
+  const source = readFileSync(new URL('../scripts/agent-runtime.mjs', import.meta.url), 'utf8');
+  assert.equal((source.match(/nativeMemoryAllowance\.grantForAdapter\(traced\.report\.gpu\)/g) || []).length, 1);
 });

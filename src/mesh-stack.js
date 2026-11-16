@@ -15,6 +15,7 @@ export class MeshBuilder {
   constructor(source) {
     this.source = source;
     this.positions = [];
+    this.vertexSources = [];
     this.faceOffsets = [0];
     this.cornerVertices = [];
     this.cornerSources = [];
@@ -25,8 +26,13 @@ export class MeshBuilder {
     this.faceTagSwaps = [];
   }
 
-  addVertex(x, y, z) {
+  /**
+   * sourceVertex: the source vertex whose point attributes this vertex copies (-1 for none), or { from, to, t } to blend
+   * two source vertices: floats blend by t, integer and boolean values take `from`.
+   */
+  addVertex(x, y, z, sourceVertex = -1) {
     this.positions.push(x, y, z);
+    this.vertexSources.push(sourceVertex);
     return this.positions.length / 3 - 1;
   }
 
@@ -46,6 +52,30 @@ export class MeshBuilder {
     this.faceKeepsTags.push(keepTags);
     this.faceTags.push(tags);
     this.faceTagSwaps.push(tagSwap);
+  }
+
+  /** Point attributes follow their source vertex: a vertex with no source keeps zeros, a vertex that is gone drops its values. */
+  carryPointAttributes(vertexCount) {
+    const carried = {};
+    for (const [name, attribute] of Object.entries(this.source.attributes.point)) {
+      const { size } = attribute;
+      const data = new attribute.data.constructor(vertexCount * size);
+      const blends = data instanceof Float32Array || data instanceof Float64Array;
+      this.vertexSources.forEach((sourceVertex, vertex) => {
+        if (sourceVertex === -1) return;
+        if (typeof sourceVertex === 'number') {
+          data.set(attribute.data.subarray(sourceVertex * size, (sourceVertex + 1) * size), vertex * size);
+          return;
+        }
+        const { from, to, t } = sourceVertex;
+        for (let component = 0; component < size; component++) {
+          const start = attribute.data[from * size + component];
+          data[vertex * size + component] = blends ? start + (attribute.data[to * size + component] - start) * t : start;
+        }
+      });
+      carried[name] = { data, size };
+    }
+    return carried;
   }
 
   build() {
@@ -106,6 +136,7 @@ export class MeshBuilder {
       });
       attributes.edge[name] = { data, size: attribute.size };
     }
+    if (this.vertexSources.some(sourceVertex => sourceVertex !== -1)) attributes.point = this.carryPointAttributes(vertexCount);
     return createMeshData({
       positions: Float32Array.from(this.positions), faceOffsets, cornerVertices,
       edgeVertices: edges.edgeVertices, cornerEdges: edges.cornerEdges, attributes,

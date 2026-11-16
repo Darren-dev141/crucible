@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { box, cylinder } from '../src/geometry.js';
 import { lathe } from '../src/modeling.js';
-import { editMesh, validateTopology, meshFromGeometry, lintMesh, tagCounts, facesWithTag, applyMeshEdits, meshBounds } from '../src/mesh.js';
+import { createMeshData, editMesh, validateTopology, meshFromGeometry, lintMesh, tagCounts, facesWithTag, applyMeshEdits, meshBounds } from '../src/mesh.js';
 import { loopCut } from '../src/mesh-loopcut.js';
 import { normalizeMeshEdits } from '../src/mesh-recipe.js';
 import { createAgentScene } from '../src/agent-scene.js';
@@ -137,4 +137,43 @@ test('recipe meshes loop cut through mesh_edit-style edits', () => {
   const [report] = scene.inspectMeshes().meshes;
   assert.equal(report.ok, true, JSON.stringify(report.problems));
   assert.equal(report.edits[1].rings, 1);
+});
+
+function cubeWithPointAttributes() {
+  const plain = cube();
+  const heat = new Float32Array(plain.vertexCount);
+  const region = new Int32Array(plain.vertexCount);
+  for (let vertex = 0; vertex < plain.vertexCount; vertex++) {
+    heat[vertex] = (plain.positions[vertex * 3 + 1] + 0.5) * 10;
+    region[vertex] = vertex + 1;
+  }
+  return createMeshData({ positions: plain.positions, faceOffsets: plain.faceOffsets, cornerVertices: plain.cornerVertices,
+    attributes: { point: { heat: { data: heat, size: 1 }, region: { data: region, size: 1 } } } });
+}
+
+test('point attributes carry through a loop cut: new points blend their edge ends by the cut fraction, integers take the low end', () => {
+  const source = cubeWithPointAttributes();
+  const result = loopCut(source, { along: [0, 1, 0] }, { factor: 0.2 });
+  const { heat, region } = result.mesh.attributes.point;
+  assert.equal(region.data.constructor, Int32Array);
+  assert.deepEqual([...heat.data.subarray(0, source.vertexCount)], [...source.attributes.point.heat.data], 'old points keep their values');
+  let cutPoints = 0;
+  for (let vertex = source.vertexCount; vertex < result.mesh.vertexCount; vertex++) {
+    cutPoints++;
+    assert.ok(Math.abs(heat.data[vertex] - 2) < 1e-6, 'a fifth of the way from 0 to 10');
+    // The low end of the vertical edge below this point has the same x and z.
+    const low = [...Array(source.vertexCount).keys()].find(candidate => source.positions[candidate * 3 + 1] < 0
+      && source.positions[candidate * 3] === result.mesh.positions[vertex * 3] && source.positions[candidate * 3 + 2] === result.mesh.positions[vertex * 3 + 2]);
+    assert.equal(region.data[vertex], source.attributes.point.region.data[low]);
+  }
+  assert.equal(cutPoints, 4);
+});
+
+test('carrying point attributes leaves the loop cut positions byte for byte the same', () => {
+  for (const options of [{}, { cuts: 3 }, { factor: 0.2 }]) {
+    const withAttributes = loopCut(cubeWithPointAttributes(), { along: [0, 1, 0] }, options).mesh;
+    const without = loopCut(cube(), { along: [0, 1, 0] }, options).mesh;
+    assert.deepEqual(new Uint8Array(withAttributes.positions.buffer), new Uint8Array(without.positions.buffer));
+    assert.equal(withAttributes.attributes.point.heat.data.length, withAttributes.vertexCount);
+  }
 });

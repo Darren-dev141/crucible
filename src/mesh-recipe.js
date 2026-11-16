@@ -9,8 +9,8 @@ import {
 import { meshBoolean, BOOLEAN_OPERATIONS } from './mesh-boolean.js';
 import { createMeshData } from './mesh-data.js';
 import { mirrorMesh, arrayMesh, solidifyMesh } from './mesh-stack.js';
-import { bevelEdges } from './mesh-bevel.js';
-import { loopCut } from './mesh-loopcut.js';
+import { bevelEdges, MAX_BEVEL_SEGMENTS } from './mesh-bevel.js';
+import { loopCut, MAX_LOOP_CUTS } from './mesh-loopcut.js';
 import { CUT_OPERATIONS, normalizeCutEdit, runCutEdit, checkCutBudget } from './mesh-cut-edits.js';
 import { RESHAPE_OPERATIONS, normalizeReshapeEdit, runReshapeEdit, checkReshapeBudget } from './mesh-reshape-edits.js';
 import { unwrapUv } from './mesh-uv.js';
@@ -230,7 +230,7 @@ export function normalizeMeshEdits(edits) {
         }
         normalized.edges = edit.edges ?? { angle: 30 };
         normalized.width = finiteNumber(edit.width, index, 'width', { minimum: 0, exclusiveMinimum: true });
-        if (!Number.isInteger(edit.segments ?? 1) || (edit.segments ?? 1) < 1 || (edit.segments ?? 1) > 16) throw editField(index, 'segments', edit.segments, 'a whole number from 1 to 16, such as 3');
+        if (!Number.isInteger(edit.segments ?? 1) || (edit.segments ?? 1) < 1 || (edit.segments ?? 1) > MAX_BEVEL_SEGMENTS) throw editField(index, 'segments', edit.segments, `a whole number from 1 to ${MAX_BEVEL_SEGMENTS}, such as 3`);
         normalized.segments = edit.segments ?? 1;
         normalized.profile = edit.profile === undefined ? 0.5 : finiteNumber(edit.profile, index, 'profile', { minimum: 0, maximum: 1 });
         if (edit.clampOverlap !== undefined && typeof edit.clampOverlap !== 'boolean') throw editField(index, 'clampOverlap', edit.clampOverlap, 'true or false');
@@ -241,7 +241,7 @@ export function normalizeMeshEdits(edits) {
           throw editField(index, 'edges', edit.edges, 'a rule that picks the ring, such as { "along": [0, 1, 0] } for the vertical edges');
         }
         normalized.edges = edit.edges;
-        if (!Number.isInteger(edit.cuts ?? 1) || (edit.cuts ?? 1) < 1 || (edit.cuts ?? 1) > 16) throw editField(index, 'cuts', edit.cuts, 'a whole number from 1 to 16, such as 1');
+        if (!Number.isInteger(edit.cuts ?? 1) || (edit.cuts ?? 1) < 1 || (edit.cuts ?? 1) > MAX_LOOP_CUTS) throw editField(index, 'cuts', edit.cuts, `a whole number from 1 to ${MAX_LOOP_CUTS}, such as 1`);
         normalized.cuts = edit.cuts ?? 1;
         if (edit.factor !== undefined && normalized.cuts !== 1) throw editField(index, 'factor', edit.factor, 'left out when cuts is above 1, because factor applies only to a single cut');
         normalized.factor = edit.factor === undefined ? 0.5 : finiteNumber(edit.factor, index, 'factor', { minimum: 0, maximum: 1 });
@@ -715,6 +715,8 @@ export function evaluateMeshStack(mesh, stack, { maxVertices = 250_000, maxFaces
     const hit = key === undefined ? undefined : cache?.get(key);
     let result;
     if (hit) {
+      // The cache key holds no limits, so a result built under larger limits is checked again under these.
+      checkBudget(hit.mesh, limits, index, node.op);
       current = hit.mesh;
       result = { ...hit.result, cached: true };
     } else {

@@ -1,4 +1,5 @@
-import { CLOSED_ROOM_SHARE, closedRoomShare } from './closed-room.js';
+import { CLOSED_ROOM_SHARE, partMatrixLookup } from './closed-room.js';
+import { fittedClosedRoomShare, fittedRoomHasWalls } from './fitted-closed-room.js';
 import { buildWorld, cosineDirection, radicalInverse, sceneScale } from './light-bake.js';
 import { worldBounds } from './probe-trace.js';
 import { createTracer } from './ray-query.js';
@@ -15,9 +16,15 @@ export { withSunBounce } from './sun-bounce.js';
 export const FLOOR_SKY_RAYS = 64;
 export const FLOOR_SKY_MAXIMUM_TEXELS = 24_000;
 export const FLOOR_SKY_MAXIMUM_SECONDS = 20;
+// A total ray budget besides the clock: dense props are traced vertex by vertex, and about two seconds of rays is the most a scene may ask for.
+export const FLOOR_SKY_MAXIMUM_RAYS = 6_000_000;
+// Both faces and the edges of every slab are traced when the whole room is, so its cut is coarser than a floor's: about a quarter of the vertices for the same area.
+const ROOM_SURFACE_EDGE_SCALE = 2.8;
 export const FLOOR_SKY_STRENGTH = 1;
 // With onlyClosedRooms the default is lower: a hall also gets light that comes back from its walls and sunlit floor, which a sky trace does not hold.
 export const FLOOR_SKY_ROOM_STRENGTH = 0.2;
+// A closed room's walls, ceiling and props are traced too (#1334): the raster gave every one of them the whole sky, so a sealed room came out bright.
+export const ROOM_SURFACE_SKY_STRENGTH = 1;
 
 const FLOOR_THINNESS = 0.1;
 const FLOOR_MINIMUM_FOOTPRINT_SHARE = 0.02;
@@ -66,6 +73,19 @@ function upwardAreaShare(part) {
     if (doubleArea > 0 && normal[1] / doubleArea >= UPWARD_NORMAL) upward += doubleArea;
   }
   return total > 0 ? upward / total : 0;
+}
+
+// The world area of a part's triangles, to size the cut of every surface of a room.
+function worldSurfaceArea(part) {
+  const { positions, indices } = part.geometry;
+  let doubleArea = 0;
+  for (let corner = 0; corner < indices.length; corner += 3) {
+    const [first, second, third] = [0, 1, 2].map(slot => transformPoint(part.matrix, positions, indices[corner + slot]));
+    const edgeOne = [second[0] - first[0], second[1] - first[1], second[2] - first[2]];
+    const edgeTwo = [third[0] - first[0], third[1] - first[1], third[2] - first[2]];
+    doubleArea += Math.hypot(edgeOne[1] * edgeTwo[2] - edgeOne[2] * edgeTwo[1], edgeOne[2] * edgeTwo[0] - edgeOne[0] * edgeTwo[2], edgeOne[0] * edgeTwo[1] - edgeOne[1] * edgeTwo[0]);
+  }
+  return doubleArea / 2;
 }
 
 function transformPoint(matrix, positions, vertex) {
@@ -150,13 +170,13 @@ function worldNormalOf(matrix, positions, corners) {
 }
 
 /**
- * Cuts the upward-facing triangles of a geometry (world edges longer than `maximumEdge`) by their longest edge, and leaves the
- * others as they are. Returns the new arrays and which vertices belong to a triangle that faces up.
+ * Cuts the upward-facing triangles of a geometry (every triangle with `onlyUpward` false), by their longest edge while a world edge is longer than `maximumEdge`,
+ * and leaves the others as they are. Returns the new arrays and which vertices belong to a cut triangle.
  */
-function cutGeometry(geometry, matrix, maximumEdge) {
+function cutGeometry(geometry, matrix, maximumEdge, onlyUpward = true) {
   const builder = createMeshBuilder(geometry);
   const indices = [];
-  const upwardVertices = new Set();
+  const tracedVertices = new Set();
   const midpoints = new Map();
   const sourceIndex = vertexData => builder.addVertex(vertexData.position, vertexData.normal, vertexData.uv, vertexData.color);
   const inputVertices = [];
@@ -165,7 +185,7 @@ function cutGeometry(geometry, matrix, maximumEdge) {
   for (let corner = 0; corner < geometry.indices.length; corner += 3) {
     const triangle = [0, 1, 2].map(slot => geometry.indices[corner + slot]);
     const normal = worldNormalOf(matrix, geometry.positions, triangle);
-    if (normal[1] >= UPWARD_NORMAL) {
+    if (!onlyUpward || normal[1] >= UPWARD_NORMAL) {
       cutWork.push(triangle.map(vertexIndex => inputVertices[vertexIndex]));
     } else {
       indices.push(...triangle.map(vertexIndex => sourceIndex(inputVertices[vertexIndex])));
@@ -179,7 +199,7 @@ function cutGeometry(geometry, matrix, maximumEdge) {
     if (edgeLengths[longest] <= maximumEdge) {
       const added = corners.map(sourceIndex);
       indices.push(...added);
-      added.forEach(vertex => upwardVertices.add(vertex));
+      added.forEach(vertex => tracedVertices.add(vertex));
       continue;
     }
     const first = corners[longest];
@@ -190,7 +210,7 @@ function cutGeometry(geometry, matrix, maximumEdge) {
     const middle = midpoints.get(key);
     cutWork.push([first, middle, opposite], [middle, second, opposite]);
   }
-  return { builder, indices, upwardVertices };
+  return { builder, indices, tracedVertices };
 }
 
 function fixedSamples(sampleCount) {
@@ -204,8 +224,7 @@ function fixedSamples(sampleCount) {
  * larger than the bake's triangle limit, or the trace passes `maxSeconds`. It reads no clock to decide anything else, and
  * the rays are a fixed set, so the same scene gives the same bytes.
  */
-export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, maximumTexels = FLOOR_SKY_MAXIMUM_TEXELS, maxSeconds = FLOOR_SKY_MAXIMUM_SECONDS, strength: requestedStrength, includeClosedRooms = false, onlyClosedRooms = false } = {}) {
-  const strength = requestedStrength ?? (onlyClosedRooms ? FLOOR_SKY_ROOM_STRENGTH : FLOOR_SKY_STRENGTH);
+export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, maximumTexels = FLOOR_SKY_MAXIMUM_TEXELS, maxSeconds = FLOOR_SKY_MAXIMUM_SECONDS, maximumRays = FLOOR_SKY_MAXIMUM_RAYS, strength: requestedStrength, includeClosedRooms = false, onlyClosedRooms = false, surfaces = 'floors' } = {}) {
   const started = performance.now();
   const unchanged = reason => ({ parts, report: { floors: [], texels: 0, rays: 0, seconds: (performance.now() - started) / 1000, reason } });
   const floorIndices = findFloorParts(parts);
@@ -215,22 +234,29 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
   const occluders = parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode));
   if (occluders.length < 2) return unchanged('nothing above the floor');
   // A closed room has no sky to see: its walls and lamps give the light, and the shader's room term already handles it.
-  const roomShare = closedRoomShare(parts, new Map(parts.map(part => [part.name, part.matrix])));
+  // The fitted test leaves out a lawn beside the room and heavy props, as the sun bounce does.
+  const roomShare = fittedClosedRoomShare(parts, partMatrixLookup(parts));
   const closedRoom = roomShare !== null && roomShare >= CLOSED_ROOM_SHARE;
   if (closedRoom && !includeClosedRooms && !onlyClosedRooms) return unchanged('closed room');
   // Open ground gets light back from sunlit facades and streets that a sky trace does not hold, so it comes out too dark.
   if (onlyClosedRooms && !closedRoom) return unchanged('open scene');
+  // The walls, ceiling and props are traced as well only in a room that has walls all round: a roof on columns reads as closed to the ray test above, but its floor keeps the light it had.
+  const everySurface = surfaces === 'all' && closedRoom && fittedRoomHasWalls(parts, partMatrixLookup(parts));
+  const strength = requestedStrength ?? (onlyClosedRooms ? (everySurface ? ROOM_SURFACE_SKY_STRENGTH : FLOOR_SKY_ROOM_STRENGTH) : FLOOR_SKY_STRENGTH);
+  // With every surface, every face of every part is cut (a ceiling slab counts as a floor, so its room side needs the cut too).
+  const cutPartIndices = everySurface ? parts.map((part, index) => index).filter(index => floorIndices.includes(index) || (isFloorMaterial(parts[index].material) && hasPlainMesh(parts[index]))) : floorIndices;
   let world;
   try {
     world = buildWorld(occluders);
   } catch {
     return unchanged('too many triangles');
   }
-  const footprint = floorIndices.reduce((total, index) => {
+  const footprint = cutPartIndices.reduce((total, index) => {
+    if (everySurface) return total + worldSurfaceArea(parts[index]);
     const bounds = worldBounds(parts[index]);
     return total + (bounds.maximum[0] - bounds.minimum[0]) * (bounds.maximum[2] - bounds.minimum[2]);
   }, 0);
-  const maximumEdge = Math.sqrt(footprint / maximumTexels) * 1.4;
+  const maximumEdge = Math.sqrt(footprint / maximumTexels) * (everySurface ? ROOM_SURFACE_EDGE_SCALE : 1.4);
   const tracer = createTracer(world);
   const offset = sceneScale(world.positions) * 1e-4;
   const samples = fixedSamples(raysPerTexel);
@@ -239,13 +265,14 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
   const floors = [];
   let totalRays = 0;
   const nextParts = parts.slice();
-  for (const index of floorIndices) {
+  for (const index of cutPartIndices) {
     const part = parts[index];
     const { geometry, matrix } = part;
-    const { builder, indices, upwardVertices } = cutGeometry(geometry, matrix, maximumEdge);
+    const { builder, indices, tracedVertices } = cutGeometry(geometry, matrix, maximumEdge, !everySurface);
+    if (totalRays + tracedVertices.size * raysPerTexel > maximumRays) return unchanged('too many rays');
     const vertexCount = builder.positions.length / 3;
     const skyVisibility = new Float32Array(vertexCount).fill(1);
-    for (const vertex of upwardVertices) {
+    for (const vertex of tracedVertices) {
       if (performance.now() - started > maxSeconds * 1000) return unchanged('passed maxSeconds');
       const local = builder.positions.slice(vertex * 3, vertex * 3 + 3);
       const point = [0, 0, 0];
@@ -275,8 +302,8 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
     if (builder.hasColors) cutGeometryResult.colors = new Float32Array(builder.colors);
     nextParts[index] = Object.freeze({ ...part, geometry: Object.freeze(cutGeometryResult) });
     let sharedSum = 0;
-    for (const vertex of upwardVertices) sharedSum += skyVisibility[vertex];
-    floors.push({ name: part.name, texels: upwardVertices.size, triangles: indices.length / 3, meanVisibility: upwardVertices.size ? sharedSum / upwardVertices.size : 1 });
+    for (const vertex of tracedVertices) sharedSum += skyVisibility[vertex];
+    floors.push({ name: part.name, texels: tracedVertices.size, triangles: indices.length / 3, meanVisibility: tracedVertices.size ? sharedSum / tracedVertices.size : 1 });
   }
   const texels = floors.reduce((total, floor) => total + floor.texels, 0);
   const meanVisibility = texels ? floors.reduce((total, floor) => total + floor.meanVisibility * floor.texels, 0) / texels : 1;
@@ -296,7 +323,7 @@ export function environmentHasSun(environment) {
  */
 export function applyDefaultFloorSky(parts, environment, options = {}) {
   if (environment?.floorSkyTrace === false || !environmentHasSun(environment)) return { parts, report: null };
-  return applyFloorSkyVisibility(parts, { onlyClosedRooms: true, ...options });
+  return applyFloorSkyVisibility(parts, { onlyClosedRooms: true, surfaces: 'all', ...options });
 }
 
 const defaultResults = new WeakMap();

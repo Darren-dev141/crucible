@@ -55,35 +55,35 @@ class MinHeap {
 }
 
 // A quadric is the symmetric 4x4 matrix of a plane sum, stored as ten numbers: aa ab ac ad bb bc bd cc cd dd.
-function addPlane(quadrics, vertex, nx, ny, nz, d, weight) {
+function addPlane(quadrics, vertex, nx, ny, nz, planeOffset, weight) {
   const base = vertex * 10;
   quadrics[base] += weight * nx * nx;
   quadrics[base + 1] += weight * nx * ny;
   quadrics[base + 2] += weight * nx * nz;
-  quadrics[base + 3] += weight * nx * d;
+  quadrics[base + 3] += weight * nx * planeOffset;
   quadrics[base + 4] += weight * ny * ny;
   quadrics[base + 5] += weight * ny * nz;
-  quadrics[base + 6] += weight * ny * d;
+  quadrics[base + 6] += weight * ny * planeOffset;
   quadrics[base + 7] += weight * nz * nz;
-  quadrics[base + 8] += weight * nz * d;
-  quadrics[base + 9] += weight * d * d;
+  quadrics[base + 8] += weight * nz * planeOffset;
+  quadrics[base + 9] += weight * planeOffset * planeOffset;
 }
 
-function quadricError(q, x, y, z) {
-  return q[0] * x * x + 2 * q[1] * x * y + 2 * q[2] * x * z + 2 * q[3] * x +
-    q[4] * y * y + 2 * q[5] * y * z + 2 * q[6] * y +
-    q[7] * z * z + 2 * q[8] * z + q[9];
+function quadricError(quadric, x, y, z) {
+  return quadric[0] * x * x + 2 * quadric[1] * x * y + 2 * quadric[2] * x * z + 2 * quadric[3] * x +
+    quadric[4] * y * y + 2 * quadric[5] * y * z + 2 * quadric[6] * y +
+    quadric[7] * z * z + 2 * quadric[8] * z + quadric[9];
 }
 
 /** The point minimising the quadric, or null when the system is nearly singular. */
-function optimalPoint(q) {
-  const [a, b, c, d, e, f, g, h, i] = q;
-  const determinant = a * (e * h - f * f) - b * (b * h - f * c) + c * (b * f - e * c);
-  const scale = Math.abs(a) * Math.abs(e) * Math.abs(h);
+function optimalPoint(quadric) {
+  const [aa, ab, ac, ad, bb, bc, bd, cc, cd] = quadric;
+  const determinant = aa * (bb * cc - bc * bc) - ab * (ab * cc - bc * ac) + ac * (ab * bc - bb * ac);
+  const scale = Math.abs(aa) * Math.abs(bb) * Math.abs(cc);
   if (Math.abs(determinant) <= 1e-9 * scale || scale === 0) return null;
-  const x = -(d * (e * h - f * f) - b * (g * h - f * i) + c * (g * f - e * i)) / determinant;
-  const y = -(a * (g * h - f * i) - d * (b * h - f * c) + c * (b * i - g * c)) / determinant;
-  const z = -(a * (e * i - g * f) - b * (b * i - g * c) + d * (b * f - e * c)) / determinant;
+  const x = -(ad * (bb * cc - bc * bc) - ab * (bd * cc - bc * cd) + ac * (bd * bc - bb * cd)) / determinant;
+  const y = -(aa * (bd * cc - bc * cd) - ad * (ab * cc - bc * ac) + ac * (ab * cd - bd * ac)) / determinant;
+  const z = -(aa * (bb * cd - bd * bc) - ab * (ab * cd - bd * ac) + ad * (ab * bc - bb * ac)) / determinant;
   return [x, y, z];
 }
 
@@ -160,8 +160,8 @@ class Decimator {
       if (length > 0) {
         const unit = normal.map(value => value / length);
         const first = this.triangles[triangle * 3] * 3;
-        const d = -(unit[0] * this.positions[first] + unit[1] * this.positions[first + 1] + unit[2] * this.positions[first + 2]);
-        for (let corner = 0; corner < 3; corner++) addPlane(this.quadrics, this.triangles[triangle * 3 + corner], unit[0], unit[1], unit[2], d, length / 2);
+        const planeDistance = -(unit[0] * this.positions[first] + unit[1] * this.positions[first + 1] + unit[2] * this.positions[first + 2]);
+        for (let corner = 0; corner < 3; corner++) addPlane(this.quadrics, this.triangles[triangle * 3 + corner], unit[0], unit[1], unit[2], planeDistance, length / 2);
       }
       for (let corner = 0; corner < 3; corner++) {
         const key = edgeKey(this.triangles[triangle * 3 + corner], this.triangles[triangle * 3 + (corner + 1) % 3], this.vertexCount);
@@ -188,10 +188,10 @@ class Decimator {
     const length = Math.hypot(...normal);
     if (length === 0) return;
     const unit = normal.map(value => value / length);
-    const d = -(unit[0] * this.positions[first * 3] + unit[1] * this.positions[first * 3 + 1] + unit[2] * this.positions[first * 3 + 2]);
+    const planeDistance = -(unit[0] * this.positions[first * 3] + unit[1] * this.positions[first * 3 + 1] + unit[2] * this.positions[first * 3 + 2]);
     const weight = CONSTRAINT_WEIGHT * (edge[0] ** 2 + edge[1] ** 2 + edge[2] ** 2);
-    addPlane(this.quadrics, first, unit[0], unit[1], unit[2], d, weight);
-    addPlane(this.quadrics, second, unit[0], unit[1], unit[2], d, weight);
+    addPlane(this.quadrics, first, unit[0], unit[1], unit[2], planeDistance, weight);
+    addPlane(this.quadrics, second, unit[0], unit[1], unit[2], planeDistance, weight);
   }
 
   neighbors(vertex) {

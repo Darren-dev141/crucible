@@ -101,9 +101,9 @@ test('triangles face up and normals are unit length and smooth', () => {
   const terrain = createTerrain(SMALL);
   const { positions, normals, indices } = terrain.parts[0].geometry;
   for (let triangle = 0; triangle < indices.length; triangle += 3) {
-    const [a, b, c] = [0, 1, 2].map(offset => indices[triangle + offset] * 3);
-    const edgeOne = [positions[b] - positions[a], positions[b + 2] - positions[a + 2]];
-    const edgeTwo = [positions[c] - positions[a], positions[c + 2] - positions[a + 2]];
+    const [firstOffset, secondOffset, thirdOffset] = [0, 1, 2].map(offset => indices[triangle + offset] * 3);
+    const edgeOne = [positions[secondOffset] - positions[firstOffset], positions[secondOffset + 2] - positions[firstOffset + 2]];
+    const edgeTwo = [positions[thirdOffset] - positions[firstOffset], positions[thirdOffset + 2] - positions[firstOffset + 2]];
     assert.ok(edgeOne[1] * edgeTwo[0] - edgeOne[0] * edgeTwo[1] > 0);
   }
   for (let vertex = 0; vertex < normals.length; vertex += 3) {
@@ -161,4 +161,55 @@ test('heightmap arrays and functions drive the surface, and bad options throw', 
   assert.throws(() => createTerrain({ height: new Float32Array(5) }), /square/);
   const image = { width: 2, height: 2, data: new Uint8ClampedArray([255, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 0, 0, 255]) };
   assert.deepEqual([...heightmapFromImageData(image, 10)], [10, 0, 0, 10]);
+});
+
+const TILTED = { size: 10, chunks: 1, levels: 1, resolution: 4, height: (worldX) => 0.5 * worldX };
+
+test('border normals of a tilted plane match the interior normals', () => {
+  const terrain = createTerrain(TILTED);
+  const interior = terrain.normalAt(0, 0);
+  for (const [worldX, worldZ] of [[-5, 0], [5, 0], [0, -5], [0, 5]]) {
+    const border = terrain.normalAt(worldX, worldZ);
+    for (let axis = 0; axis < 3; axis++) assert.ok(Math.abs(border[axis] - interior[axis]) < 1e-6, `axis ${axis} at ${worldX},${worldZ}`);
+  }
+});
+
+test('mesh vertex normals on the border match the plane slope', () => {
+  const terrain = createTerrain(TILTED);
+  const { positions, normals } = terrain.parts[0].geometry;
+  const expectedX = -0.5 / Math.hypot(0.5, 1);
+  for (let vertex = 0; vertex < positions.length / 3; vertex++) {
+    assert.ok(Math.abs(normals[vertex * 3] - expectedX) < 1e-6, `vertex ${vertex}`);
+  }
+});
+
+test('a plain array or Float64Array of heights builds that ground', () => {
+  const grid = [0, 0, 0, 4, 4, 4, 8, 8, 8];
+  for (const heights of [grid, new Float64Array(grid), new Float32Array(grid)]) {
+    const terrain = createTerrain({ size: 4, chunks: 1, levels: 1, resolution: 2, height: heights });
+    assert.equal(terrain.heightAt(0, 2), 8);
+    assert.equal(terrain.heightAt(0, -2), 0);
+  }
+});
+
+test('a height that is neither a function, an array nor an options object is rejected', () => {
+  assert.throws(() => createTerrain({ size: 4, chunks: 1, levels: 1, resolution: 2, height: 'hills' }), /height must be a function/);
+});
+
+test('update rejects an eye position with a non-finite coordinate and keeps the levels', () => {
+  const terrain = createTerrain({ size: 10, chunks: 2, levels: 2, resolution: 4, height: () => 0 });
+  const levelsBefore = terrain.chunkLevels();
+  assert.throws(() => terrain.update([Number.NaN, 5, 0]), /finite numbers/);
+  assert.throws(() => terrain.update([0, Infinity, 0]), /finite numbers/);
+  assert.throws(() => terrain.update([0, 1]), /finite numbers/);
+  assert.deepEqual(terrain.chunkLevels(), levelsBefore);
+});
+
+test('createTerrain refuses a lodDistance that would build empty terrain', async () => {
+  const { createTerrain } = await import('../src/terrain.js');
+  for (const lodDistance of [-5, 0, NaN, Infinity]) {
+    assert.throws(() => createTerrain({ size: 64, resolution: 8, chunks: 2, levels: 3, lodDistance, height: () => 1 }), /lodDistance must be a positive number of metres/, `lodDistance ${lodDistance}`);
+  }
+  const terrain = createTerrain({ size: 64, resolution: 8, chunks: 2, levels: 3, lodDistance: 10, height: () => 1 });
+  assert.ok(terrain.triangleCount > 0);
 });

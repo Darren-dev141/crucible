@@ -77,7 +77,8 @@ export function applyLightLinks(parts, environment) {
  * only those nodes, so a misspelled name would silently darken a part; the caller fails with the next action instead.
  */
 export function unknownLightLinkNames(environment, nodes) {
-  const known = new Set(nodes.map(node => node.id));
+  // Only a node with a geometry draws a part under its own name: a group has none, so a light linked to it would light nothing.
+  const known = new Set(nodes.filter(node => node.geometry !== undefined).map(node => node.id));
   const lists = [['environment.keyAffects', environment.keyAffects]];
   for (const field of ['pointLights', 'spotLights', 'areaLights']) {
     (environment[field] ?? []).forEach((light, index) => lists.push([`${field}[${index}].affects`, light.affects]));
