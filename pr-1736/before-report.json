@@ -2,7 +2,8 @@
   "backend": "gpu",
   "size": 4,
   "seed": 1,
-  "crop": "170,120,280,200",
+  "gridFrame": 9,
+  "samples": 128,
   "times": [
     {
       "motionTime": 0.45,
@@ -11,17 +12,17 @@
       "edgeFalloff": 0.7395833333333334,
       "againstReference": {
         "roughness": {
-          "reference": 10.105507721160619,
+          "reference": 5.468832344155429,
           "candidate": 5.427333185432895,
-          "ratio": 0.5370668486124877
+          "ratio": 0.9924116966637522
         },
         "edgeFalloff": {
-          "reference": 1.0625,
+          "reference": 0.6666666666666666,
           "candidate": 0.7395833333333334,
-          "ratio": 0.6960784313725491
+          "ratio": 1.1093750000000002
         },
-        "histogramDistance": 0.18755858792449612,
-        "rmse": 0.24881212485695445
+        "histogramDistance": 0.21384525863905585,
+        "rmse": 0.30538051375522596
       }
     },
     {
@@ -38,8 +39,8 @@
     }
   ],
   "reference": {
-    "cloudRadiusPixels": 73,
-    "roughness": 10.105507721160619,
-    "edgeFalloff": 1.0625
+    "cloudRadiusPixels": 83,
+    "roughness": 5.468832344155429,
+    "edgeFalloff": 0.6666666666666666
   }
 }
