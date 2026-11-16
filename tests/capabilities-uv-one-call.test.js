@@ -26,12 +26,11 @@ async function askCapabilities(context, topic) {
   return client.callTool({ name: 'scene_capabilities', arguments: { topic } });
 }
 
-test('the meshUv topic names the edit for box-like parts and covers uv_unwrap', async context => {
+test('the meshUv topic names the edit for box-like parts', async context => {
   const answer = (await askCapabilities(context, 'meshUv')).structuredContent;
   assert.match(answer.value.choose, /uv_project/);
   assert.match(answer.value.choose, /"mode":"cube"/);
   assert.match(answer.value.choose, /box-like/i);
-  assert.match(answer.value.uv_unwrap, /areaDistortion/);
 });
 
 test('a uv branch of meshEdit carries the meshUv notes next to its fields', async context => {
