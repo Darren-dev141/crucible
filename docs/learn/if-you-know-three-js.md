@@ -68,7 +68,7 @@ The lights are fields of the `environment` option of `CrucibleRenderer`, or of `
 | `new THREE.DirectionalLight(color, intensity)` | `environment.lightDirection`, `environment.keyIntensity` and `environment.keyColor`. It casts shadows. |
 | `new THREE.PointLight(color, intensity, distance)` | An entry of `environment.pointLights`: `{ position, color, intensity, range }`. At most 16. |
 | `new THREE.SpotLight(...)` | An entry of `environment.spotLights`: `{ position, direction, angle, penumbra, intensity }`. At most 8. |
-| `new THREE.RectAreaLight(...)` | An entry of `environment.areaLights`: `{ position, direction, width, height, intensity }`. At most 7. |
+| `new THREE.RectAreaLight(...)` | An entry of `environment.areaLights`: `{ position, direction, width, height, intensity }`. At most 7, because light linking has 32 mask bits for all lights; see [lighting](../lighting.md). |
 | `light.castShadow = true` | `castShadow: true` on a point, spot or area light. The key light always casts. |
 | `scene.background` | `environment.skyTop` and `environment.skyBottom`. |
 | `scene.fog` | `environment.fogColor` and `environment.fogDensity`. |

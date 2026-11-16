@@ -154,6 +154,7 @@ on:
       - 'src/light-bake-gpu.js'
       - 'src/light-bake.js'
       - 'src/light-limits.js'
+      - 'src/light-limit-advice.js'
       - 'src/light-link-bits.js'
       - 'src/light-linking.js'
       - 'src/light-modules.js'
