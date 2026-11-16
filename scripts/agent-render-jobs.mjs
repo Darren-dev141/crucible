@@ -109,7 +109,7 @@ export function normalizeJobSettings(input, clips, recipe) {
 }
 
 function settingsFrom(input, clips, recipe) {
-  objectKeys(input, ['kind', 'width', 'height', 'fps', 'duration', 'animation', 'motion', 'rendererTime', 'passes', 'renderer', 'timeline', 'audio', 'encoder', 'transparent', 'format', 'multilayer', 'region', 'quality', 'frames'], 'settings');
+  objectKeys(input, ['kind', 'width', 'height', 'fps', 'duration', 'animation', 'motion', 'rendererTime', 'passes', 'renderer', 'timeline', 'audio', 'encoder', 'transparent', 'format', 'multilayer', 'region', 'quality', 'stillCount'], 'settings');
   if (!['image', 'stills', 'video'].includes(input.kind)) throw new TypeError('kind must be image, stills or video.');
   const largeFrame = input.kind === 'image';
   const maximumSide = largeFrame ? MAXIMUM_JOB_SIDE : MAXIMUM_SEQUENCE_JOB_SIDE;
@@ -135,7 +135,7 @@ function settingsFrom(input, clips, recipe) {
   const frameCount = input.kind === 'image' ? 1 : input.kind === 'stills' ? framesAsked ?? 8 : videoFrameCount(fps, duration);
   if (frameCount > MAXIMUM_JOB_FRAMES) throw new RangeError(`Job exceeds ${MAXIMUM_JOB_FRAMES} frames. Lower fps or duration.`);
   const result = { kind: input.kind, width, height, fps, duration, frameCount };
-  if (framesAsked !== undefined) result.frames = framesAsked;
+  if (framesAsked !== undefined) result.stillCount = framesAsked;
   if (input.passes !== undefined) result.passes = passesFrom(input.passes, input.kind);
   if (input.renderer !== undefined) result.renderer = rendererFrom(input.renderer, input.passes);
   Object.assign(result, outputOptionsFrom(input, result));
@@ -194,15 +194,15 @@ function settingsFrom(input, clips, recipe) {
 }
 
 function stillsFrameCountFrom(input) {
-  if (input.frames === undefined) return undefined;
-  if (input.kind !== 'stills') throw new TypeError('frames needs kind stills; a video sets its length with duration and fps.');
-  return boundedNumber(input.frames, 2, MAXIMUM_STILLS_FRAMES, 'frames (the most one stills job writes; render a longer clip in parts, each from its own motion.start)', true);
+  if (input.stillCount === undefined) return undefined;
+  if (input.kind !== 'stills') throw new TypeError('stillCount needs kind stills; a video sets its length with duration and fps.');
+  return boundedNumber(input.stillCount, 2, MAXIMUM_STILLS_FRAMES, 'stillCount (the most one stills job writes; render a longer clip in parts, each from its own motion.start)', true);
 }
 
 function stillsSequenceDuration(input, frames, fps) {
   const span = (frames - 1) / fps;
   if (input.duration !== undefined && Math.abs(input.duration - span) > 1e-9) {
-    throw new RangeError(`duration is (frames - 1) / fps = ${span} s when frames is set; leave duration out.`);
+    throw new RangeError(`duration is (stillCount - 1) / fps = ${span} s when stillCount is set; leave duration out.`);
   }
   return span;
 }

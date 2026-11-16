@@ -138,8 +138,8 @@ try {
   const pngBitDepth = data => data[24];
   const [transparentFile] = await optionFiles({ kind: 'image', width: 128, height: 128, transparent: true });
   assert.equal(pngColorType(transparentFile.data), 6);
-  // Issue #1853: one stills job with frames writes numbered RGBA PNGs on the animation clock, and the empty background stays transparent.
-  const overlayFrames = await optionFiles({ kind: 'stills', width: 128, height: 128, fps: 10, frames: 6, transparent: true, animation: { clip: 0, start: 0 } });
+  // Issue #1853: one stills job with stillCount writes numbered RGBA PNGs on the animation clock, and the empty background stays transparent.
+  const overlayFrames = await optionFiles({ kind: 'stills', width: 128, height: 128, fps: 10, stillCount: 6, transparent: true, animation: { clip: 0, start: 0 } });
   assert.deepEqual(overlayFrames.map(file => file.filename), Array.from({ length: 6 }, (_, index) => `frame-${index}.png`));
   const cornerAlphas = overlayFrames.map(file => firstRowAlpha(file.data)[0]);
   for (const file of overlayFrames) assert.equal(pngColorType(file.data), 6);
