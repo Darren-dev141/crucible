@@ -21,11 +21,25 @@ const KEY_DIRECTIONS = {
   ArrowDown: [0, 1], KeyS: [0, 1],
 };
 
-function openWebSocket(relayUrl, playerId) {
+// The relay runs on the machine that serves this page: the socket URL takes the host from the page itself, ws or wss to
+// match the page's protocol, and only a port number from the ?relayPort= query. No query text reaches the URL.
+export const DEFAULT_RELAY_PORT = 8787;
+
+export function relaySocketUrl(pageLocation, relayPort, playerId) {
+  const port = Number(relayPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new TypeError(`The relay port must be a whole number from 1 to 65535, got ${JSON.stringify(relayPort)}. Pass ?relayPort=${DEFAULT_RELAY_PORT}.`);
+  }
+  const scheme = pageLocation.protocol === 'https:' ? 'wss' : 'ws';
+  return `${scheme}://${pageLocation.hostname}:${port}/?id=${encodeURIComponent(playerId)}`;
+}
+
+function openWebSocket(relayPort, playerId) {
+  const socketUrl = relaySocketUrl(globalThis.location, relayPort, playerId);
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(`${relayUrl}?id=${encodeURIComponent(playerId)}`);
+    const socket = new WebSocket(socketUrl);
     socket.addEventListener('open', () => resolve(socket), { once: true });
-    socket.addEventListener('error', () => reject(new Error(`Could not reach the relay at ${relayUrl}. Start it with: node scripts/netcode-relay.mjs`)), { once: true });
+    socket.addEventListener('error', () => reject(new Error(`Could not reach the relay at ${socketUrl}. Start it on the machine that serves this page with: node scripts/netcode-relay.mjs --port ${relayPort}`)), { once: true });
   });
 }
 
@@ -55,7 +69,7 @@ async function createSampleTransport(options, playerId, remoteId) {
     return createBroadcastChannelTransport(new BroadcastChannel('crucible-netcode-sample'), { id: playerId });
   }
   if (options.transport === 'websocket') {
-    const socket = await openWebSocket(options.relayUrl, playerId);
+    const socket = await openWebSocket(options.relayPort ?? DEFAULT_RELAY_PORT, playerId);
     return createWebSocketTransport(socket, { id: playerId, remoteId, multiplexed: true });
   }
   throw new RangeError(`Sample transport must be "broadcast" or "websocket", got ${JSON.stringify(options.transport)}.`);
@@ -90,7 +104,7 @@ function drawPlayers(canvas, netcode, localId) {
   }
 }
 
-// options: { role: 'host' | 'client', transport: 'broadcast' | 'websocket', relayUrl, delayMilliseconds, canvas,
+// options: { role: 'host' | 'client', transport: 'broadcast' | 'websocket', relayPort, delayMilliseconds, canvas,
 //            snapshotEveryTicks, interpolationDelaySeconds }
 export async function startSample(options) {
   const isHost = options.role === 'host';

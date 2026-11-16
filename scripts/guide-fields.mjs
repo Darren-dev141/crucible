@@ -117,8 +117,13 @@ function guideBlocks(text) {
   return blocks;
 }
 
-function mentions(block, name) {
-  return block.includes(`\`${name}\``) || new RegExp(`\`${name.replace(/[.[\]]/g, '\\$&')}[\`.\\[]`).test(block);
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// True when the block names the field in backticks, alone or followed by `.` or `[` (a longer path under it).
+export function mentions(block, name) {
+  return block.includes(`\`${name}\``) || new RegExp(`\`${escapeRegExp(name)}[\`.\\[]`).test(block);
 }
 
 /**

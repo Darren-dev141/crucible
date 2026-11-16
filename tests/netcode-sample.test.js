@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { withInjectedLatency } from '../scripts/netcode-sample.js';
+import { relaySocketUrl, withInjectedLatency } from '../scripts/netcode-sample.js';
 
 function createFakeTransport() {
   const sent = [];
@@ -45,4 +45,14 @@ test('withInjectedLatency drops sends still waiting when the transport closes, a
   assert.equal(fake.state.closed, true);
   assert.equal(fake.sent.length, 0);
   assert.equal(withInjectedLatency(fake.transport, 0), fake.transport);
+});
+
+test('the relay socket goes to the page host with a numeric port and the page protocol', () => {
+  const lanPage = { protocol: 'http:', hostname: '192.168.1.20' };
+  assert.equal(relaySocketUrl(lanPage, '8787', 'bob'), 'ws://192.168.1.20:8787/?id=bob');
+  assert.equal(relaySocketUrl({ protocol: 'https:', hostname: 'game.example.com' }, 9000, 'a b'), 'wss://game.example.com:9000/?id=a%20b');
+  assert.throws(() => relaySocketUrl(lanPage, '8787@evil.example', 'bob'), /whole number from 1 to 65535/);
+  assert.throws(() => relaySocketUrl(lanPage, '0', 'bob'), /whole number from 1 to 65535/);
+  assert.throws(() => relaySocketUrl(lanPage, '70000', 'bob'), /whole number from 1 to 65535/);
+  assert.throws(() => relaySocketUrl(lanPage, '87.5', 'bob'), /whole number from 1 to 65535/);
 });

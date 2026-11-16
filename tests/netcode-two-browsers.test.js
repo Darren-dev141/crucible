@@ -114,8 +114,8 @@ async function measureNetcodeLag(sender, receiver, movingId, input) {
   return smallest;
 }
 
-async function playTogether(context, transport, relayUrl) {
-  const query = `transport=${transport}&delay=${INJECTED_LATENCY_MILLISECONDS}${relayUrl ? `&relay=${encodeURIComponent(relayUrl)}` : ''}`;
+async function playTogether(context, transport, relayPort) {
+  const query = `transport=${transport}&delay=${INJECTED_LATENCY_MILLISECONDS}${relayPort ? `&relayPort=${relayPort}` : ''}`;
   const hostPage = await context.newPage();
   const clientPage = await context.newPage();
   const base = context.baseUrl;
@@ -168,7 +168,7 @@ for (const transport of ['broadcast', 'websocket']) {
       }
       const context = await withDeadline(browser.newContext(), 'the browser to open a context');
       context.baseUrl = `http://127.0.0.1:${server.address().port}`;
-      const result = await playTogether(context, transport, relay ? `ws://127.0.0.1:${relay.port}/` : null);
+      const result = await playTogether(context, transport, relay ? relay.port : null);
       const { positions } = result;
       console.log(`netcode ${transport}: host to client ${result.hostToClientLag.lag} ms (baseline ${result.hostToClientLag.baseline}), client to host ${result.clientToHostLag.lag} ms (baseline ${result.clientToHostLag.baseline}), ` +
         `largest correction ${positions.client.stats.maximumCorrection.toFixed(4)}`);

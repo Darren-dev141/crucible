@@ -27,8 +27,22 @@ export async function readReleaseProblem(folder = root) {
 }
 
 // True when npm already serves this exact version, which means the push is not a release. publish-ci.mjs makes the same call.
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const NPM_PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
+
+// The name and version come from package.json; both are checked before they go into the registry URL.
+export function registryVersionUrl(name, version) {
+  if (typeof name !== 'string' || name.length > 214 || !NPM_PACKAGE_NAME.test(name)) {
+    throw new Error(`package.json "name" ${JSON.stringify(name)} is not a valid npm package name (lowercase, optional @scope/).`);
+  }
+  if (typeof version !== 'string' || !SEMVER.test(version)) {
+    throw new Error(`package.json "version" ${JSON.stringify(version)} is not a semantic version such as 1.2.3.`);
+  }
+  return `https://registry.npmjs.org/${encodeURIComponent(name)}/${version}`;
+}
+
 export async function isVersionPublished(name, version, fetchImplementation = fetch) {
-  const response = await fetchImplementation(`https://registry.npmjs.org/${encodeURIComponent(name)}/${version}`, { signal: AbortSignal.timeout(30000) });
+  const response = await fetchImplementation(registryVersionUrl(name, version), { signal: AbortSignal.timeout(30000) });
   if (response.ok) return true;
   if (response.status === 404) return false;
   throw new Error(`Registry version check failed: HTTP ${response.status}.`);
