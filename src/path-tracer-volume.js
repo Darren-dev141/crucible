@@ -223,7 +223,7 @@ function rampSourceChannel(source) {
 export function createLocalVolumeCrossing(volumes, lighting = null) {
   const entries = new Float64Array(volumes.length);
   const exits = new Float64Array(volumes.length);
-  const order = new Int32Array(volumes.length);
+  const dimming = new Float64Array(3);
   const span = new Float64Array(2);
   const sunDepth = new Float64Array(3);
   const sunLight = new Float64Array(3);
@@ -298,14 +298,24 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
     }
   }
 
+  // Marches one grid volume over its whole span; a grid is never marched together with another volume.
+  function crossGridVolume(volume, entry, exitDistance, directionX, directionY, directionZ, originX, originY, originZ, jitter, throughput, emitted) {
+    const stepCount = localVolumeStepCount(volume, exitDistance - entry);
+    const stepLength = (exitDistance - entry) / stepCount;
+    for (let step = 0; step < stepCount; step++) {
+      const distance = entry + (step + jitter) * stepLength;
+      crossGridStep(volume, originX + directionX * distance, originY + directionY * distance, originZ + directionZ * distance, directionX, directionY, directionZ, stepLength, throughput, emitted, gridMotionTimeFraction(jitter, step));
+    }
+  }
+
   const meshScratch = new Float64Array(MAXIMUM_MESH_SEGMENTS * 2);
   const meshSpans = new Array(volumes.length);
   return function crossLocalVolumes(originX, originY, originZ, directionX, directionY, directionZ, length, jitter, throughput, emitted) {
     emitted[0] = 0;
     emitted[1] = 0;
     emitted[2] = 0;
-    let count = 0;
     for (let index = 0; index < volumes.length; index++) {
+      entries[index] = Infinity;
       if (volumes[index].mesh) {
         const segmentCount = meshVolumeSegments(volumes[index], originX, originY, originZ, directionX, directionY, directionZ, length, meshScratch);
         if (segmentCount === 0) continue;
@@ -315,40 +325,62 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
       } else if (!localVolumeInterval(volumes[index], originX, originY, originZ, directionX, directionY, directionZ, length, span)) continue;
       entries[index] = span[0];
       exits[index] = span[1];
-      let slot = count++;
-      while (slot > 0 && entries[order[slot - 1]] > span[0]) {
-        order[slot] = order[slot - 1];
-        slot--;
-      }
-      order[slot] = index;
     }
-    for (let rank = 0; rank < count; rank++) {
-      const volume = volumes[order[rank]];
+    while (true) {
+      let leader = -1;
+      for (let index = 0; index < volumes.length; index++) {
+        if (entries[index] < Infinity && (leader < 0 || entries[index] < entries[leader])) leader = index;
+      }
+      if (leader < 0) break;
+      const volume = volumes[leader];
+      const entry = entries[leader];
+      entries[leader] = Infinity;
       if (volume.mesh) {
-        marchMeshVolume(volume, meshSpans[order[rank]], originX, originY, originZ, directionX, directionY, directionZ, jitter, throughput, emitted);
+        marchMeshVolume(volume, meshSpans[leader], originX, originY, originZ, directionX, directionY, directionZ, jitter, throughput, emitted);
         continue;
       }
-      const entry = entries[order[rank]];
-      const stepCount = localVolumeStepCount(volume, exits[order[rank]] - entry);
-      const stepLength = (exits[order[rank]] - entry) / stepCount;
-      for (let step = 0; step < stepCount; step++) {
-        const distance = entry + (step + jitter) * stepLength;
-        if (volume.gridData) {
-          crossGridStep(volume, originX + directionX * distance, originY + directionY * distance, originZ + directionZ * distance, directionX, directionY, directionZ, stepLength, throughput, emitted, gridMotionTimeFraction(jitter, step));
-          continue;
-        }
-        const profile = localVolumeProfile(volume, originX + directionX * distance, originY + directionY * distance, originZ + directionZ * distance);
-        if (profile <= 0) continue;
-        const width = profile * stepLength;
-        if (volume.scatter > 0 && lighting) {
-          addScatteredLight(volume, originX + directionX * distance, originY + directionY * distance, originZ + directionZ * distance, directionX, directionY, directionZ, width, throughput, emitted);
-        }
-        if (volume.emissionRamp) addRampLight(volume, profile, stepLength, throughput, emitted);
-        for (let channel = 0; channel < 3; channel++) {
-          emitted[channel] += throughput[channel] * volume.emission[channel] * volume.emissionStrength * width;
-          throughput[channel] *= Math.exp(-volume.absorption[channel] * volume.density * width);
+      if (volume.gridData) {
+        crossGridVolume(volume, entry, exits[leader], directionX, directionY, directionZ, originX, originY, originZ, jitter, throughput, emitted);
+        continue;
+      }
+      // Box and sphere volumes that overlap are marched together (#1722), as the rasterizer does: the volume that starts at the same distance joins in,
+      // and the march stops where another one starts or one of the two ends, so glow and dimming add per step and no entry plane cuts a soft edge.
+      let partner = -1;
+      let segmentEnd = exits[leader];
+      for (let other = 0; other < volumes.length; other++) {
+        if (entries[other] === Infinity || volumes[other].mesh || volumes[other].gridData) continue;
+        if (entries[other] <= entry) {
+          if (partner < 0) partner = other;
+        } else {
+          segmentEnd = Math.min(segmentEnd, entries[other]);
         }
       }
+      if (partner >= 0) segmentEnd = Math.min(segmentEnd, exits[partner]);
+      let stepCount = localVolumeStepCount(volume, segmentEnd - entry);
+      if (partner >= 0) stepCount = Math.max(stepCount, localVolumeStepCount(volumes[partner], segmentEnd - entry));
+      const stepLength = (segmentEnd - entry) / stepCount;
+      for (let step = 0; step < stepCount; step++) {
+        const distance = entry + (step + jitter) * stepLength;
+        const x = originX + directionX * distance;
+        const y = originY + directionY * distance;
+        const z = originZ + directionZ * distance;
+        dimming.fill(0);
+        for (let lane = 0; lane < (partner < 0 ? 1 : 2); lane++) {
+          const member = lane === 0 ? volume : volumes[partner];
+          const profile = localVolumeProfile(member, x, y, z);
+          if (profile <= 0) continue;
+          const width = profile * stepLength;
+          if (member.scatter > 0 && lighting) addScatteredLight(member, x, y, z, directionX, directionY, directionZ, width, throughput, emitted);
+          if (member.emissionRamp) addRampLight(member, profile, stepLength, throughput, emitted);
+          for (let channel = 0; channel < 3; channel++) {
+            emitted[channel] += throughput[channel] * member.emission[channel] * member.emissionStrength * width;
+            dimming[channel] += member.absorption[channel] * member.density * width;
+          }
+        }
+        for (let channel = 0; channel < 3; channel++) throughput[channel] *= Math.exp(-dimming[channel]);
+      }
+      if (segmentEnd < exits[leader]) entries[leader] = segmentEnd;
+      if (partner >= 0) entries[partner] = segmentEnd < exits[partner] ? segmentEnd : Infinity;
     }
   };
 }
