@@ -38,6 +38,21 @@ How the shading maps (measured with a probe cube in Blender 5.3):
   Principled Volume's emission is per unit length and not scaled by density, which is how Crucible emits too.
 - Temperature: Temperature = temperatureScale (multiplies the temperature attribute) and Blackbody Intensity = blackbodyIntensity * emissionStrength.
   Cycles' blackbody is Stefan-Boltzmann brightness in a colour of luminance 1; Crucible's grid blackbody follows it (#1733, volume-grid.js).
+
+Optional "sparks" block (#1758), the emissive streaks of src/particle-sparks.js. `scripts/make-spark-spec.mjs` writes it from the same seeded launch
+values Glaze draws, so the two renders show the same sparks; this script integrates the closed-form path itself:
+
+    "sparks": {
+      "time": 0.125,                                        seconds since the blast
+      "gravity": [0, -9.81, 0], "wind": [0, 0, 0], "drag": 0.9, "floor": 0,   floor optional: a spark stops at its `landing` age at that height
+      "shutter": 0.0208, "temperature": [2500, 800], "intensity": 12,   streak seconds, kelvin at birth and death, radiance multiplier
+      "fadeFraction": 0.15, "radianceScale": 5.7e-15, "blackbodyHue": { "firstKelvin": 800, "stepKelvin": 200, "values": [r, g, b, ...] },
+      "particles": [{ "birth": 0, "life": 1.2, "origin": [0, 0.5, 0], "velocity": [3, 4, 1], "radius": 0.01, "landing": null }]
+    }
+
+  Each live spark is one stretched octahedron from where it was `shutter` seconds ago to where it is, with the emission colour of its blackbody at its age
+  (Stefan-Boltzmann radiance times the luminance 1 hue, times intensity, tapered over the last fadeFraction of its life). The sparks are visible to the
+  camera only, since Glaze's unlit sparks light nothing.
 """
 import json
 import math
@@ -155,6 +170,91 @@ def build_floor(scene, floor):
     plane.data.materials.append(material)
 
 
+def spark_displacement(velocity, acceleration, wind, drag, age):
+    """Displacement along one axis after `age` seconds under gravity and drag toward the wind (the closed form of src/particles.js)."""
+    if drag < 1e-6:
+        return velocity * age + 0.5 * acceleration * age * age
+    settled = wind + acceleration / drag
+    return settled * age + (velocity - settled) * (1 - math.exp(-drag * age)) / drag
+
+
+def spark_position(sparks, particle, age):
+    effective_age = min(age, particle["landing"]) if particle.get("landing") is not None else age
+    position = [
+        particle["origin"][axis] + spark_displacement(particle["velocity"][axis], sparks["gravity"][axis], sparks["wind"][axis], sparks["drag"], effective_age)
+        for axis in range(3)
+    ]
+    if particle.get("landing") is not None and particle["landing"] <= age:
+        position[1] = sparks["floor"]
+    return position
+
+
+def spark_radiance(sparks, fraction):
+    """Linear RGB of a spark at `fraction` of its life: intensity * sigma T^4 / pi * luminance 1 hue, tapered over the last fadeFraction."""
+    start, end = sparks["temperature"]
+    kelvin = start + (end - start) * min(max(fraction, 0.0), 1.0)
+    hue = sparks["blackbodyHue"]
+    last_entry = len(hue["values"]) // 3 - 1
+    position = min(max(kelvin - hue["firstKelvin"], 0.0) / hue["stepKelvin"], last_entry)
+    lower = min(int(position), last_entry - 1)
+    blend = position - lower
+    scale = sparks["radianceScale"] * kelvin ** 4 * sparks["intensity"] * max(min(1.0, (1.0 - fraction) / sparks["fadeFraction"]), 0.0)
+    values = hue["values"]
+    return [(values[lower * 3 + channel] + (values[(lower + 1) * 3 + channel] - values[lower * 3 + channel]) * blend) * scale for channel in range(3)]
+
+
+def perpendicular_axes(along):
+    helper = mathutils.Vector((0, 1, 0)) if abs(along[1]) < 0.99 else mathutils.Vector((1, 0, 0))
+    first = along.cross(helper).normalized()
+    return first, along.cross(first)
+
+
+# Corners: across, -across, along, -along, through, -through, the same octahedron as src/particle-sparks.js.
+SPARK_TRIANGLES = [(0, 2, 4), (4, 2, 1), (1, 2, 5), (5, 2, 0), (4, 3, 0), (1, 3, 4), (5, 3, 1), (0, 3, 5)]
+
+
+def build_sparks(scene, sparks):
+    vertices, faces, colours = [], [], []
+    for particle in sparks["particles"]:
+        age = sparks["time"] - particle["birth"]
+        if age < 0 or age >= particle["life"]:
+            continue
+        head = to_blender(spark_position(sparks, particle, age))
+        tail = to_blender(spark_position(sparks, particle, max(age - sparks["shutter"], 0.0)))
+        along = head - tail
+        direction = along.normalized() if along.length > 1e-9 else mathutils.Vector((0, 0, 1))
+        across, through = perpendicular_axes(direction)
+        centre, radius, half_length = (head + tail) / 2, particle["radius"], particle["radius"] + along.length / 2
+        corners = [(across, radius), (across, -radius), (direction, half_length), (direction, -half_length), (through, radius), (through, -radius)]
+        base = len(vertices)
+        vertices.extend(centre + axis * extent for axis, extent in corners)
+        faces.extend(tuple(base + corner for corner in triangle) for triangle in SPARK_TRIANGLES)
+        colours.extend([spark_radiance(sparks, age / particle["life"])] * 6)
+    if not vertices:
+        return
+    mesh = bpy.data.meshes.new("Sparks")
+    mesh.from_pydata(vertices, [], faces)
+    colour_attribute = mesh.color_attributes.new("SparkColour", "FLOAT_COLOR", "POINT")
+    for index, colour in enumerate(colours):
+        colour_attribute.data[index].color = (*colour, 1.0)
+    material = bpy.data.materials.new("Sparks")
+    material.use_nodes = True
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    nodes.clear()
+    attribute = nodes.new("ShaderNodeAttribute")
+    attribute.attribute_name = "SparkColour"
+    emission = nodes.new("ShaderNodeEmission")
+    output = nodes.new("ShaderNodeOutputMaterial")
+    links.new(attribute.outputs["Color"], emission.inputs["Color"])
+    links.new(emission.outputs["Emission"], output.inputs["Surface"])
+    mesh.materials.append(material)
+    sparks_object = bpy.data.objects.new("Sparks", mesh)
+    scene.collection.objects.link(sparks_object)
+    for ray in ("visible_diffuse", "visible_glossy", "visible_transmission", "visible_volume_scatter", "visible_shadow"):
+        setattr(sparks_object, ray, False)
+    print(f"CYCLES_SPARKS {len(faces) // len(SPARK_TRIANGLES)} live sparks at {sparks['time']} s")
+
+
 def grid_names(vdb_path):
     grids, _ = openvdb.readAll(str(vdb_path))
     return [grid.name for grid in grids]
@@ -251,6 +351,8 @@ def main():
     if "floor" in spec:
         build_floor(scene, spec["floor"])
     build_volume(scene, resolve(spec_path.parent, vdb_list[frame]), spec["volume"])
+    if "sparks" in spec:
+        build_sparks(scene, spec["sparks"])
 
     output_prefix.parent.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()

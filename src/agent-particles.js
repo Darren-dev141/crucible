@@ -3,13 +3,19 @@ import { HAIR_LIMITS, buildHairMesh, createStrandRoots } from './hair.js';
 import { normalizeForceFields } from './force-fields.js';
 import { PARTICLE_LIMITS, buildParticleMesh, createParticleLaunches } from './particles.js';
 import { createCollisionSurface } from './particle-collision.js';
+import { SPARK_DEFAULTS, SPARK_LIMITS, SPARK_VERTICES, buildSparkMesh } from './particle-sparks.js';
 import { EMITTER_MESH_MODES, createMeshSource } from './particle-emitter-mesh.js';
 import { invalidField } from './field-error.js';
 import { bakingContext, boundedArray, finiteNumber, knownKeys, rootNodeWithGeometry, vectorOfThree } from './agent-recipe-checks.js';
 
 const PARTICLES_FIELDS = ['gravity', 'wind', 'fields', 'systems'];
-const SYSTEM_TYPES = ['emitter', 'hair'];
+const SYSTEM_TYPES = ['emitter', 'hair', 'sparks'];
 const EMITTER_SYSTEM_FIELDS = ['type', 'node', 'seed', 'count', 'rate', 'delay', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'size', 'scale', 'drag', 'floor', 'bounce', 'friction', 'colliders', 'spin', 'color', 'alpha', 'instances', 'orient'];
+const SPARK_SYSTEM_FIELDS = ['type', 'preset', 'node', 'seed', 'count', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'position', 'size', 'drag', 'floor', 'bounce', 'temperature', 'intensity', 'shutter'];
+const SPARK_PRESETS = Object.freeze({
+  // A blast: a few hundred sparks thrown in every direction from a small ball, fast, light enough for drag to pull them in, living 0.5 to 2 s.
+  explosion: Object.freeze({ count: 800, speed: [6, 24], spread: 180, lifetime: [0.5, 2], size: [0.006, 0.014], drag: 0.9, emitter: Object.freeze({ shape: 'sphere', radius: 0.2 }) }),
+});
 const HAIR_FIELDS = ['type', 'node', 'surface', 'seed', 'count', 'length', 'segments', 'width', 'droop', 'lean', 'sway', 'swayRate'];
 const EMITTER_FIELDS = ['shape', 'position', 'halfExtents', 'radius', 'mesh', 'from', 'group', 'sharpAngle', 'normalSpeed'];
 const EMITTER_SHAPES = ['point', 'box', 'sphere', 'disc', 'mesh'];
@@ -197,6 +203,70 @@ function normalizeEmitterSystem(input, context, path) {
   return system;
 }
 
+function normalizeSparkTemperature(value, path) {
+  const example = '[start, end] kelvin, such as [2500, 800]';
+  if (!Array.isArray(value) || value.length !== 2) throw invalidField(path, value, example, TypeError);
+  const [start, end] = value.map((entry, index) => finiteNumber(entry, `${path}[${index}]`, SPARK_LIMITS.minKelvin, SPARK_LIMITS.maxKelvin));
+  if (end > start) throw invalidField(path, value, `a spark that cools, with the start at or above the end, such as [${end}, ${start}]`);
+  return [start, end];
+}
+
+// The material must be unlit: an unlit surface outputs colour times vertex colour, and the vertex colour is the spark's blackbody radiance.
+function checkSparkMaterial(system, recipe, path) {
+  const node = recipe.nodes.find(candidate => candidate.id === system.node);
+  const material = recipe.materials?.find(candidate => candidate.id === node.material);
+  if (material && material.tag !== 'unlit') {
+    throw invalidField(`${path}.node`, `${system.node} (material "${material.id}" has tag "${material.tag}")`, 'a node with an unlit material of colour [1, 1, 1] (tag "unlit"), whose colour times vertex colour carries the spark radiance');
+  }
+}
+
+function sparkEmitterInput(input, preset, path) {
+  const emitterInput = { ...(preset?.emitter ?? { shape: 'point' }), ...input.emitter };
+  if (input.position !== undefined) {
+    if (input.emitter?.position !== undefined) {
+      throw invalidField(`${path}.position`, input.position, `left out when ${path}.emitter.position is set; give the blast point once`);
+    }
+    emitterInput.position = input.position;
+  }
+  return emitterInput;
+}
+
+function normalizeSparkSystem(input, context, path, recipe) {
+  knownKeys(input, SPARK_SYSTEM_FIELDS, path);
+  const presetName = input.preset;
+  if (presetName !== undefined && !SPARK_PRESETS[presetName]) {
+    throw invalidField(`${path}.preset`, presetName, `one of ${Object.keys(SPARK_PRESETS).join(', ')}, or left out`);
+  }
+  const preset = SPARK_PRESETS[presetName];
+  rootNodeWithGeometry(input.node, context.recipeNodes, context.claimedNodes, context.motionNodeIds, context.physicsNodeIds, `${path}.node`, 'particles');
+  const count = input.count ?? preset?.count ?? 200;
+  if (!Number.isInteger(count) || count < 1 || count > SPARK_LIMITS.maxCount) {
+    throw invalidField(`${path}.count`, count, `a whole number from 1 to ${SPARK_LIMITS.maxCount}, such as 800`);
+  }
+  const emitter = normalizeEmitter(sparkEmitterInput(input, preset, path), context, `${path}.emitter`);
+  const system = {
+    type: 'sparks', node: input.node, seed: normalizeSeed(input, path), count,
+    lifetime: rangeOf(input.lifetime ?? preset?.lifetime ?? [0.5, 2], `${path}.lifetime`, SPARK_LIMITS.minLifetime, SPARK_LIMITS.maxLifetime),
+    speed: rangeOf(input.speed ?? preset?.speed ?? [4, 12], `${path}.speed`, 0, SPARK_LIMITS.maxSpeed),
+    size: rangeOf(input.size ?? preset?.size ?? 0.01, `${path}.size`, SPARK_LIMITS.minRadius, SPARK_LIMITS.maxRadius),
+    direction: input.direction === undefined ? [0, 1, 0] : vectorOfThree(input.direction, `${path}.direction`, 1000),
+    spread: finiteNumber(input.spread ?? preset?.spread ?? 180, `${path}.spread`, 0, 180),
+    emitter,
+    drag: finiteNumber(input.drag ?? preset?.drag ?? 0.5, `${path}.drag`, 0, 100),
+    temperature: normalizeSparkTemperature(input.temperature ?? SPARK_DEFAULTS.temperature, `${path}.temperature`),
+    intensity: finiteNumber(input.intensity ?? SPARK_DEFAULTS.intensity, `${path}.intensity`, 0, SPARK_LIMITS.maxIntensity),
+    shutter: finiteNumber(input.shutter ?? SPARK_DEFAULTS.shutter, `${path}.shutter`, 0, SPARK_LIMITS.maxShutter),
+    scale: 'constant',
+  };
+  if (Math.hypot(...system.direction) === 0) {
+    throw invalidField(`${path}.direction`, system.direction, 'a direction that is not the zero vector, such as [0, 1, 0]');
+  }
+  if (input.floor !== undefined) system.floor = finiteNumber(input.floor, `${path}.floor`, -POSITION_LIMIT, POSITION_LIMIT);
+  if (input.bounce !== undefined) system.bounce = finiteNumber(input.bounce, `${path}.bounce`, 0, 1);
+  checkSparkMaterial(system, recipe, path);
+  return system;
+}
+
 function normalizeHairSystem(input, context, path) {
   knownKeys(input, HAIR_FIELDS, path);
   rootNodeWithGeometry(input.node, context.recipeNodes, context.claimedNodes, context.motionNodeIds, context.physicsNodeIds, `${path}.node`, 'particles');
@@ -226,11 +296,12 @@ function normalizeHairSystem(input, context, path) {
   return system;
 }
 
-function normalizeSystem(input, context, path) {
+function normalizeSystem(input, context, path, recipe) {
   const type = input?.type ?? 'emitter';
   if (!SYSTEM_TYPES.includes(type)) {
     throw invalidField(`${path}.type`, type, `one of ${SYSTEM_TYPES.join(', ')}`);
   }
+  if (type === 'sparks') return normalizeSparkSystem(input, context, path, recipe);
   return type === 'hair' ? normalizeHairSystem(input, context, path) : normalizeEmitterSystem(input, context, path);
 }
 
@@ -242,7 +313,7 @@ export function normalizeAgentParticles(input, recipe) {
   knownKeys(input, PARTICLES_FIELDS, 'particles');
   const context = bakingContext(recipe, ['cloth']);
   const result = {};
-  result.systems = boundedArray(input.systems, PARTICLE_LIMITS.maxSystems, 'particles.systems').map((system, index) => normalizeSystem(system, context, `particles.systems[${index}]`));
+  result.systems = boundedArray(input.systems, PARTICLE_LIMITS.maxSystems, 'particles.systems').map((system, index) => normalizeSystem(system, context, `particles.systems[${index}]`, recipe));
   if (!result.systems.length) {
     throw invalidField('particles.systems', result.systems, 'at least one system, such as [{ "node": "sparks" }]; use particles: null to clear it');
   }
@@ -253,7 +324,11 @@ export function normalizeAgentParticles(input, recipe) {
       throw invalidField('particles.systems', clash, 'colliders that are not particle system nodes, because a system replaces its own geometry with particles');
     }
   }
-  const total = result.systems.reduce((sum, system) => sum + system.count, 0);
+  const sparkTotal = result.systems.reduce((sum, system) => sum + (system.type === 'sparks' ? system.count : 0), 0);
+  if (sparkTotal > SPARK_LIMITS.maxCount) {
+    throw invalidField('particles.systems', `${sparkTotal} sparks in total`, `spark counts that add up to at most ${SPARK_LIMITS.maxCount}, such as a lower count in each system`);
+  }
+  const total = result.systems.reduce((sum, system) => sum + (system.type === 'sparks' ? 0 : system.count), 0);
   if (total > PARTICLE_LIMITS.maxParticles) {
     throw invalidField('particles.systems', `${total} particles in total`, `counts that add up to at most ${PARTICLE_LIMITS.maxParticles}, such as a lower count in each system`);
   }
@@ -388,6 +463,26 @@ function prepareEmitter(system, node, templates, forces, colliders, emitter) {
   };
 }
 
+/**
+ * The seeded launches, the forces and the look of a normalized spark system. The agent scene draws from this, and so do the reference
+ * renders (`scripts/make-spark-spec.mjs`), so every renderer shows the same sparks. `forces` is `{ gravity, wind, fields }`.
+ */
+export function sparkSystemSetup(system, forces, emitter = system.emitter) {
+  const systemForces = { ...forces, drag: system.drag, floor: system.floor, bounce: system.bounce ?? 0, friction: DEBRIS_FRICTION };
+  const launches = createParticleLaunches({ ...system, emitter, instanceCount: 1, spreadRadians: system.spread * Math.PI / 180, forces: systemForces });
+  const look = { shutter: system.shutter, temperature: system.temperature, intensity: system.intensity };
+  return { launches, forces: systemForces, look };
+}
+
+function prepareSparks(system, node, forces, emitter) {
+  const { launches, forces: systemForces, look } = sparkSystemSetup(system, forces, emitter);
+  return {
+    node,
+    report: () => ({ node: system.node, type: 'sparks', particles: system.count, verticesPerParticle: SPARK_VERTICES, temperature: [...system.temperature], shutter: system.shutter, ...lifeSummary(launches) }),
+    build: time => buildSparkMesh(launches, systemForces, time, look),
+  };
+}
+
 function prepareHair(system, node, surfaceNode, surfaceGeometry, forces) {
   const world = surfaceInWorld(surfaceGeometry, nodeMatrix(surfaceNode));
   const strands = createStrandRoots({ ...system, spread: system.lean }, world.positions, world.normals, surfaceGeometry.indices);
@@ -420,13 +515,14 @@ export function bakeAgentParticles(particles, recipe, geometries) {
   let totalVertices = 0;
   const prepared = particles.systems.map((system, systemIndex) => {
     const node = nodes.get(system.node);
-    const verticesPerItem = system.type === 'hair' ? (system.segments + 1) * HAIR_LIMITS.ringSides : Math.max(...templateNodeIds(system).map(nodeId => geometries.get(nodes.get(nodeId).geometry).positions.length / 3));
+    const verticesPerItem = system.type === 'sparks' ? SPARK_VERTICES : system.type === 'hair' ? (system.segments + 1) * HAIR_LIMITS.ringSides : Math.max(...templateNodeIds(system).map(nodeId => geometries.get(nodes.get(nodeId).geometry).positions.length / 3));
     totalVertices += verticesPerItem * system.count;
     checkVertexBudget(verticesPerItem * system.count, totalVertices, system.node);
     if (system.type === 'hair') {
       const surfaceNode = nodes.get(system.surface);
       return prepareHair(system, node, surfaceNode, geometries.get(surfaceNode.geometry), forces);
     }
+    if (system.type === 'sparks') return prepareSparks(system, node, forces, meshSourceOf(system, nodes, geometries, systemIndex));
     const templates = templateNodeIds(system).map(nodeId => geometries.get(nodes.get(nodeId).geometry));
     return prepareEmitter(system, node, templates, forces, collisionSurfaceOf(system, nodes, geometries), meshSourceOf(system, nodes, geometries, systemIndex));
   });
