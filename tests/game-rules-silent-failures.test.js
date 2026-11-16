@@ -1,6 +1,8 @@
 import './support/load-agent-scene-modules.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { createAgentScene } from '../src/agent-scene.js';
 import { startGame } from '../src/game.js';
 import { createGameRules, GAME_RULES_LIMITS } from '../src/game-rules.js';
@@ -8,6 +10,16 @@ import { createGameRules, GAME_RULES_LIMITS } from '../src/game-rules.js';
 const STEP = 1 / 60;
 const STEP_MILLISECONDS = 1000 / 60;
 const EMPTY_RECORDING = { version: 1, samples: 0, events: [] };
+
+// A heap reading without a collection counts garbage that has not been swept yet, and when V8 sweeps depends on how big the
+// heap already is, so a leak check reads the heap after a full collection (issue #1772).
+setFlagsFromString('--expose-gc');
+const collectGarbage = runInNewContext('gc');
+
+function retainedHeapBytes() {
+  collectGarbage();
+  return process.memoryUsage().heapUsed;
+}
 
 test('onEvent hears every event after the stored log is full', () => {
   const heard = [];
@@ -34,10 +46,10 @@ test('reportContact is ignored once the game is won, so a late contact does not 
   rules.fixedUpdate(STEP);
   assert.equal(rules.state.status, 'won');
   for (let report = 0; report < 100000; report += 1) rules.reportContact('a', 'b');
-  const heapBeforeMore = process.memoryUsage().heapUsed;
+  const heapBeforeMore = retainedHeapBytes();
   for (let report = 0; report < 400000; report += 1) rules.reportContact('a', 'b');
-  const heapGrowth = process.memoryUsage().heapUsed - heapBeforeMore;
-  assert.ok(heapGrowth < 8 * 1024 * 1024, `400000 contacts after game over grew the heap by ${heapGrowth} bytes`);
+  const heapGrowth = retainedHeapBytes() - heapBeforeMore;
+  assert.ok(heapGrowth < 8 * 1024 * 1024, `400000 contacts after game over kept ${heapGrowth} bytes on the heap`);
   rules.restart();
   rules.reportContact('a', 'b');
   rules.fixedUpdate(STEP);
