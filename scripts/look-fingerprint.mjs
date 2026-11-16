@@ -10,11 +10,16 @@
 // recorded as `error: <message>`, so the same failure on both sides still compares equal and a new failure counts as a change.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readdirSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { normalizedSourceText } from './look-source-text.mjs';
 
-const FINGERPRINT_VERSION = 1;
+export const FINGERPRINT_VERSION = 2;
+
+// Files whose output this script generates and hashes (shader builders and the programs they register). For these the shader text
+// is compared through the configs, and the file itself only has to keep the same JavaScript outside its template literals.
+const GENERATED_FILE_PATTERN = /^(shaders?|post|post-steps|post-air|.+-shaders?)\.js$/;
 const HASH_LENGTH = 16;
 
 // The same name rule as `lookNamePattern` in pr-metadata-check.mjs, kept here as a source file filter for the sweep.
@@ -146,6 +151,17 @@ function materialConfigs(shaders) {
   return configs;
 }
 
+// What the generators cannot see: any look file that is not a shader generator is compared by its code without comments and
+// whitespace (so a change to lighting-setups.js or a uniform packer holds), and a generator by its code outside the GLSL.
+function fingerprintSourceFiles(sourceRoot, lookFiles) {
+  const files = {};
+  for (const fileName of lookFiles) {
+    const source = readFileSync(join(sourceRoot, fileName), 'utf8');
+    files[`file/${fileName}`] = hashText(normalizedSourceText(source, { dropTemplateText: GENERATED_FILE_PATTERN.test(fileName) }));
+  }
+  return files;
+}
+
 /** The fingerprint of one source tree: { version, configs, defaults }. Each value is a hash or `error: <message>`. */
 export async function fingerprintTree(treeRoot) {
   const sourceRoot = join(resolve(treeRoot), 'src');
@@ -164,7 +180,7 @@ export async function fingerprintTree(treeRoot) {
     'exported/glsl': attempt(() => collectExportedShaders(imported, importOrder).join('\n\u0000\n')),
     'import/errors': attempt(() => importErrors.join('\n')),
   };
-  return { version: FINGERPRINT_VERSION, configs, defaults: collectDefaults(imported, importOrder) };
+  return { version: FINGERPRINT_VERSION, configs, defaults: collectDefaults(imported, importOrder), files: fingerprintSourceFiles(sourceRoot, lookFiles) };
 }
 
 /** Which config or default names differ between two fingerprints (a name present on one side only counts). */
@@ -173,7 +189,7 @@ export function compareFingerprints(base, head) {
     return { lookIdentical: false, changed: ['fingerprint-unavailable'] };
   }
   const changed = [];
-  for (const section of ['configs', 'defaults']) {
+  for (const section of ['configs', 'defaults', 'files']) {
     const names = new Set([...Object.keys(base[section]), ...Object.keys(head[section])]);
     for (const name of [...names].sort()) {
       if (base[section][name] !== head[section][name]) changed.push(name);
@@ -213,7 +229,8 @@ async function main(args) {
   } catch (error) {
     result = { lookIdentical: false, changed: ['fingerprint-failed'], error: error.message.split('\n')[0] };
   }
-  const text = JSON.stringify(result, null, 2);
+  // The check holds when this does not match the head it reads from the API: a push may land between the two.
+  const text = JSON.stringify({ version: FINGERPRINT_VERSION, headSha: readOption(args, '--head-sha'), ...result }, null, 2);
   const outputPath = readOption(args, '--out');
   if (outputPath) writeFileSync(outputPath, `${text}\n`);
   process.stdout.write(`${text}\n`);

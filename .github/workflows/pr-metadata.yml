@@ -28,9 +28,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Compares the shader text and look defaults of the base and the pull request (#1802). It reads the pull request's source files, so it
-  # holds a read-only token, no secrets and no checkout credentials, and it passes only a small JSON file to the next job, which holds
-  # the write permissions and never runs pull request code.
+  # Compares the shader text and look defaults of the base and the pull request (#1802). It IMPORTS the pull request head's source files,
+  # so same-repo head code runs here. That is trusted only because authors of branches in this repository are collaborators; a fork never
+  # reaches this job. The job holds a read-only token, no secrets and no checkout credentials, and it passes only a small JSON file to
+  # the next job, which holds the write permissions and never runs pull request code.
   fingerprint:
     if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -53,7 +54,9 @@ jobs:
           node-version: '24'
           package-manager-cache: false
       - name: Fingerprint the look of both trees
-        run: node base/scripts/look-fingerprint.mjs --base base --head head --out look-fingerprint.json
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node base/scripts/look-fingerprint.mjs --base base --head head --head-sha "$HEAD_SHA" --out look-fingerprint.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: look-fingerprint

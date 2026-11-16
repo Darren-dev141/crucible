@@ -3,6 +3,7 @@
 // `github` is the Octokit client that actions/github-script passes in. Tests pass a fake with the same few methods.
 import { checkPullRequest, isAutoCloseExempt, isLookPath, LOOK_HOLD_LABEL } from './pr-metadata-check.mjs';
 import { readFileSync } from 'node:fs';
+import { FINGERPRINT_VERSION } from './look-fingerprint.mjs';
 import {
   CLOSE_MARKER,
   REMINDER_MARKER,
@@ -40,13 +41,13 @@ async function lookWasApproved({ github, repo, number, input }) {
   return events.some(event => event.event === 'labeled' && event.label?.name === LOOK_HOLD_LABEL);
 }
 
-export async function checkOnePullRequest({ github, repo, number, now, reopened, dryRun, log, lookIdentical }) {
+export async function checkOnePullRequest({ github, repo, number, now, reopened, dryRun, log, lookResult }) {
   const { data: pullRequest } = await github.rest.pulls.get({ ...repo, pull_number: number });
   if (pullRequest.state !== 'open') return { skipped: 'closed' };
   const files = await github.paginate(github.rest.pulls.listFiles, { ...repo, pull_number: number, per_page: 100 });
   const input = toCheckInput(pullRequest, files);
   input.pr.lookApproved = await lookWasApproved({ github, repo, number, input });
-  input.pr.lookIdentical = lookIdentical;
+  input.pr.lookIdentical = resolveLookIdentical(lookResult, pullRequest.head?.sha);
   input.pr.fromFork = pullRequest.head?.repo?.full_name !== pullRequest.base?.repo?.full_name;
   const result = checkPullRequest(input);
   const exempt = isAutoCloseExempt(input.pr);
@@ -112,10 +113,16 @@ export async function checkOnePullRequest({ github, repo, number, now, reopened,
 export function readLookFingerprint(filePath) {
   if (!filePath) return undefined;
   try {
-    return JSON.parse(readFileSync(filePath, 'utf8')).lookIdentical === true;
+    return JSON.parse(readFileSync(filePath, 'utf8'));
   } catch {
-    return false;
+    return { lookIdentical: false };
   }
+}
+
+/** true only for a current, same-version result about this exact head commit; undefined when no fingerprint was computed. */
+export function resolveLookIdentical(lookResult, headSha) {
+  if (lookResult === undefined) return undefined;
+  return lookResult.version === FINGERPRINT_VERSION && Boolean(headSha) && lookResult.headSha === headSha && lookResult.lookIdentical === true;
 }
 
 export async function runPullRequestCheck({ github, context, core, now = Date.now() }) {
@@ -133,7 +140,7 @@ export async function runPullRequestCheck({ github, context, core, now = Date.no
       reopened: context.payload.action === 'reopened',
       dryRun,
       log,
-      lookIdentical: readLookFingerprint(process.env.LOOK_FINGERPRINT_FILE),
+      lookResult: readLookFingerprint(process.env.LOOK_FINGERPRINT_FILE),
     });
     if (outcome.result?.contributorFixes.length) {
       failures.push(...outcome.result.contributorFixes.map(item => `${item.id}: ${item.message}`));

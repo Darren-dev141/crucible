@@ -134,6 +134,8 @@ The configs:
 - Every shader feature registered by an optional module (fog, explosion, lighting pass, subsurface, toon, world materials, splats and the rest), and every exported GLSL string of a look file.
 - Look defaults: every exported `UPPER_CASE` constant of a look file (lighting, material, tone map, fog, post and volume values).
 
+The script also compares each look file by its code without comments and whitespace. A shader generator (`shaders.js`, `post.js`, `post-steps.js`, `*-shader.js`) may change its GLSL, which the hashes above check, but its JavaScript outside the template literals must stay the same. Any other look file (for example `lighting-setups.js`) must keep all its code. A change that fails either test holds, which also means a rename inside a look file holds. The result names the head commit, and the bot holds when that is not the commit it reads from the API.
+
 Covered files are JavaScript under `src/`. A look file anywhere else (a package's JavaScript, Rust, Python or GLSL files) is held as before, and so is every pull request from a fork, because the fingerprint job runs only for branches of this repository. The fingerprint reads shader text and defaults only: a change to how JavaScript computes a uniform is not seen, so say so in the description when you change such code and ask for the hold.
 
 ### Who runs the GPU and person checks

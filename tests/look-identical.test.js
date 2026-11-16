@@ -4,9 +4,9 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compareFingerprints, fingerprintTree } from '../scripts/look-fingerprint.mjs';
+import { FINGERPRINT_VERSION, compareFingerprints, fingerprintTree } from '../scripts/look-fingerprint.mjs';
 import { checkPullRequest, isFingerprintCovered, isLookIdentical } from '../scripts/pr-metadata-check.mjs';
-import { readLookFingerprint } from '../scripts/pr-metadata-run.mjs';
+import { readLookFingerprint, resolveLookIdentical } from '../scripts/pr-metadata-run.mjs';
 
 const lookLabels = labels => labels.filter(label => label.startsWith('look:') || label.startsWith('hold:'));
 const repositoryRoot = join(import.meta.dirname, '..');
@@ -53,9 +53,9 @@ const replays = [
   },
   {
     number: 1522,
-    expectHold: false,
-    lookIdentical: true,
-    changed: [],
+    expectHold: true,
+    lookIdentical: false,
+    changed: ['file/material-graph.js'],
     files: files('changes/1522-descriptive-names.md', 'scripts/check-names.mjs', 'src/material-graph.js', 'src/mesh-volume-pass.js', 'src/vegetation-impostors.js', 'src/cloth.js', 'tests/modeling.test.js'),
   },
   {
@@ -143,18 +143,48 @@ test('readLookFingerprint reads the job result and treats a missing file as no p
   try {
     const identical = join(directory, 'identical.json');
     writeFileSync(identical, JSON.stringify({ lookIdentical: true, changed: [] }));
-    assert.equal(readLookFingerprint(identical), true);
-    assert.equal(readLookFingerprint(join(directory, 'missing.json')), false);
+    assert.equal(readLookFingerprint(identical).lookIdentical, true);
+    assert.equal(readLookFingerprint(join(directory, 'missing.json')).lookIdentical, false);
     assert.equal(readLookFingerprint(''), undefined);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
+test('a result for another head commit, another version or no commit is not trusted', () => {
+  const result = { version: FINGERPRINT_VERSION, headSha: 'abc123', lookIdentical: true, changed: [] };
+  assert.equal(resolveLookIdentical(result, 'abc123'), true);
+  assert.equal(resolveLookIdentical(result, 'def456'), false);
+  assert.equal(resolveLookIdentical(result, undefined), false);
+  assert.equal(resolveLookIdentical({ ...result, version: FINGERPRINT_VERSION - 1 }, 'abc123'), false);
+  assert.equal(resolveLookIdentical({ ...result, headSha: undefined }, undefined), false);
+  assert.equal(resolveLookIdentical(undefined, 'abc123'), undefined);
+});
+
+test('a look default edited in a file that is not a shader generator is held, and a comment or blank lines are not', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'look-default-'));
+  try {
+    cpSync(join(repositoryRoot, 'src'), join(directory, 'src'), { recursive: true });
+    const original = fingerprintInChild(directory);
+    const setupsPath = join(directory, 'src', 'lighting-setups.js');
+    const setupsSource = readFileSync(setupsPath, 'utf8');
+    const intensityDefault = 'createLightingSetupMap(name, { intensity = 1,';
+    assert.ok(setupsSource.includes(intensityDefault));
+    writeFileSync(setupsPath, setupsSource.replace(intensityDefault, 'createLightingSetupMap(name, { intensity = 2,'));
+    const edited = compareFingerprints(original, fingerprintInChild(directory));
+    assert.equal(edited.lookIdentical, false);
+    assert.deepEqual(edited.changed, ['file/lighting-setups.js']);
+    writeFileSync(setupsPath, `/* a comment */\n${setupsSource.replaceAll('\n', '\n\n')}`);
+    assert.equal(compareFingerprints(original, fingerprintInChild(directory)).lookIdentical, true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('compareFingerprints names every config or default that differs', () => {
-  const base = { version: 1, configs: { a: 'x', b: 'y' }, defaults: { 'constant/C': 'z' } };
+  const base = { version: FINGERPRINT_VERSION, configs: { a: 'x', b: 'y' }, defaults: { 'constant/C': 'z' }, files: {} };
   assert.deepEqual(compareFingerprints(base, structuredClone(base)), { lookIdentical: true, changed: [] });
-  const head = { version: 1, configs: { a: 'x', b: 'changed', c: 'new' }, defaults: { 'constant/C': 'other' } };
+  const head = { version: FINGERPRINT_VERSION, files: {}, configs: { a: 'x', b: 'changed', c: 'new' }, defaults: { 'constant/C': 'other' } };
   assert.deepEqual(compareFingerprints(base, head), { lookIdentical: false, changed: ['b', 'c', 'constant/C'] });
   assert.equal(compareFingerprints(base, null).lookIdentical, false);
 });
