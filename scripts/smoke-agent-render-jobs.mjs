@@ -8,6 +8,27 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { createTexturedRigFixture } from './agent-asset-fixture.mjs';
 import { assertToolListMatchesServer } from './mcp-tool-list.mjs';
+import { inflateSync } from 'node:zlib';
+
+/** The alpha of each pixel in the first row of an 8-bit RGBA PNG; the first row has nothing above it, so only the left neighbour matters. */
+function firstRowAlpha(png) {
+  const width = png.readUInt32BE(16);
+  const idat = [];
+  for (let offset = 8; offset < png.length;) {
+    const length = png.readUInt32BE(offset);
+    if (png.toString('latin1', offset + 4, offset + 8) === 'IDAT') idat.push(png.subarray(offset + 8, offset + 8 + length));
+    offset += 12 + length;
+  }
+  const raw = inflateSync(Buffer.concat(idat));
+  const filter = raw[0];
+  const row = Buffer.alloc(width * 4);
+  for (let column = 0; column < width * 4; column++) {
+    const left = column >= 4 ? row[column - 4] : 0;
+    const predicted = filter === 1 || filter === 4 ? left : filter === 3 ? left >> 1 : 0;
+    row[column] = (raw[1 + column] + predicted) & 255;
+  }
+  return Array.from({ length: width }, (_, index) => row[index * 4 + 3]);
+}
 
 setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
 const directory = await mkdtemp(join(tmpdir(), 'crucible-mcp-jobs-'));
@@ -118,6 +139,14 @@ try {
   const pngBitDepth = data => data[24];
   const [transparentFile] = await optionFiles({ kind: 'image', width: 128, height: 128, transparent: true });
   assert.equal(pngColorType(transparentFile.data), 6);
+  // Issue #1853: one stills job with stillCount writes numbered RGBA PNGs on the animation clock, and the empty background stays transparent.
+  const overlayFrames = await optionFiles({ kind: 'stills', width: 128, height: 128, fps: 10, stillCount: 6, transparent: true, animation: { clip: 0, start: 0 } });
+  assert.deepEqual(overlayFrames.map(file => file.filename), Array.from({ length: 6 }, (_, index) => `frame-${index}.png`));
+  const cornerAlphas = overlayFrames.map(file => firstRowAlpha(file.data)[0]);
+  for (const file of overlayFrames) assert.equal(pngColorType(file.data), 6);
+  assert.ok(cornerAlphas.every(alpha => alpha < 255), `corner pixels should be transparent, got alpha ${cornerAlphas.join(',')}`);
+  assert.equal(new Set(overlayFrames.map(file => file.data.toString('base64'))).size > 1, true, 'frames on the animation clock should differ');
+  if (process.env.CRUCIBLE_SMOKE_FRAMES_FOLDER) await writeFile(join(process.env.CRUCIBLE_SMOKE_FRAMES_FOLDER, 'frame-5.png'), overlayFrames[5].data);
   const [sixteenBit, depthSixteen] = await optionFiles({ kind: 'image', width: 128, height: 128, format: 'png16', passes: ['depth'] });
   assert.deepEqual([pngBitDepth(sixteenBit.data), pngColorType(sixteenBit.data), pngBitDepth(depthSixteen.data), pngColorType(depthSixteen.data)], [16, 2, 16, 0]);
   const [exrFile, exrDepth] = await optionFiles({ kind: 'image', width: 128, height: 128, format: 'exr', passes: ['depth'] });

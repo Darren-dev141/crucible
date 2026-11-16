@@ -10,6 +10,7 @@ import { decompressDracoGlb, usesDraco } from './agent-draco.mjs';
 import { transcodeKtx2Glb, usesKtx2 } from './agent-ktx2.mjs';
 
 const MAXIMUM_ASSETS = AGENT_ASSET_LIMITS.maxAssets;
+const IMAGE_FILE_PATTERN = /\.(png|jpe?g|webp)$/i;
 const MAXIMUM_BYTES = AGENT_ASSET_LIMITS.maxBytes;
 
 const IMAGE_EXTENSIONS = { png: /\.png$/i, jpeg: /\.jpe?g$/i, webp: /\.webp$/i };
@@ -334,7 +335,13 @@ export async function createAgentAssetCatalog(root, packFiles = []) {
     }
     const files = (await readdir(directory, { withFileTypes: true }))
       .filter(entry => /\.(glb|png|jpe?g|webp|hdr|cube)$/i.test(entry.name)).sort((left, right) => left.name.localeCompare(right.name));
-    if (files.length > MAXIMUM_ASSETS) throw new RangeError(`Asset catalog has ${files.length} files, over its maxAssets ${MAXIMUM_ASSETS}. Remove files from the --assets directory.`);
+    // Image files are sequence frames, so they have their own cap: a film that changes a texture over time needs thousands.
+    const imageFileCount = files.filter(entry => IMAGE_FILE_PATTERN.test(entry.name)).length;
+    const otherFileCount = files.length - imageFileCount;
+    if (otherFileCount > MAXIMUM_ASSETS) throw new RangeError(`Asset catalog has ${otherFileCount} files other than images, over its maxAssets ${MAXIMUM_ASSETS}. Remove files from the --assets directory.`);
+    if (imageFileCount > TEXTURE_SEQUENCE_LIMITS.maxFrames) {
+      throw new RangeError(`Asset catalog has ${imageFileCount} image files, over the ${TEXTURE_SEQUENCE_LIMITS.maxFrames} a texture sequence can use. Remove images from the --assets directory.`);
+    }
     for (const file of files) {
       let result;
       try {

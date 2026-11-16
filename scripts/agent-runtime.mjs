@@ -15,7 +15,7 @@ import { USER_PASS_CAPABILITIES } from '../src/user-pass.js';
 import { GAME_CAPABILITIES } from '../src/game-setup-notes.js';
 import { MESH_BLEND_CAPABILITIES } from '../src/mesh-blend.js';
 import { MATERIAL_SNIPPET_CAPABILITIES } from '../src/material-snippet.js';
-import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, maximumMemoryMiB, memoryRangeError, BAKE_WORKER_MAXIMUM_SECONDS } from '../src/agent-scene-capabilities.js';
+import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, maximumMemoryMiB, memoryRangeError, BAKE_WORKER_MAXIMUM_SECONDS, MAXIMUM_SQUARE_JOB_SIDE, MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE, MAXIMUM_STILLS_FRAMES } from '../src/agent-scene-capabilities.js';
 import { PATH_TRACER_CAPABILITIES } from '../src/path-tracer-capabilities.js';
 import { chooseDenoiser, finishWithOidn } from './agent-path-trace-denoise.mjs';
 import { createNativeSequence } from './agent-native-sequence.mjs';
@@ -30,10 +30,10 @@ import { geometryOnlyGlb } from './agent-query-asset.mjs';
 import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { namesCatalogFiles, resolveAssetPlacementNames } from '../src/agent-asset-names.js';
-import { sequenceFrameIds } from '../src/agent-texture-sequence.js';
+import { sequenceFrameIds, hasStreamedSequence } from '../src/agent-texture-sequence.js';
 import { readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grids.js';
 import { catalogLookReferences, BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES } from '../src/look-catalog.js';
-import { TEXTURE_SEQUENCE_CAPABILITIES } from '../src/texture-sequence-limits.js';
+import { TEXTURE_SEQUENCE_CAPABILITIES, TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { writeWebBuild } from './web-export.mjs';
 import { gameAssetIds } from '../src/game-assets.js';
 import { resolveJobRoot } from './agent-job-root.mjs';
@@ -168,6 +168,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   const pendingAskControllers = new Set();
   // Open scenes, least recently used first; the last one is what a call without a sessionId means.
   const openSessionIds = new Set();
+  // Set once a recipe with a streamed texture sequence is read; from then on a call with a motion time supplies its frames first.
+  let streamedSequencesUsed = false;
   // Scenes the page closed to stay under the scene cap, so a later call with one of them gets a clear error.
   const evictedSessionIds = [];
   // Scenes that have a bake, so an edit that rebakes gets the longer deadline.
@@ -305,7 +307,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   async function assertPlacedAssetsFitBeforeReading(value, motionSourceIds = [], sceneValue = undefined) {
     const catalogIds = catalogIdsOf(value);
     if (sceneValue) for (const id of catalogIdsOf(sceneValue)) catalogIds.add(id);
-    let total = volumeGridFileBytes(value);
+    // With a scene, its grid files count too, once per name even when the edit names the same file.
+    let total = volumeGridFileBytes(sceneValue ? [value, sceneValue] : value);
     if (catalogIds.size || motionSourceIds.length) {
       const readyCatalog = await catalog();
       for (const id of [...catalogIds, ...motionSourceIds]) total += await readyCatalog.size(id);
@@ -318,6 +321,15 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (!catalogIdsOf(editedValue).size) return;
     const { recipe } = await invoke('exportRecipe', { sessionId });
     await assertPlacedAssetsFitBeforeReading(editedValue, [], recipe);
+  }
+
+  /**
+   * Refuses a render job or review of a scene whose unique assets pass the combined limit, before the scene page is suspended. The job would fail
+   * while loading them, and the recovery that reloads the scene would then crash the page (#1848). An asset snapshot is one catalog file, already capped per file.
+   */
+  async function assertSceneFitsBeforeJob(recipe) {
+    if (recipe?.format === 'crucible.asset') return;
+    await assertPlacedAssetsFitBeforeReading({}, [], recipe);
   }
 
   /** Bytes of the catalog assets a recipe or edit list places, base64 by asset id, for the page that decodes them. */
@@ -361,6 +373,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   /** Bytes of the catalog images a recipe or edit list uses as map sequence frames, base64 by asset id. The page decodes them. */
   async function sequenceFrameData(value) {
+    if (hasStreamedSequence(value)) streamedSequencesUsed = true;
     const ids = sequenceFrameIds(value);
     if (!ids.length) return {};
     const entries = await Promise.all(ids.map(async id => [id, (await (await catalog()).read(id)).toString('base64')]));
@@ -637,8 +650,18 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (hasBake) bakedSessionIds.add(sessionId);
   }
 
+  // Streamed texture sequences: reads the frames a motion time needs from the catalog and sends them to the page, which decodes
+  // them and keeps only that time and the one before. A scene without streamed sequences needs none.
+  async function supplyStreamedFrames(target, sessionId, motionTime) {
+    const missingIds = await target.evaluate(request => window.__agentPreview.sequenceFramesNeeded(request), { sessionId, motionTime });
+    if (!missingIds.length) return;
+    const entries = await Promise.all(missingIds.map(async id => [id, (await (await catalog()).read(id)).toString('base64')]));
+    await target.evaluate(request => window.__agentPreview.loadSequenceFrames(request), { sessionId, motionTime, sequenceData: Object.fromEntries(entries) });
+  }
+
   async function invoke(method, input, timeoutMs = EVALUATION_TIMEOUT_MS) {
     requireSession(input.sessionId);
+    if (streamedSequencesUsed && typeof input.motionTime === 'number') await supplyStreamedFrames(page, input.sessionId, input.motionTime);
     if (!browserInstance?.isConnected() || page.isClosed()) {
       phase = 'failed';
       throw new Error(`The preview browser disconnected. ${RECOVERY_HINT}`);
@@ -709,6 +732,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     signal.addEventListener('abort', abort, { once: true });
     try {
       signal.throwIfAborted();
+      await assertSceneFitsBeforeJob(snapshot.recipe);
       await enqueue(async () => {
         await invoke('suspend', { sessionId }, PAGE_HANDOFF_TIMEOUT_MS);
         suspended = true;
@@ -782,10 +806,14 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         metrics.videoEncoder = pageEncodes ? 'browser-h264' : settings.encoder === 'nvenc' ? 'h264_nvenc' : 'libx264';
       }
       if (timeline) metrics.shots = filmTimelineShotStarts(timeline);
+      const streamedJob = hasStreamedSequence(snapshot.recipe);
+      if (streamedJob && settings.renderer) {
+        throw new Error(`A material map.sequence of more than ${TEXTURE_SEQUENCE_LIMITS.wholeSequenceFrames} frames streams its frames and is drawn by the raster renderer only. Remove settings.renderer, or pass a sequence of at most ${TEXTURE_SEQUENCE_LIMITS.wholeSequenceFrames} frames for a path traced job.`);
+      }
       for (let frame = 0; frame < settings.frameCount; frame++) {
         signal.throwIfAborted();
         const elapsed = settings.kind === 'video' ? frame / settings.fps
-          : settings.kind === 'stills' ? settings.duration * frame / (settings.frameCount - 1) : 0;
+          : settings.kind === 'stills' ? (settings.stillCount ? frame / settings.fps : settings.duration * frame / (settings.frameCount - 1)) : 0;
         // A timeline job reads one clock for the shot, the motion and the renderer, so a seek matches the frame in a video.
         const timelineTime = timeline ? Math.min(filmTimelineDuration(timeline), settings.timeline.start + elapsed) : undefined;
         const shotSample = timeline ? sampleFilmTimeline(timeline, snapshot.recipe, timelineTime) : undefined;
@@ -798,6 +826,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           ...(shotSample && shotSample.brightness < 1 ? { brightness: shotSample.brightness } : {}),
           ...(settings.animation ? { animation: { clip: settings.animation.clip, time: settings.animation.start + elapsed } } : {}) };
         const renderStarted = performance.now();
+        if (streamedJob && frameInput.motionTime !== undefined) await supplyStreamedFrames(jobPage, jobId, frameInput.motionTime);
         if (settings.renderer) {
           const { type, ...tracerOptions } = settings.renderer;
           if (settings.renderer.backend === 'gpu' && backend === 'cpu') throw new Error('renderer.backend "gpu" needs a runtime on the GPU backend, and this one runs on SwiftShader.');
@@ -1071,8 +1100,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           use: 'scene_asset_catalog lists packs: name, version, license, author, description and item ids. GLBs, images, looks and environments carry assetId values that work in scene_create_asset, look, hdri and texture fields. Materials and recipes are read with scene_asset_catalog { pack, material } or { pack, recipe }: pass a recipe to scene_create, and a material as a materials entry or a scene_apply set-material. Packs are installed by the user (unzip into the --packs folder); a tool call never downloads one. Invalid packs are skipped and listed under packs.rejected with the reason.',
         },
         jobs: { configured: Boolean(jobRoot), kinds: ['image', 'stills', 'video'], passes: RENDER_PASS_NAMES, pathTracer: PATH_TRACER_CAPABILITIES, maximumActiveJobs: 1, estimate: RENDER_ESTIMATE_NOTE, budget: RENDER_BUDGET_NOTE, quality: RENDER_QUALITY_NOTE, tiers: await deviceTiers(),
-          maximumWidth: MAXIMUM_JOB_SIDE, maximumHeight: MAXIMUM_JOB_SIDE, maximumPixels: MAXIMUM_JOB_PIXELS, maximumSequenceWidth: MAXIMUM_SEQUENCE_JOB_SIDE, maximumSequenceHeight: MAXIMUM_SEQUENCE_JOB_SIDE, maximumSequencePixels: MAXIMUM_SEQUENCE_JOB_PIXELS,
-          maximumDuration: MAXIMUM_VIDEO_SECONDS, maximumFps: MAXIMUM_JOB_FPS, maximumFrames: MAXIMUM_JOB_FRAMES, maximumStills: 8,
+          maximumWidth: MAXIMUM_JOB_SIDE, maximumHeight: MAXIMUM_JOB_SIDE, maximumPixels: MAXIMUM_JOB_PIXELS, maximumSequenceWidth: MAXIMUM_SEQUENCE_JOB_SIDE, maximumSequenceHeight: MAXIMUM_SEQUENCE_JOB_SIDE, maximumSequencePixels: MAXIMUM_SEQUENCE_JOB_PIXELS, maximumSquareSide: MAXIMUM_SQUARE_JOB_SIDE, maximumSquareSequenceSide: MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE,
+          maximumDuration: MAXIMUM_VIDEO_SECONDS, maximumFps: MAXIMUM_JOB_FPS, maximumFrames: MAXIMUM_JOB_FRAMES, maximumStills: 8, maximumStillCount: MAXIMUM_STILLS_FRAMES, stillCountNote: 'a stills job with stillCount (2 to maximumStillCount) and fps writes frame-0.png and on, one per 1 / fps s of the motion clock from motion.start; with transparent each is RGBA. Without stillCount it is 8 spread over duration.',
           encoder: 'H.264', encoders: VIDEO_ENCODERS, audio: Boolean(audioRoot), timeline: true, previewSuspendedDuringJob: true,
           glbExport: { maximumBytes: MAXIMUM_GLB_BYTES, maximumKept: MAXIMUM_KEPT_GLBS, maximumTextureSize: 4096 },
           ...(await jobRecords()) },
@@ -1271,6 +1300,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         await requirePreviewRenderer();
         requireSession(settings.sessionId);
         const snapshot = await invoke('snapshot', settings);
+        await assertSceneFitsBeforeJob(snapshot.recipe);
         const branchRecipes = new Map();
         for (const name of settings.branchNames) {
           branchRecipes.set(name, await invoke('branchRecipe', { sessionId: settings.sessionId, name }));
