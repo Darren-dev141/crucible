@@ -595,13 +595,20 @@ export function refuseLocalVolumes(scene, tracerName) {
   throw new RangeError(`environment.localVolumes is traced by the CPU path tracer only; ${tracerName} cannot draw them. Use backend "cpu" (backend "webgpu" draws box and sphere volumes) or remove the volumes.`);
 }
 
-// The volumes of the trace, and the hidden parts of a scene that has volumes (#1793): the rasterizer does not draw a part with
-// `visible: false`, and the trace leaves it out of the geometry too, so a part can shape smoke, or sit idle, without becoming a wall.
+// The rasterizer's own test (renderer.js `isHidden`): a part hides by `visible: false` or by the `visibility.visible` that a posed scene keys.
+function isHiddenPart(part) {
+  return part?.visible === false || part?.visibility?.visible === false;
+}
+
+// The volumes of the trace, and the hidden parts of the scene (#1793, #1806): the rasterizer does not draw a part with
+// `visible: false`, and the trace leaves it out of the geometry too, so a part can shape smoke, or sit idle, without becoming a wall
+// and a hidden part never casts a shadow. A volume that names a hidden part still reads its shape, because it is bound before the filter.
 function resolveTraceLocalVolumes(input, parts, volumeTime = 0, volumeShutter = 0) {
-  if (!input?.length) return { volumes: null, boundsOnlyParts: [] };
+  const boundsOnlyParts = Array.isArray(parts) ? parts.filter(isHiddenPart) : [];
+  if (!input?.length) return { volumes: null, boundsOnlyParts };
   const resolved = resolveLocalVolumes(input, 'environment.localVolumes');
   const volumes = bindLocalVolumeParts(resolved, parts, { time: volumeTime, shutter: volumeShutter }).map((volume, index) => (volume.part ? prepareMeshVolume(volume, `environment.localVolumes[${index}]`) : volume));
-  return { volumes, boundsOnlyParts: parts.filter(part => part.visible === false) };
+  return { volumes, boundsOnlyParts };
 }
 
 export { RAY_VISIBILITY_BITS };
