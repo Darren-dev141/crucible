@@ -1,5 +1,6 @@
 import { finiteRange, vectorField } from './volumetric.js';
 import { VOLUME_GRID_SEQUENCE_MAX_FRAMES } from './volume-grid-sequence.js';
+import { resolveGridDetailNoise } from './local-volume-grid-detail.js';
 
 // Resolves a local volume of shape "grid" (#1045). It loads on demand (the volumeGrid module), so a scene without grid volumes does not carry it.
 export const LOCAL_VOLUME_GRID_MAXIMUM_STEPS = 128;
@@ -47,5 +48,7 @@ export function resolveGridVolume(input, resolved, label) {
     temperatureScale: finiteRange(input.temperatureScale ?? 1, 0, 1e5, `${label}.temperatureScale`),
     blackbodyIntensity: finiteRange(input.blackbodyIntensity ?? 0, 0, 1, `${label}.blackbodyIntensity`),
     anisotropy: finiteRange(input.anisotropy ?? 0, -0.9, 0.9, `${label}.anisotropy`),
+    // Kept off a volume without it, so a grid volume without the field resolves to the same object as before (#1832).
+    ...(input.detailNoise === undefined ? {} : { detailNoise: resolveGridDetailNoise(input.detailNoise, `${label}.detailNoise`) }),
   };
 }

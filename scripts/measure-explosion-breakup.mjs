@@ -8,6 +8,8 @@
 // The Cycles frame (scripts/explosion-cycles-reference.mjs, Blender 5.3 at below normal priority) shows the grid frame the recipe plays at the first time, so it
 // moves with the bake: the numbers say how well Glaze matches Cycles on that gas, and the Cycles row of the report says how ragged that gas is in truth.
 // Not shared between the two: the sky (Cycles has a flat colour), the sun and the sparks, dust, rubble and debris, which only Glaze draws (sparks are off).
+// --reference <png> scores against a Cycles frame already rendered (the grid frame must be the same: 9 for --times 0.45, size 4, seed 1) and runs no Blender.
+// --detail off|strength,scale,octaves replaces the volume's detailNoise (#1832) to compare settings on one build.
 // --times lists the motion times to draw in Glaze (the first one is scored), --backend gpu|cpu, --blender <exe>, --samples <n>.
 // Prints one JSON object and saves frame-<time>.png and the Cycles render as cycles.png.
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -37,8 +39,8 @@ function parseArguments(argv) {
   const options = { backend: 'gpu', times: [0.45], samples: 128, size: 4, seed: 1, out: 'artifacts/explosion-breakup/run' };
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index]?.replace(/^--/, '');
-    if (!['backend', 'times', 'samples', 'size', 'seed', 'out', 'blender'].includes(name) || argv[index + 1] === undefined) {
-      throw new Error(`Unknown or incomplete option ${argv[index]}; use --out <folder> [--times 0.45,1.2] [--backend gpu|cpu] [--size 4] [--seed 1] [--samples 128] [--blender <exe>].`);
+    if (!['backend', 'times', 'samples', 'size', 'seed', 'out', 'blender', 'reference', 'detail'].includes(name) || argv[index + 1] === undefined) {
+      throw new Error(`Unknown or incomplete option ${argv[index]}; use --out <folder> [--times 0.45,1.2] [--backend gpu|cpu] [--size 4] [--seed 1] [--samples 128] [--blender <exe>] [--reference <cycles.png>] [--detail off|strength,scale,octaves].`);
     }
     options[name] = argv[index + 1];
   }
@@ -65,13 +67,26 @@ async function call(client, name, argumentsValue) {
   return result;
 }
 
+async function overrideDetailNoise(client, sessionId, revision, detail) {
+  const exported = (await call(client, 'scene_export_recipe', { sessionId })).structuredContent;
+  const current = exported.recipe ?? exported;
+  const volume = { ...current.environment.localVolumes[0] };
+  delete volume.detailNoise;
+  if (detail !== 'off') {
+    const [strength, scale, octaves] = detail.split(',').map(Number);
+    volume.detailNoise = { strength, scale, octaves };
+  }
+  await call(client, 'scene_apply', { sessionId, expectedRevision: revision, operations: [{ type: 'set-environment', environment: { localVolumes: [volume] } }] });
+}
+
 async function drawFrames(options) {
   const { client, close } = await connect(options.backend);
   try {
     const created = (await call(client, 'scene_create', { recipe: SCENE })).structuredContent;
     const operation = { type: 'add-explosion', id: 'blast', center: [0, 0, 0], size: options.size, seed: options.seed, sparks: 'none', motionBlur: false };
-    await call(client, 'scene_apply', { sessionId: created.sessionId, expectedRevision: created.revision, operations: [operation] });
+    const applied = (await call(client, 'scene_apply', { sessionId: created.sessionId, expectedRevision: created.revision, operations: [operation] })).structuredContent;
     const frames = [];
+    if (options.detail !== undefined) await overrideDetailNoise(client, created.sessionId, applied.revision, options.detail);
     for (const motionTime of options.times) {
       const look = await call(client, 'scene_look', { sessionId: created.sessionId, motionTime, ...FRAME_SIZE });
       const image = look.content.find(item => item.type === 'image');
@@ -88,7 +103,7 @@ const options = parseArguments(process.argv.slice(2));
 await mkdir(options.out, { recursive: true });
 const { frames, volume } = await drawFrames(options);
 const frameIndex = Math.round(options.times[0] * volume.fps);
-const cyclesPng = await renderCyclesReference({ volume, frameIndex, camera: SCENE.camera, floor: 0, floorColor: FLOOR_COLOR, folder: join(options.out, 'cycles-work'), ...CYCLES_SIZE, samples: options.samples, blender: options.blender });
+const cyclesPng = options.reference ?? await renderCyclesReference({ volume, frameIndex, camera: SCENE.camera, floor: 0, floorColor: FLOOR_COLOR, folder: join(options.out, 'cycles-work'), ...CYCLES_SIZE, samples: options.samples, blender: options.blender });
 await copyFile(cyclesPng, join(options.out, 'cycles.png'));
 const reference = describeFrame(luminanceImage(decodePng(await readFile(cyclesPng))));
 const report = { backend: options.backend, size: options.size, seed: options.seed, gridFrame: frameIndex, samples: options.samples, times: [] };

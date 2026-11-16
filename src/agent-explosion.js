@@ -180,6 +180,8 @@ function addAirSteps(candidate, plan) {
 // look costs a third (SwiftShader, 768 x 432: first look 11.7 s to 4.9 s, later looks 4.2 s to 1.7 s), which keeps scene_look well under its 30 s limit.
 const BLAST_VOLUME = Object.freeze({
   density: 3, emission: [1, 0.45, 0.12], emissionStrength: 14, blackbodyIntensity: 0.3, absorption: [1, 1, 1], steps: 32,
+  // Edge erosion while the grid is sampled (#1832): the 32 cubed bake is too coarse for a ragged rim and a finer one does not fit the 64 MiB a call may carry.
+  detailNoise: Object.freeze({ strength: 0.2, scale: 1, octaves: 3 }),
 });
 const OILY_DENSITY_GAIN = 1.5;
 const HOLD_SECONDS = 1;
@@ -236,6 +238,7 @@ function addBlastVolume(candidate, plan) {
     temperatureScale: GAS_SIM_TEMPERATURE_UNIT,
     blackbodyIntensity: BLAST_VOLUME.blackbodyIntensity,
     steps: BLAST_VOLUME.steps,
+    detailNoise: { ...BLAST_VOLUME.detailNoise },
     castShadow: true,
     lightsScene: true,
   });

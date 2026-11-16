@@ -8,6 +8,7 @@ import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
 import { GRID_BORDER_VOXELS, GRID_MOTION_TIME_STEP, HALF_FLOAT_MAXIMUM, bakedGridEmission, floatToHalf, gridUnitVelocity } from './volume-grid.js';
 import { drawMeshVolumes } from './mesh-volume-pass.js';
+import { GRID_DETAIL_FUNCTIONS } from './local-volume-grid-detail.js';
 import { FogFieldTexture, createFogLightBuffers, packFogLights, volumeShadowAmbient, DEFAULT_FLOW_STRENGTH, DEFAULT_FLOW_PERIOD, resolveFogDetail, fogUsesDetail } from './fog-field.js';
 
 // The volume fog step of the post pass: its uniforms and the march that scatters light through the fog box. Only a renderer that
@@ -114,7 +115,8 @@ function compositeLocalVolumes(renderer, frame, environment, sourceTexture) {
   const motion = renderer.localVolumeBuffers.gridShutter > 0;
   const kind = renderer.localVolumeBuffers.kind;
   const noiseOctaves = renderer.localVolumeBuffers.noiseOctaves;
-  if (composite.program && (composite.motion !== motion || composite.kind !== kind || composite.noiseOctaves !== noiseOctaves)) {
+  const gridDetail = renderer.localVolumeBuffers.gridDetail[0] > 0;
+  if (composite.program && (composite.motion !== motion || composite.kind !== kind || composite.noiseOctaves !== noiseOctaves || composite.gridDetail !== gridDetail)) {
     context.deleteProgram(composite.program);
     composite.program = null;
     composite.uniforms = {};
@@ -123,7 +125,8 @@ function compositeLocalVolumes(renderer, frame, environment, sourceTexture) {
     composite.motion = motion;
     composite.kind = kind;
     composite.noiseOctaves = noiseOctaves;
-    composite.program = compileProgram(context, fullscreenVertex, createLocalVolumeCompositeFragment(motion, kind, noiseOctaves));
+    composite.gridDetail = gridDetail;
+    composite.program = compileProgram(context, fullscreenVertex, createLocalVolumeCompositeFragment(motion, kind, noiseOctaves, gridDetail));
     for (const name of ['frameTexture', 'sceneDepth', 'resolution', 'inverseViewProjection', 'eye']) composite.uniforms[name] = context.getUniformLocation(composite.program, name);
   }
   if (!composite.target) composite.target = createCompositeTarget(renderer);
@@ -209,6 +212,7 @@ function bindLocalVolumes(renderer, post, frame, environment) {
   context.bindTexture(context.TEXTURE_2D, buffers.meshParts.length > 0 ? renderer.meshVolumePass.target.texture : renderer.whiteTexture);
   context.uniform1i(locate('localMeshVolumes'), 7);
   context.uniform4fv(locate('localVolumeGrid[0]'), buffers.grid);
+  if (buffers.gridDetail[0] > 0) context.uniform4fv(locate('localGridDetail'), buffers.gridDetail);
   context.uniform4fv(locate('localVolumeRampSetup[0]'), buffers.rampSetup);
   context.uniform4fv(locate('localVolumeRamp[0]'), buffers.rampColors);
   context.activeTexture(context.TEXTURE8);
@@ -428,7 +432,9 @@ const LOCAL_MOTION_SAMPLE_POSITION = `vec3 samplePosition = localGridMotionPosit
 // Each volume is marched on its own between its entry and exit (cut at the first surface) and composited nearest first: the colour
 // behind it is dimmed by exp(-absorption * profile * step) and its emission is added, both per colour channel.
 // With `motion` the grid march reads the point its shutter time selects; without it the source is exactly what it was before the blur existed.
-const localVolumeFunctions = (motion, kind = 'both', noiseOctaves = false) => {
+const GRID_TEXEL = `(unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize`;
+
+const localVolumeFunctions = (motion, kind = 'both', noiseOctaves = false, gridDetail = false) => {
   const withGrid = kind !== 'shape';
   const withShape = kind !== 'grid';
   const profileSelection = withGrid && withShape
@@ -440,7 +446,7 @@ const localVolumeFunctions = (motion, kind = 'both', noiseOctaves = false) => {
 float localVolumeJitter() {
   return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
 }
-${withShape ? `// Value noise on a hash of plain multiplies, adds and fract, which rounds the same way on SwiftShader, where it was measured, and is unchecked on hardware GPUs (a sine hash does not: its error
+${withShape || gridDetail ? `// Value noise on a hash of plain multiplies, adds and fract, which rounds the same way on SwiftShader, where it was measured, and is unchecked on hardware GPUs (a sine hash does not: its error
 // grows with the argument). local-volume-noise.js repeats it for the CPU path tracer, so keep the two in step.
 float localVolumeCellHash(vec3 cell) {
   vec3 scrambled = fract(cell * 0.1031);
@@ -455,7 +461,7 @@ float localVolumeNoise(vec3 position) {
   float upper = mix(mix(localVolumeCellHash(cell + vec3(0,0,1)), localVolumeCellHash(cell + vec3(1,0,1)), fraction.x), mix(localVolumeCellHash(cell + vec3(0,1,1)), localVolumeCellHash(cell + vec3(1,1,1)), fraction.x), fraction.y);
   return mix(lower, upper, fraction.z);
 }
-${noiseOctaves ? `// Fractal value noise for a volume with noiseOctaves above 1 (local-volume-noise.js localVolumeFractalNoise repeats it): lacunarity 2, gain 0.5, divided by the weights.
+${noiseOctaves || gridDetail ? `// Fractal value noise for a volume with noiseOctaves above 1 (local-volume-noise.js localVolumeFractalNoise repeats it): lacunarity 2, gain 0.5, divided by the weights.
 float localVolumeFractalNoise(vec3 position, int octaves) {
   float sum = 0.0;
   float weight = 1.0;
@@ -506,19 +512,25 @@ float localVolumeWarpedFade(float position, float noiseAmount, float noise) {
   float clamped = clamp(position, 0.0, 1.0);
   return clamped + (0.5 - noise) * noiseAmount * ${LOCAL_VOLUME_EDGE_WARP.toFixed(3)} * 4.0 * clamped * (1.0 - clamped);
 }
-` : ''}${withGrid ? `// A grid volume (#1045) reads its box as a 3D texture: x density, y temperature, z flame. localVolumeGrid holds, per volume, x 1 for a grid, y the temperature
+` : ''}${gridDetail ? GRID_DETAIL_FUNCTIONS : ''}${withGrid ? `// A grid volume (#1045) reads its box as a 3D texture: x density, y temperature, z flame. localVolumeGrid holds, per volume, x 1 for a grid, y the temperature
 // scale, z the blackbody intensity times the emission strength and w the anisotropy. volume-grid.js (blackbodyRadiance) repeats the blackbody.
 // A grid cell at a world point: x density, y temperature, z flame, all linear taps of the padded texture (a texel centre is at i + 0.5).
 vec3 localGridSample(int index, vec3 position) {
   vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
   vec3 paddedSize = vec3(textureSize(localGridTexture, 0));
-  return textureLod(localGridTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
+${gridDetail ? `  vec3 cell = textureLod(localGridTexture, ${GRID_TEXEL}, 0.0).rgb;
+  float kept = localGridDetailKept(unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0), cell.x);
+  cell.x *= kept;
+  cell.z *= kept;
+  return cell;` : `  return textureLod(localGridTexture, ${GRID_TEXEL}, 0.0).rgb;`}
 }
 ` : ''}${withGrid ? `// The baked blackbody radiance at a world point (volume-grid.js bakedGridEmission), before the blackbody intensity and the emission strength.
 vec3 localGridBlackbody(int index, vec3 position) {
   vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
   vec3 paddedSize = vec3(textureSize(localGridEmissionTexture, 0));
-  return textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
+${gridDetail ? `  vec3 radiance = textureLod(localGridEmissionTexture, ${GRID_TEXEL}, 0.0).rgb;
+  radiance *= localGridDetailKept(unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0), textureLod(localGridTexture, ${GRID_TEXEL}, 0.0).r);
+  return radiance;` : `  return textureLod(localGridEmissionTexture, ${GRID_TEXEL}, 0.0).rgb;`}
 }
 ` : ''}${motion ? LOCAL_MOTION_POSITION_FUNCTION : ''}// The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
 // code (0 none, 1 density, 2 temperature, 3 flame), y the stop count and z, w the source range; the stops are baked in local-volume-ramp.js with the exposure and

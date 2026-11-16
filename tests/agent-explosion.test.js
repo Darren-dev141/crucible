@@ -52,6 +52,7 @@ test('a blast writes plain sections, every part ID starting with the explosion I
   assert.equal(volume.castShadow, true);
   assert.equal(volume.lightsScene, true);
   assert.equal(volume.loop, false);
+  assert.deepEqual(volume.detailNoise, { strength: 0.2, scale: 1, octaves: 3 }, 'the rim breaks up while the grid is sampled (#1832)');
   assert.ok(volume.blackbodyIntensity > 0 && volume.temperatureScale === 1000);
   assert.equal(volume.frames.filter(name => name === EXPLOSION_EMPTY_VELOCITY_GRID).length, Math.ceil(0.5 * volume.fps));
   assert.equal(volume.frames.at(-1), 'explosion-oily-1-velocity_0071.67vg');
@@ -211,6 +212,8 @@ test('sparks specks and motionBlur false write exactly the recipe of the first r
   for (const [extra, hash] of FIRST_RELEASE_HASHES) {
     for (const sparks of ['specks', false]) {
       const { recipe } = applyBlast(blast({ ...JSON.parse(extra), sparks, motionBlur: false }), structuredClone(plainRecipe));
+      // detailNoise (#1832) is the one field added since; the rest of the recipe is the first release's.
+      delete recipe.environment.localVolumes[0].detailNoise;
       assert.equal(createHash('sha256').update(JSON.stringify(recipe)).digest('hex'), hash, `${extra} sparks ${sparks}`);
     }
   }

@@ -4,6 +4,7 @@ import { sampleVolumeGrid, sampleVolumeGridVelocity, gridUnitVelocity, bakedGrid
 import { LOCAL_VOLUME_RAMP_STOPS, rampSourceCode, resolveEmissionRamp } from './local-volume-ramp.js';
 import { bakeEmissionRamp } from './local-volume-ramp-bake.js';
 import { resolveGridVolume, LOCAL_VOLUME_GRID_MAXIMUM_STEPS } from './local-volume-grid.js';
+import { erodeGridCell } from './local-volume-grid-detail.js';
 
 export * from './local-volume-resolve.js';
 export { LOCAL_VOLUME_GRID_MAXIMUM_STEPS };
@@ -19,7 +20,7 @@ export function resolveLocalVolumes(input, label = 'localVolumes') {
 /** The uniform arrays the post shader reads, one vec4 per volume. Pass resolved volumes. */
 export function createLocalVolumeBuffers() {
   const size = MAX_LOCAL_VOLUMES * 4;
-  return { count: 0, blurred: false, meshParts: [], grid: new Float32Array(size), gridVolume: null, gridShutter: 0, kind: 'both', noiseOctaves: false, centers: new Float32Array(size), extents: new Float32Array(size), absorption: new Float32Array(size), emission: new Float32Array(size), steps: new Float32Array(size), axes: new Float32Array(size * 3), rampSetup: new Float32Array(size), rampColors: new Float32Array(size * LOCAL_VOLUME_RAMP_STOPS) };
+  return { count: 0, blurred: false, meshParts: [], grid: new Float32Array(size), gridVolume: null, gridShutter: 0, gridDetail: new Float32Array(4), kind: 'both', noiseOctaves: false, centers: new Float32Array(size), extents: new Float32Array(size), absorption: new Float32Array(size), emission: new Float32Array(size), steps: new Float32Array(size), axes: new Float32Array(size * 3), rampSetup: new Float32Array(size), rampColors: new Float32Array(size * LOCAL_VOLUME_RAMP_STOPS) };
 }
 
 // The emission ramp of volume `index` (#1046): rampSetup holds x the source code (0 none), y the stop count and z, w the source range; rampColors
@@ -46,6 +47,7 @@ export function packLocalVolumes(volumes, buffers) {
   buffers.meshParts = [];
   buffers.gridVolume = null;
   buffers.gridShutter = 0;
+  buffers.gridDetail.fill(0);
   // Which march the frame needs (#1768): a mesh volume needs neither.
   const hasGrid = volumes.some(volume => volume.shape === 'grid');
   const hasShape = volumes.some(volume => volume.shape !== 'grid' && !volume.part);
@@ -75,6 +77,7 @@ export function packLocalVolumes(volumes, buffers) {
       if (buffers.gridVolume) throw new RangeError(ONE_GRID_VOLUME_MESSAGE);
       buffers.gridVolume = volume;
       buffers.gridShutter = volume.motionShutter ?? 0;
+      if (volume.detailNoise) buffers.gridDetail.set([volume.detailNoise.strength, volume.detailNoise.scale, volume.detailNoise.octaves, 0]);
       buffers.grid.set([volume.castShadow === true ? 2 : 1, volume.temperatureScale, volume.blackbodyIntensity * volume.emissionStrength, volume.anisotropy], at);
     }
     const axes = volume.axes ?? IDENTITY_AXES;
@@ -211,7 +214,9 @@ export function localVolumeGridSample(volume, x, y, z, out, withBlackbody = fals
     return out;
   }
   const baked = withBlackbody ? bakedGridEmission(volume.gridData, volume.temperatureScale) : null;
-  return sampleVolumeGrid(volumeGridFloats(volume.gridData), volume.gridData.resolution, unitX, unitY, unitZ, out, baked);
+  sampleVolumeGrid(volumeGridFloats(volume.gridData), volume.gridData.resolution, unitX, unitY, unitZ, out, baked);
+  if (volume.detailNoise) erodeGridCell(volume.detailNoise, volume.gridData.resolution, unitX, unitY, unitZ, out, withBlackbody);
+  return out;
 }
 
 /** The density factor of a volume at a point: 1 at the core, fading over the outer `falloff` share, times the noise factor (up to 2) when `noiseAmount` is above 0, as the post shader does. With noise the fade edge is also pushed in and out (LOCAL_VOLUME_EDGE_WARP). */
