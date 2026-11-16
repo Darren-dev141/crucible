@@ -1,6 +1,6 @@
 // scripts/grid-to-vdb.py (#1735): a grid file goes to VDB inside Blender and is read back with Blender's openvdb, density unchanged
 // (tests/fixtures/grid_vdb_roundtrip.py). Needs Blender (BLENDER_PATH, `blender` on the PATH or the default Windows install); skipped without it.
-// scripts/vdb-to-grid.py cannot be the reader here: openvdb's Python write is Blosc compressed and that reader decodes zip only.
+// The reader is Blender's own openvdb here; tests/vdb-to-grid-blosc.test.js covers reading that Blosc file with scripts/vdb-to-grid.py.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
