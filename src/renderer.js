@@ -1408,6 +1408,8 @@ export class CrucibleRenderer {
       throw new TypeError('Scene parts must be an array with distinct object identities.');
     }
     const renderParts = this.groundPart ? [...parts, this.groundPart] : parts;
+    // Local volumes bind to parts by name, so they must see the new list after a topology change.
+    this.sceneParts = parts;
     this.fitParts = renderParts;
     this.fitBounds = undefined;
     this.densityParts = parts;
