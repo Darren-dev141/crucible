@@ -28,7 +28,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Compares the shader text and look defaults of the base and the pull request (#1802). It reads the pull request's source files, so it
+  # holds a read-only token, no secrets and no checkout credentials, and it passes only a small JSON file to the next job, which holds
+  # the write permissions and never runs pull request code.
+  fingerprint:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: base
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Fingerprint the look of both trees
+        run: node base/scripts/look-fingerprint.mjs --base base --head head --out look-fingerprint.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: look-fingerprint
+          path: look-fingerprint.json
+          retention-days: 1
+
   check:
+    needs: fingerprint
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -39,8 +73,15 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.fingerprint.result == 'success'
+        with:
+          name: look-fingerprint
+          path: look-fingerprint
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
+          # A pull request event without this file counts as a look change. The hourly sweep sets no path and keeps its labels as they are.
+          LOOK_FINGERPRINT_FILE: ${{ github.event_name == 'pull_request_target' && 'look-fingerprint/look-fingerprint.json' || '' }}
           PR_METADATA_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
         with:
           script: |

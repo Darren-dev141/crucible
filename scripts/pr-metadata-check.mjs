@@ -2,6 +2,8 @@
 // so tests call it with plain objects. The `PR metadata` workflow (.github/workflows/pr-metadata.yml) runs it on the base branch.
 //
 // Input:  { pr: { body, title, author, authorAssociation, labels, milestone, draft, lookApproved }, files: [{ filename, additions, deletions }] }
+//         lookIdentical is true when scripts/look-fingerprint.mjs found every shader text and look default of the head equal to the base,
+//         false when it found a difference or could not run, and undefined when no fingerprint was computed (the hourly sweep).
 //         lookApproved is true when hold:look-approval was added and the owner removed it later. The pictures were then
 //         reviewed, so the look change needs no picture in the description and no new hold label.
 // Output: { contributorFixes: [{ id, message, docsAnchor }], maintainerTodos: [string], addLabels: [string], removeLabels: [string] }
@@ -10,6 +12,7 @@
 // becomes a maintainer todo and the `needs-triage` label, and never counts against the author.
 
 export const LOOK_HOLD_LABEL = 'hold:look-approval';
+export const LOOK_IDENTICAL_LABEL = 'look:identical';
 export const NEEDS_TRIAGE_LABEL = 'needs-triage';
 export const NEEDS_AUTHOR_LABEL = 'status:needs-author';
 export const NEEDS_OWNER_DECISION_LABEL = 'needs-owner-decision';
@@ -26,6 +29,8 @@ const lightPathPattern = /^(docs\/|\.github\/|tests\/|changes\/)|\.md$/;
 // "flight" and "highlight" do not match "light".
 const lookNamePattern = /(^|[-_/.])(shaders?|glsl|lights?|lighting|materials?|environment|shadows?|tone|tonemap|fog|sky|post|bloom|ssao|taa|exposure)(?=$|[-_/.])/i;
 const lookRootPattern = /^(src|packages)\//;
+// What the fingerprint covers: the JavaScript under src/ that it imports, and Python files (the Blender add-on never runs in the renderer).
+const fingerprintCoveredPattern = /^(src\/.+\.js|packages\/.+\.py)$/;
 
 const linkedIssuePattern = /\b(?:closes|close|closed|fixes|fix|fixed|resolves|resolve|resolved|part of)\s+(?:#\d+|https:\/\/github\.com\/codepawl\/crucible\/issues\/\d+)/i;
 const localPathPatterns = [
@@ -93,6 +98,20 @@ function showsEvidence(body, visibleBody) {
 
 function normalizePath(path) {
   return path.replace(/\\/g, '/');
+}
+
+/** A look path whose shader text and defaults scripts/look-fingerprint.mjs compares, so a byte-identical change to it needs no look review. */
+export function isFingerprintCovered(path) {
+  return fingerprintCoveredPattern.test(normalizePath(path));
+}
+
+/** True when the fingerprint proved every touched look file leaves shader text and look defaults as they were. */
+export function isLookIdentical(pr, files) {
+  const lookPaths = files.map(file => normalizePath(file.filename)).filter(isLookPath);
+  if (lookPaths.length === 0 || !lookPaths.every(isFingerprintCovered)) return false;
+  if (pr.lookIdentical === true) return true;
+  // The hourly sweep computes no fingerprint: a pull request the last run labelled look:identical keeps the label until a push is checked again.
+  return pr.lookIdentical === undefined && (pr.labels ?? []).includes(LOOK_IDENTICAL_LABEL);
 }
 
 export function isLookPath(path) {
@@ -176,7 +195,7 @@ function contributorFixesFor(pr, files, light) {
     ));
   }
 
-  const touchesLook = paths.some(isLookPath);
+  const touchesLook = paths.some(isLookPath) && !isLookIdentical(pr, files);
   if (touchesLook && !pr.lookApproved && !imagePattern.test(body)) {
     fixes.push(fix(
       'look-without-image',
@@ -200,7 +219,7 @@ function maintainerTodosFor(pr, files, contributorFixes) {
   if (!labels.some(label => ['bug', 'enhancement', 'documentation'].includes(label))) todos.push('Set a type label (bug, enhancement or documentation).');
   if (!pr.milestone) todos.push('Set a milestone.');
   const paths = files.map(file => normalizePath(file.filename));
-  if (!pr.lookApproved && paths.some(isLookPath)) todos.push('Look change: only the owner removes hold:look-approval after seeing the pictures.');
+  if (!pr.lookApproved && paths.some(isLookPath) && !isLookIdentical(pr, files)) todos.push('Look change: only the owner removes hold:look-approval after seeing the pictures.');
   const needsToolBench = paths.some(path => toolOrSkillPathPattern.test(path));
   if (needsToolBench && contributorFixes.length === 0 && benchOptOutPattern.test(pr.body ?? '')) {
     todos.push('Run the agent bench for this pull request (bench/agent-modeling).');
@@ -220,8 +239,13 @@ export function checkPullRequest({ pr, files }) {
   if (classificationMissing && !labels.includes(NEEDS_TRIAGE_LABEL)) addLabels.push(NEEDS_TRIAGE_LABEL);
   if (!classificationMissing && labels.includes(NEEDS_TRIAGE_LABEL)) removeLabels.push(NEEDS_TRIAGE_LABEL);
 
-  const needsHold = !pr.lookApproved && files.some(file => isLookPath(file.filename));
+  // A hold is never removed here, whoever added it. look:identical stands in for the hold only while the fingerprint proves no look change.
+  const touchesLook = files.some(file => isLookPath(file.filename));
+  const identical = isLookIdentical(pr, files);
+  const needsHold = !pr.lookApproved && touchesLook && !identical;
   if (needsHold && !labels.includes(LOOK_HOLD_LABEL)) addLabels.push(LOOK_HOLD_LABEL);
+  if (identical && !labels.includes(LOOK_HOLD_LABEL) && !labels.includes(LOOK_IDENTICAL_LABEL)) addLabels.push(LOOK_IDENTICAL_LABEL);
+  if (!identical && labels.includes(LOOK_IDENTICAL_LABEL)) removeLabels.push(LOOK_IDENTICAL_LABEL);
 
   if (!isAutoCloseExempt(pr)) {
     if (contributorFixes.length > 0 && !labels.includes(NEEDS_AUTHOR_LABEL)) addLabels.push(NEEDS_AUTHOR_LABEL);

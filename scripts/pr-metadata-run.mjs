@@ -2,6 +2,7 @@
 // pull request's code, and runs the pure rules of pr-metadata-check.mjs and pr-metadata-flow.mjs on them.
 // `github` is the Octokit client that actions/github-script passes in. Tests pass a fake with the same few methods.
 import { checkPullRequest, isAutoCloseExempt, isLookPath, LOOK_HOLD_LABEL } from './pr-metadata-check.mjs';
+import { readFileSync } from 'node:fs';
 import {
   CLOSE_MARKER,
   REMINDER_MARKER,
@@ -39,12 +40,13 @@ async function lookWasApproved({ github, repo, number, input }) {
   return events.some(event => event.event === 'labeled' && event.label?.name === LOOK_HOLD_LABEL);
 }
 
-export async function checkOnePullRequest({ github, repo, number, now, reopened, dryRun, log }) {
+export async function checkOnePullRequest({ github, repo, number, now, reopened, dryRun, log, lookIdentical }) {
   const { data: pullRequest } = await github.rest.pulls.get({ ...repo, pull_number: number });
   if (pullRequest.state !== 'open') return { skipped: 'closed' };
   const files = await github.paginate(github.rest.pulls.listFiles, { ...repo, pull_number: number, per_page: 100 });
   const input = toCheckInput(pullRequest, files);
   input.pr.lookApproved = await lookWasApproved({ github, repo, number, input });
+  input.pr.lookIdentical = lookIdentical;
   const result = checkPullRequest(input);
   const exempt = isAutoCloseExempt(input.pr);
   const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });
@@ -104,6 +106,17 @@ export async function checkOnePullRequest({ github, repo, number, now, reopened,
   return { result, decision, exempt };
 }
 
+// The `fingerprint` job of the workflow wrote this file from an unprivileged read of both refs. A missing or unreadable file
+// means no proof, so the pull request is treated as a look change (false), never as identical.
+export function readLookFingerprint(filePath) {
+  if (!filePath) return undefined;
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf8')).lookIdentical === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function runPullRequestCheck({ github, context, core, now = Date.now() }) {
   const repo = context.repo;
   const dryRun = process.env.PR_METADATA_DRY_RUN === '1';
@@ -119,6 +132,7 @@ export async function runPullRequestCheck({ github, context, core, now = Date.no
       reopened: context.payload.action === 'reopened',
       dryRun,
       log,
+      lookIdentical: readLookFingerprint(process.env.LOOK_FINGERPRINT_FILE),
     });
     if (outcome.result?.contributorFixes.length) {
       failures.push(...outcome.result.contributorFixes.map(item => `${item.id}: ${item.message}`));

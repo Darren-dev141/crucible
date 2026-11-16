@@ -122,6 +122,20 @@ Name the task ids you ran in the pull request (`--dry-run` lists them). Skipped 
 
 A change to shaders, lighting, materials, the default render or a post step changes how every scene looks. Add a before and an after picture to the pull request. A bot adds the label `hold:look-approval`. Only the owner removes it, and nothing with that label merges. Once the owner removes it, the check counts the look as approved and stops asking for pictures.
 
+A refactor that changes no pixel does not wait. The `PR metadata` workflow runs `scripts/look-fingerprint.mjs` on the base and on the pull request, with no GPU. It builds the shader text (vertex and fragment) for a fixed list of scene configs and hashes each one, and it hashes the look defaults. When every touched look file is covered and every hash is equal, the bot adds `look:identical` instead of `hold:look-approval` and asks for no picture. Any differing hash, or a fingerprint that could not run, keeps the hold. A hold that is already on the pull request is never removed by the bot. Run `node scripts/look-fingerprint.mjs --base <tree> --head <tree>` to see which configs changed.
+
+The configs:
+
+- Post program: no steps, finish, bloom, transparent and occlusion, fog, fog with sky, fog with field, detail and lights, explosion.
+- Local volumes by kind (grid, shape, both), with and without grid motion, alone and inside a fog, plus the local volume composite for each.
+- Sky and bloom fragments.
+- Materials: the fragment and vertex shader with every feature, with none and with each single feature, the default programs and the liquid pass.
+- Shadows: the depth vertex and fragment shaders.
+- Every shader feature registered by an optional module (fog, explosion, lighting pass, subsurface, toon, world materials, splats and the rest), and every exported GLSL string of a look file.
+- Look defaults: every exported `UPPER_CASE` constant of a look file (lighting, material, tone map, fog, post and volume values).
+
+Covered files are JavaScript under `src/` and Python under `packages/`. A look file anywhere else (for example Rust or a package's JavaScript) is held as before. The fingerprint reads shader text and defaults only: a change to how JavaScript computes a uniform is not seen, so say so in the description when you change such code and ask for the hold.
+
 ### Who runs the GPU and person checks
 
 You run the checks in the table above that apply, when you can. When you cannot (for example, you have no GPU), say so in the pull request. A maintainer runs them and adds the label `status:needs-gpu-check`. The merge waits for them only for look and renderer changes.
