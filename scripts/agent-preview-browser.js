@@ -1081,9 +1081,9 @@ window.__agentPreview = {
       record.scene.sampleMotion(motionTime);
     }
     const { instancing, kernel, ...packOptions } = options;
-    const [{ createCamera, describeIgnoredFeatures }, { buildTraceScene, refuseLocalVolumes, resolveTexture }, pack, { buildNativeInput }, { buildJobNativeInput, buildFlattenedJobNativeInput }] = await Promise.all([
+    const [{ createCamera, describeIgnoredFeatures }, { buildTraceScene, resolveTexture }, pack, { buildNativeInput }, { buildJobNativeInput, buildFlattenedJobNativeInput }, gridVolumeInput] = await Promise.all([
       import('../src/path-tracer.js'), import('../src/path-tracer-scene.js'), import('../src/path-tracer-gpu-pack.js'),
-      import('@codepawlhq/cook/pack-input'), import('@codepawlhq/cook/job-input'),
+      import('@codepawlhq/cook/pack-input'), import('@codepawlhq/cook/job-input'), import('@codepawlhq/cook/grid-volume-input'),
     ]);
     const environment = { ...record.scene.environment, map: agentEnvironmentMap(record.scene.environment) };
     // The "cycles" kernel gets FORMAT-v2 tables with whole materials, and copies of one geometry stay instances; the legacy kernel reads flattened v1 triangles.
@@ -1091,7 +1091,7 @@ window.__agentPreview = {
     heldNativeExportTables = null;
     const packed = exportNativeSceneTables({ parts: record.scene.parts, environment, camera, options: packOptions, kernel, instancing: instancing === true,
       transport: chunked ? 'chunks' : 'message',
-      modules: { buildTraceScene, refuseLocalVolumes, resolveTexture, buildNativeInput, buildJobNativeInput, buildFlattenedJobNativeInput, pack } });
+      modules: { buildTraceScene, resolveTexture, buildNativeInput, buildJobNativeInput, buildFlattenedJobNativeInput, pack, gridVolumeInput } });
     let exported = packed;
     if (chunked) {
       const split = splitExportForChunks(packed);

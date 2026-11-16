@@ -1,6 +1,7 @@
 // The page side of the native tracer (Cook, @codepawlhq/cook), shared by the agent preview page and the bench harness. The
 // tracer runs in the host process; the host exposes it on the page as `__crucibleNativeBake` (see the agent runtime), and
 // everything here packs a scene into the tables it reads and unpacks its answer.
+import { appendNativeGridVolumes, nativeGridVolumes, withoutLocalVolumes } from '../src/path-tracer-native-volumes.js';
 
 function bytesToBase64(bytes) {
   if (typeof bytes.toBase64 === 'function') return bytes.toBase64();
@@ -141,8 +142,10 @@ export function readExportChunk(tables, name, offset) {
  * `instancing` is on. A scene the packer refuses (copies of an emissive mesh that emit different triangles, say) is
  * exported flattened, and a scene whose FORMAT-v2 materials cannot be built is exported as the v1 tables the legacy kernel
  * reads; each says why in `instancing` and `instancingReason`, or `materialsReason`. `wholeMaterials` tells whether the
- * kernel gets whole materials. `modules` holds buildTraceScene, refuseLocalVolumes, resolveTexture, buildNativeInput,
- * buildJobNativeInput, buildFlattenedJobNativeInput and `pack` (src/path-tracer-gpu-pack.js), which the page loads on demand.
+ * kernel gets whole materials. `modules` holds buildTraceScene, resolveTexture, buildNativeInput, buildJobNativeInput,
+ * buildFlattenedJobNativeInput, `pack` (src/path-tracer-gpu-pack.js) and `gridVolumeInput` (`@codepawlhq/cook/grid-volume-input`,
+ * needed only when the scene has a grid local volume), which the page loads on demand. A grid local volume is drawn by the
+ * "cycles" kernel; any other local volume is refused.
  * `transport` is "message" (the default: every table as base64, all of them within one message) or "chunks": the tables stay
  * bytes for `splitExportForChunks`, no message bounds them, and the triangle bound is NATIVE_CHUNKED_MAXIMUM_TRIANGLES.
  */
@@ -150,35 +153,42 @@ export function exportNativeSceneTables({ parts, environment, camera, options, k
   if (!EXPORT_TRANSPORTS.includes(transport)) {
     throw new RangeError(`exportNativeSceneTables: transport must be "message" or "chunks", got ${JSON.stringify(transport)}.`);
   }
-  const { buildTraceScene, refuseLocalVolumes, resolveTexture, buildNativeInput, buildJobNativeInput, buildFlattenedJobNativeInput, pack } = modules;
+  const { buildTraceScene, resolveTexture, buildNativeInput, buildJobNativeInput, buildFlattenedJobNativeInput, pack, gridVolumeInput } = modules;
   const wholeMaterials = kernel === 'cycles';
   const maximumTriangles = transport === 'chunks' ? NATIVE_CHUNKED_MAXIMUM_TRIANGLES : NATIVE_JOB_MAXIMUM_TRIANGLES;
   const nativeLimits = wholeMaterials ? { maximumTriangles, maximumInstances: NATIVE_JOB_MAXIMUM_INSTANCES, maximumLights: NATIVE_JOB_MAXIMUM_LIGHTS, maximumParts: NATIVE_JOB_MAXIMUM_PARTS } : {};
   let traceScene = buildTraceScene(parts, environment, { instancing: wholeMaterials && instancing === true, ...nativeLimits });
-  refuseLocalVolumes(traceScene, 'the native path tracer');
+  // Cook draws grid local volumes. Its packers refuse `localVolumes`, so the grids go in after them; any other volume kind is refused here.
+  const gridVolumes = nativeGridVolumes(traceScene.localVolumes);
+  const withGrids = input => (gridVolumes ? appendNativeGridVolumes(input, gridVolumes, gridVolumeInput) : input);
+  if (gridVolumes) traceScene = withoutLocalVolumes(traceScene);
   let flattenedBecause;
   if (traceScene.instances) {
     try {
-      const input = buildJobNativeInput(traceScene, camera, options, pack, resolveTexture);
+      const input = withGrids(buildJobNativeInput(traceScene, camera, options, pack, resolveTexture));
       return { ...encodeNativeInputV2(input, tablesForTransport(input, transport)), triangleCount: input.triangleCount, triangles: input.triangleCount, instances: input.instanceCount, wholeMaterials };
     } catch (error) {
       // A scene over the texture pool stays over it flattened: the caller gets that refusal, not a v1 atlas one.
       if (!(error instanceof RangeError) || error.texturePoolFull || error.exportTooLarge) throw error;
       flattenedBecause = error.message;
       traceScene = flattenRefusedScene(buildTraceScene, parts, environment, nativeLimits, flattenedBecause);
+      if (gridVolumes) traceScene = withoutLocalVolumes(traceScene);
     }
   }
   const instancingNote = flattenedBecause === undefined ? {} : { instancing: 'flattened', instancingReason: flattenedBecause };
   let materialsReason;
   if (wholeMaterials) {
     try {
-      const input = buildFlattenedJobNativeInput(traceScene, camera, options, pack, resolveTexture);
+      const input = withGrids(buildFlattenedJobNativeInput(traceScene, camera, options, pack, resolveTexture));
       return { ...encodeNativeInputV2(input, tablesForTransport(input, transport)), triangleCount: input.triangleCount, triangles: traceScene.indices.length / 3, wholeMaterials, ...instancingNote };
     } catch (error) {
       if (error.texturePoolFull || error.exportTooLarge) throw error;
       // The scene stays traceable: the v1 tables carry what the kernel read before, and the report says why they were used.
       materialsReason = error.message;
     }
+  }
+  if (gridVolumes) {
+    throw new RangeError(`A grid local volume needs the "cycles" kernel with whole materials, and this scene could not be packed for it${materialsReason === undefined ? ' (the kernel is not "cycles")' : `: ${materialsReason}`}. Use backend "cpu" or remove the volume.`);
   }
   if (traceScene.partRayVisibility && !wholeMaterials) {
     throw new TypeError('A part sets rayVisibility to hide from a ray kind, which only the "cycles" kernel can carry. Use kernel "cycles", or drop the rayVisibility of the part.');
