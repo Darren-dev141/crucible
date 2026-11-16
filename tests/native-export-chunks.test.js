@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { collectExportChunks } from '../scripts/agent-native-trace.mjs';
 import {
-  NATIVE_CHUNKED_MAXIMUM_TRIANGLES, NATIVE_EXPORT_CHUNK_BYTES, NATIVE_EXPORT_MAXIMUM_CHARACTERS, NATIVE_JOB_MAXIMUM_TRIANGLES,
+  NATIVE_CHUNKED_DEFAULT_TRIANGLES, NATIVE_CHUNKED_MAXIMUM_TRIANGLES, NATIVE_EXPORT_CHUNK_BYTES, NATIVE_EXPORT_MAXIMUM_CHARACTERS, NATIVE_JOB_MAXIMUM_TRIANGLES,
   encodedExportLength, exportNativeSceneTables, nativeTableBytes, readExportChunk, splitExportForChunks,
 } from '../scripts/native-bake-page.js';
 import { MAX_NATIVE_TRACE_TRIANGLES } from '../src/path-tracer-scene.js';
@@ -118,5 +118,6 @@ test('the chunk transport asks buildTraceScene for the chunked triangle bound', 
   const request = { parts: [], environment: {}, camera: {}, options: {}, kernel: 'cycles', instancing: true, modules };
   exportNativeSceneTables(request);
   exportNativeSceneTables({ ...request, transport: 'chunks' });
-  assert.deepEqual(asked, [NATIVE_JOB_MAXIMUM_TRIANGLES, NATIVE_CHUNKED_MAXIMUM_TRIANGLES]);
+  exportNativeSceneTables({ ...request, transport: 'chunks', maximumTriangles: 7_000_000 });
+  assert.deepEqual(asked, [NATIVE_JOB_MAXIMUM_TRIANGLES, NATIVE_CHUNKED_DEFAULT_TRIANGLES, 7_000_000]);
 });

@@ -62,9 +62,23 @@ export const NATIVE_JOB_MAXIMUM_INSTANCES = 1_000_000;
 export const NATIVE_JOB_MAXIMUM_LIGHTS = 256;
 // The parts of a flattened export, and the distinct geometries of an instanced one (see buildTraceScene's maximumParts).
 export const NATIVE_JOB_MAXIMUM_PARTS = 1_000_000;
-// The triangle bound of an export that travels in chunks (`transport: 'chunks'`): no single message bounds it, so it is the
-// bound buildTraceScene accepts for the native tracer. The tracer then refuses what its adapter cannot hold.
-export const NATIVE_CHUNKED_MAXIMUM_TRIANGLES = 4_000_000;
+// The triangle bound of an export that travels in chunks (`transport: 'chunks'`) when the adapter capacity is not known: no
+// single message bounds it. With the capacity, `chunkedTriangleBound` follows what the adapter holds.
+export const NATIVE_CHUNKED_DEFAULT_TRIANGLES = 4_000_000;
+// The most unique triangles a chunked export packs whatever the adapter reports (the bound buildTraceScene accepts for the native
+// tracer): the page packs them in memory, so a bound is kept even for a card that reports room for more.
+export const NATIVE_CHUNKED_MAXIMUM_TRIANGLES = 16_000_000;
+
+/**
+ * The unique triangle bound of a chunked export: what the adapter holds (`maxUniqueTriangles`, from Cook's readAdapterCapacity),
+ * between the unchecked default bound of NATIVE_JOB_MAXIMUM_TRIANGLES and NATIVE_CHUNKED_MAXIMUM_TRIANGLES. Without a usable
+ * limit it is NATIVE_CHUNKED_DEFAULT_TRIANGLES. A scene over the adapter limit but under the ceiling is refused with the exact
+ * count and what to drop, so the bound never has to guess a margin: the engine already leaves one in the limit it reports.
+ */
+export function chunkedTriangleBound(adapterTriangleLimit) {
+  if (!Number.isFinite(adapterTriangleLimit) || adapterTriangleLimit < 1) return NATIVE_CHUNKED_DEFAULT_TRIANGLES;
+  return Math.min(NATIVE_CHUNKED_MAXIMUM_TRIANGLES, Math.max(NATIVE_JOB_MAXIMUM_TRIANGLES, Math.floor(adapterTriangleLimit)));
+}
 // The bytes of a table that one chunk carries. A multiple of 3, so every chunk but the last is base64 without padding.
 export const NATIVE_EXPORT_CHUNK_BYTES = 48 * 1024 * 1024;
 
@@ -146,13 +160,16 @@ export function readExportChunk(tables, name, offset) {
  * `transport` is "message" (the default: every table as base64, all of them within one message) or "chunks": the tables stay
  * bytes for `splitExportForChunks`, no message bounds them, and the triangle bound is NATIVE_CHUNKED_MAXIMUM_TRIANGLES.
  */
-export function exportNativeSceneTables({ parts, environment, camera, options, kernel, instancing, modules, transport = 'message' }) {
+export function exportNativeSceneTables({ parts, environment, camera, options, kernel, instancing, modules, transport = 'message', maximumTriangles: chunkedMaximumTriangles }) {
   if (!EXPORT_TRANSPORTS.includes(transport)) {
     throw new RangeError(`exportNativeSceneTables: transport must be "message" or "chunks", got ${JSON.stringify(transport)}.`);
   }
   const { buildTraceScene, refuseLocalVolumes, resolveTexture, buildNativeInput, buildJobNativeInput, buildFlattenedJobNativeInput, pack } = modules;
   const wholeMaterials = kernel === 'cycles';
-  const maximumTriangles = transport === 'chunks' ? NATIVE_CHUNKED_MAXIMUM_TRIANGLES : NATIVE_JOB_MAXIMUM_TRIANGLES;
+  const maximumTriangles = transport === 'chunks' ? (chunkedMaximumTriangles ?? NATIVE_CHUNKED_DEFAULT_TRIANGLES) : NATIVE_JOB_MAXIMUM_TRIANGLES;
+  if (!Number.isInteger(maximumTriangles) || maximumTriangles < 1 || maximumTriangles > NATIVE_CHUNKED_MAXIMUM_TRIANGLES) {
+    throw new RangeError(`exportNativeSceneTables: maximumTriangles must be an integer from 1 to ${NATIVE_CHUNKED_MAXIMUM_TRIANGLES}, got ${JSON.stringify(chunkedMaximumTriangles)}. Pass chunkedTriangleBound(capacity.maxUniqueTriangles).`);
+  }
   const nativeLimits = wholeMaterials ? { maximumTriangles, maximumInstances: NATIVE_JOB_MAXIMUM_INSTANCES, maximumLights: NATIVE_JOB_MAXIMUM_LIGHTS, maximumParts: NATIVE_JOB_MAXIMUM_PARTS } : {};
   let traceScene = buildTraceScene(parts, environment, { instancing: wholeMaterials && instancing === true, ...nativeLimits });
   refuseLocalVolumes(traceScene, 'the native path tracer');

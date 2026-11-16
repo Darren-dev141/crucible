@@ -22,7 +22,7 @@ export const MAX_TRACE_TRIANGLES = 400_000;
 export const MAX_GPU_TRACE_TRIANGLES = 2_000_000;
 // The bound a scene built for the native "cycles" tracer may ask for with `options.maximumTriangles` (unique triangles of an
 // instanced scene, all triangles of a flattened one). The CPU and WebGL tracers never pass it and keep MAX_TRACE_TRIANGLES.
-export const MAX_NATIVE_TRACE_TRIANGLES = 4_000_000;
+export const MAX_NATIVE_TRACE_TRIANGLES = 16_000_000;
 // With that option an instanced scene also counts every copy: at most this many times `maximumTriangles` triangles in total.
 export const NATIVE_INSTANCED_TOTAL_FACTOR = 4;
 export const MAX_TRACE_PARTS = 1024;
@@ -399,7 +399,7 @@ function resolveInstanceLimit(options) {
 
 function flattenedLimitMessage(limits, triangleCount) {
   if (limits.native) {
-    return `A native path trace takes at most ${limits.unique} triangles in total, got ${triangleCount}. Share geometry between copies (they stay instances) or simplify the meshes.`;
+    return `A native path trace takes at most ${limits.unique} triangles in total, got ${triangleCount}, ${triangleCount - limits.unique} too many. Share geometry between copies (they stay instances) or simplify the meshes.`;
   }
   if (limits.gpu) {
     return `This GPU path trace takes at most ${limits.unique} triangles in total (what the device's texture or buffer limits hold, up to ${MAX_GPU_TRACE_TRIANGLES}), got ${triangleCount}. Simplify or drop meshes (a crowd can use a lower detail level for the avatars far from the camera), or render the frame with the native Cook backend.`;
@@ -726,7 +726,7 @@ function requireInstancedCaps(parts, { uniqueGeometries, uniqueTriangles, totalT
     throw new RangeError(`An instanced ${limits.parts.native ? 'native ' : ''}path trace takes at most ${limits.parts.count} distinct geometries, got ${uniqueGeometries}. Share one geometry object between copies instead of building a new one per part${limits.parts.native ? ', or merge small meshes' : ''}.`);
   }
   if (uniqueTriangles > limits.unique) {
-    throw new RangeError(`An instanced path trace takes at most ${limits.unique} unique triangles, counted once per shared geometry, got ${uniqueTriangles}. Share geometry between copies or simplify the meshes.`);
+    throw new RangeError(`An instanced path trace takes at most ${limits.unique} unique triangles, counted once per shared geometry, got ${uniqueTriangles}${limits.native ? `, ${uniqueTriangles - limits.unique} too many` : ''}. Share geometry between copies or simplify the meshes.`);
   }
   if (totalTriangles > limits.total) {
     throw new RangeError(`An instanced native path trace takes at most ${limits.total} triangles with every copy counted, got ${totalTriangles}. Pass fewer copies of the large meshes or simplify them.`);
