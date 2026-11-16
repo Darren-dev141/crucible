@@ -408,7 +408,7 @@ Final resource references and hierarchy must be valid before publication.
 | `remove-material` | `id` |
 | `add-node` | `node`, containing a complete node record |
 | `remove-node` | `id`, optional boolean `recursive`, default `false` |
-| `add-explosion` | `id`, `center`, `size`, optional `start`, `seed`, `fuel`, `debris`, `shake`, `ground` (see Explosions below) |
+| `add-explosion` | `id`, `center`, `size`, optional `start`, `seed`, `fuel`, `debris`, `shake`, `ground`, `sparks`, `motionBlur` (see Explosions below) |
 
 ### Explosions
 
@@ -424,16 +424,18 @@ Final resource references and hierarchy must be valid before publication.
 | `fuel` | `dry` | `oily` bakes more dark smoke, thickens the volume and adds more sparks |
 | `ground` | `center` y | Height of the ground for the dust, rubble landing and the scorch |
 | `shake` | `0.4` | Camera shake 0 to 1 over about 1 s; skipped when the camera already has an eye track, refused when you ask for it |
+| `sparks` | `true` | `true`: 700 spark streaks (900 for `oily`), the `sparks` particle system of the approved preview. An object overrides `count` (1 to 2000), `speed` and `lifetime` (a number or `[min, max]`; 0 to 100 m/s and 0.05 to 5 s). `false` keeps the plain glowing specks of the first release |
+| `motionBlur` | `true` | The fireball blurs along its simulated velocity under the scene's motion blur shutter: `effects.motionBlur.shutter` if the scene has one, else 0.0417 s (one frame at 24 frames a second), which is written into the recipe. `false` bakes no velocity and leaves `effects` alone |
 | `debris` | none | `{ node }`: a convex mesh node broken into 12 loose pieces thrown outward by impulse events at `start`. Needs a `physics` section with a fixed floor body first; its `duration` grows to cover `start + 3` |
 
 What it writes (read it back with `scene_export_recipe`, then tweak any part):
 
 - `effects.flash` and an `effects.distortion` ring at the centre, which fade by their own decay and falloff on the scene clock.
 - One gas-sim grid volume in `environment.localVolumes` for the fireball and the smoke: a baked simulation of a ground blast (`src/gas-sim.js`), lit by the physical blackbody of each voxel's temperature (`blackbodyIntensity`), with `castShadow` on so the smoke shades the floor and `lightsScene` on so the fire lights the set. It is the look of the gas-sim preview (#1735). `size` scales it: the box is 3.2 times `size` on a side, the density and emission shrink with the box so the blast keeps its optical depth, and it plays at 24 frames a second divided by the square root of `size / 2.5`, so a bigger fire rises slower. The grid is 32 cubed and 72 frames (3 s of simulation at the reference size), held on its last frame, baked once per fuel and seed in about 4 s. `oily` bakes more and darker smoke and thickens the volume.
-- The grid files are named `explosion-<fuel>-<seed>_0000.67vg` to `_0071`, plus `explosion-empty.67vg` for the wait before `start` (one empty frame per frame of playback, so `start` is at most about 18 s at size 2.5 and the error says the limit for the size you pass). No such files exist on disk: the MCP server bakes them from the name (about 4 s the first time for a fuel and seed, cached after) and sends them to the preview page with `scene_apply`, so the page spends no time on the bake, and so `scene_export_recipe`, `scene_create` and the render jobs work with the recipe as it is.
+- The grid files are named `explosion-<fuel>-<seed>-velocity_0000.67vg` to `_0071`, plus `explosion-empty-velocity.67vg` for the wait. With `motionBlur: false` the files carry no velocity and the names drop `-velocity` (`explosion-<fuel>-<seed>_0000.67vg`, `explosion-empty.67vg`); a velocity bake is twice the bytes (about 28 MB for the 72 frames) and bakes in about the same time. The empty file is for the wait before `start` (one empty frame per frame of playback, so `start` is at most about 18 s at size 2.5 and the error says the limit for the size you pass). No such files exist on disk: the MCP server bakes them from the name (about 4 s the first time for a fuel and seed, cached after) and sends them to the preview page with `scene_apply`, so the page spends no time on the bake, and so `scene_export_recipe`, `scene_create` and the render jobs work with the recipe as it is.
 - `effects.bloom.strength` raised to at least 0.5 so the glow spills past the flames. The volume's own light replaces the old point light and its track.
 - `effects.flash` and an `effects.distortion` ring at the centre, which fade by their own decay and falloff on the scene clock.
-- Particle systems `id-sparks`, `id-dust` and `id-rubble`, delayed to `start` (the `delay` field of a particle system). Sparks and a velocity motion blur on the fireball are planned as options (#1761, #1762).
+- Particle systems `id-sparks`, `id-dust` and `id-rubble`, delayed to `start` (the `delay` field of a particle system). The sparks are a `type: "sparks"` system (see `docs/physics.md`) with an unlit white `id-spark-glow` material, thrown from a small ball 0.2 `size` above the ground; their speed and size scale with the square root of `size / 2.5`, and their shutter stays the spark default (half a frame), as in the approved preview. Both options are on by default because Glaze at the early, peak and late frames of that preview matches its mean luminance within 3 percent, while a blast with both off is much dimmer.
 - A dark `id-scorch` disc decal that appears at `start`, and a camera eye shake track.
 - The motion duration becomes at least `start` plus the playing time of the blast plus 1 s.
 

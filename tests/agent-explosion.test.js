@@ -3,7 +3,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene, loadPhysicsEngine } from '../src/agent-scene.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
-import { EXPLOSION_EMPTY_GRID, explosionGridBytes } from '../src/explosion-grids.js';
+import { createHash } from 'node:crypto';
+import { EXPLOSION_EMPTY_GRID, EXPLOSION_EMPTY_VELOCITY_GRID, explosionGridBytes } from '../src/explosion-grids.js';
+import { decodeVolumeGrid, hasGridVelocity } from '../src/volume-grid.js';
 import { readVolumeGridFiles } from '../src/mcp-volume-grids.js';
 import { agentSceneModulesNeeded, needsPhysics } from '../src/agent-scene-modules.js';
 
@@ -51,8 +53,8 @@ test('a blast writes plain sections, every part ID starting with the explosion I
   assert.equal(volume.lightsScene, true);
   assert.equal(volume.loop, false);
   assert.ok(volume.blackbodyIntensity > 0 && volume.temperatureScale === 1000);
-  assert.equal(volume.frames.filter(name => name === 'explosion-empty.67vg').length, Math.ceil(0.5 * volume.fps));
-  assert.equal(volume.frames.at(-1), 'explosion-oily-1_0071.67vg');
+  assert.equal(volume.frames.filter(name => name === EXPLOSION_EMPTY_VELOCITY_GRID).length, Math.ceil(0.5 * volume.fps));
+  assert.equal(volume.frames.at(-1), 'explosion-oily-1-velocity_0071.67vg');
   assert.deepEqual(recipe.particles.systems.map(system => system.node), ['blast-sparks', 'blast-dust', 'blast-rubble']);
   assert.ok(recipe.particles.systems.every(system => system.delay === 0.5));
   const added = [...recipe.nodes, ...recipe.geometries, ...recipe.materials].map(entry => entry.id).filter(id => id.startsWith('blast-'));
@@ -153,14 +155,15 @@ test('the fireball is a gas-sim grid volume scaled to the blast size: box, densi
 test('the grids the recipe names are baked from the name, byte for byte, and tied to the seed and the fuel', () => {
   const { frames } = applyBlast(blast({ seed: 3 })).recipe.environment.localVolumes[0];
   assert.equal(frames.length, 72);
-  assert.equal(frames[0], 'explosion-dry-3_0000.67vg');
+  assert.equal(frames[0], 'explosion-dry-3-velocity_0000.67vg');
   const first = explosionGridBytes(frames[10]);
   const again = explosionGridBytes(frames[10]);
   assert.ok(first.length > 1000);
   assert.deepEqual(first, again);
-  assert.notDeepEqual(first, explosionGridBytes('explosion-dry-4_0010.67vg'));
-  assert.notDeepEqual(first, explosionGridBytes('explosion-oily-3_0010.67vg'));
-  assert.equal(explosionGridBytes('explosion-dry-3_0072.67vg'), null);
+  assert.notDeepEqual(first, explosionGridBytes('explosion-dry-4-velocity_0010.67vg'));
+  assert.notDeepEqual(first, explosionGridBytes('explosion-oily-3-velocity_0010.67vg'));
+  assert.equal(explosionGridBytes('explosion-dry-3-velocity_0072.67vg'), null);
+  assert.equal(explosionGridBytes('explosion-dry-3-fast_0010.67vg'), null);
   assert.equal(explosionGridBytes('blast.67vg'), null);
   assert.ok(explosionGridBytes(EXPLOSION_EMPTY_GRID).length > 1000);
 });
@@ -168,7 +171,7 @@ test('the grids the recipe names are baked from the name, byte for byte, and tie
 test('the wait before a blast is empty grid frames, bounded by the frame list', () => {
   const waited = applyBlast(blast({ size: 2.5, start: 2 })).recipe.environment.localVolumes[0];
   assert.equal(waited.frames.length, 72 + 48);
-  assert.ok(waited.frames.slice(0, 48).every(name => name === EXPLOSION_EMPTY_GRID));
+  assert.ok(waited.frames.slice(0, 48).every(name => name === EXPLOSION_EMPTY_VELOCITY_GRID));
   assert.throws(() => applyBlast(blast({ size: 2.5, start: 30 })), /start.*at most 18\.3 s.*512/);
 });
 
@@ -181,8 +184,87 @@ test('a scene with a grid volume already refuses the blast and says how to make 
 test('the MCP server finds the grids an add-explosion operation will name, so the page gets them with the call', () => {
   const files = readVolumeGridFiles([blast({ seed: 9, fuel: 'oily', start: 1 })], '.');
   assert.equal(files.size, 73);
-  assert.ok(files.has('explosion-oily-9_0000.67vg'));
-  assert.ok(files.has(EXPLOSION_EMPTY_GRID));
+  assert.ok(files.has('explosion-oily-9-velocity_0000.67vg'));
+  assert.ok(files.has(EXPLOSION_EMPTY_VELOCITY_GRID));
+  const sharp = readVolumeGridFiles([blast({ seed: 9, motionBlur: false })], '.');
+  assert.equal(sharp.size, 73);
+  assert.ok(sharp.has('explosion-dry-9_0071.67vg'));
+  assert.ok(sharp.has(EXPLOSION_EMPTY_GRID));
   assert.equal(readVolumeGridFiles([blast({ fuel: 'nuclear' })], '.').size, 0);
   assert.equal(readVolumeGridFiles([blast({ seed: -1 })], '.').size, 0);
+});
+
+// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775).
+const FIRST_RELEASE_HASHES = new Map([
+  ['{}', '3dc6ef8f1af3a05fba20d399846f8aaa1559ae3652d06181b249487074d7414e'],
+  ['{"start":0.5,"fuel":"oily","seed":7}', 'f677a321407728c72f05370db069291885d96c451b691248ea967754bb4f3e78'],
+]);
+
+test('sparks false and motionBlur false write exactly the recipe of the first release', () => {
+  const plainRecipe = {
+    format: 'crucible.scene', schemaVersion: 1,
+    geometries: [{ id: 'slab', type: 'box', bevel: 0 }],
+    materials: [{ id: 'stone', color: [0.4, 0.4, 0.4] }],
+    nodes: [{ id: 'ground', geometry: 'slab', material: 'stone', scale: [9, 0.2, 9] }],
+    camera: { eye: [13, 10, 13], target: [0, 1.5, 0], fov: 32 },
+  };
+  for (const [extra, hash] of FIRST_RELEASE_HASHES) {
+    const { recipe } = applyBlast(blast({ ...JSON.parse(extra), sparks: false, motionBlur: false }), structuredClone(plainRecipe));
+    assert.equal(createHash('sha256').update(JSON.stringify(recipe)).digest('hex'), hash, extra);
+  }
+});
+
+test('by default the sparks are streaks born at start and the fireball grid carries velocity under a shutter', () => {
+  const { recipe } = applyBlast(blast({ start: 0.5 }));
+  const [sparks] = recipe.particles.systems;
+  assert.equal(sparks.type, 'sparks');
+  assert.equal(sparks.count, 700);
+  assert.equal(sparks.delay, 0.5);
+  assert.deepEqual(sparks.speed, [2 * Math.sqrt(6 / 2.5), 9 * Math.sqrt(6 / 2.5)].map(value => Number(value.toFixed(5))));
+  const glow = recipe.materials.find(material => material.id === 'blast-spark-glow');
+  assert.equal(glow.tag, 'unlit');
+  assert.deepEqual(glow.color, [1, 1, 1]);
+  assert.equal(recipe.effects.motionBlur.shutter, 0.0417);
+  const volume = recipe.environment.localVolumes[0];
+  assert.ok(volume.frames.every(name => name.includes('-velocity_') || name === EXPLOSION_EMPTY_VELOCITY_GRID));
+  assert.ok(hasGridVelocity(decodeVolumeGrid(explosionGridBytes(volume.frames.at(-1)))));
+  assert.ok(hasGridVelocity(decodeVolumeGrid(explosionGridBytes(EXPLOSION_EMPTY_VELOCITY_GRID))));
+  assert.equal(applyBlast(blast({ fuel: 'oily' })).recipe.particles.systems[0].count, 900);
+});
+
+test('motionBlur takes the shutter the scene already has, and leaves the effects alone when off', () => {
+  const withShutter = setRecipe();
+  withShutter.effects = { motionBlur: { shutter: 0.02 } };
+  assert.equal(applyBlast(blast(), withShutter).recipe.effects.motionBlur.shutter, 0.02);
+  const sharp = applyBlast(blast({ motionBlur: false })).recipe;
+  assert.equal(sharp.effects.motionBlur.shutter, 0);
+  assert.ok(!sharp.environment.localVolumes[0].frames.some(name => name.includes('velocity')));
+});
+
+test('a sparks object overrides count, speed and lifetime, and the sparks stay a pure function of the seed', () => {
+  const { recipe } = applyBlast(blast({ sparks: { count: 300, speed: [1, 5], lifetime: 1 } }));
+  const [sparks] = recipe.particles.systems;
+  assert.equal(sparks.type, 'sparks');
+  assert.equal(sparks.count, 300);
+  assert.deepEqual(sparks.speed, [1, 5]);
+  assert.deepEqual(sparks.lifetime, [1, 1]);
+  assert.equal(JSON.stringify(applyBlast(blast({ seed: 5 })).recipe), JSON.stringify(applyBlast(blast({ seed: 5 })).recipe));
+  const plain = applyBlast(blast({ sparks: false })).recipe.particles.systems[0];
+  assert.equal(plain.type, 'emitter');
+  assert.equal(plain.count, 700);
+});
+
+test('bad sparks and motionBlur values name the field and a valid value', () => {
+  const cases = [
+    [blast({ sparks: 'yes' }), /sparks.*plain object/],
+    [blast({ sparks: { count: 0 } }), /sparks\.count.*1 to 2000/],
+    [blast({ sparks: { count: 1.5 } }), /sparks\.count/],
+    [blast({ sparks: { count: 5000 } }), /sparks\.count/],
+    [blast({ sparks: { speed: 500 } }), /sparks\.speed.*0 to 100/],
+    [blast({ sparks: { speed: [5, 1] } }), /sparks\.speed.*smaller number first/],
+    [blast({ sparks: { lifetime: 0 } }), /sparks\.lifetime.*0\.05 to 5/],
+    [blast({ sparks: { color: 1 } }), /sparks\.color/],
+    [blast({ motionBlur: 'on' }), /motionBlur.*true.*false/],
+  ];
+  for (const [operation, pattern] of cases) assert.throws(() => applyBlast(operation), pattern, JSON.stringify(operation));
 });
