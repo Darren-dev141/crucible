@@ -123,6 +123,18 @@ class LightNoteTests(unittest.TestCase):
         self.assertTrue(any("blackbody" in note for note in notes))
         self.assertTrue(any("shadows off" in note for note in notes))
 
+    def test_light_max_bounces_below_the_scene_is_named(self):
+        notes = conversions.light_feature_notes("Sun", "SUN", False, True, 1.0, 1.0, 2, 12)
+        self.assertEqual(len(notes), 1)
+        self.assertIn("Sun", notes[0])
+        self.assertIn("max bounces 2", notes[0])
+        self.assertIn("not reproduced", notes[0])
+
+    def test_light_max_bounces_at_or_above_the_scene_or_unreadable_is_silent(self):
+        self.assertEqual(conversions.light_feature_notes("Sun", "SUN", False, True, 1.0, 1.0, 12, 12), [])
+        self.assertEqual(conversions.light_feature_notes("Sun", "SUN", False, True, 1.0, 1.0, 1024, 12), [])
+        self.assertEqual(conversions.light_feature_notes("Sun", "SUN", False, True, 1.0, 1.0, None, 12), [])
+
 
 def emission_tree(strength_input, colour_input, extra_nodes=None):
     nodes = {"Emission": {"type": "EMISSION", "inputs": {"Strength": strength_input, "Color": colour_input}}}
