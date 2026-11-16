@@ -13,6 +13,7 @@ import { encodePng } from '../src/export-png.js';
 import { applyViewTransform } from '../src/view-transform.js';
 import { encodeVolumeGrid } from '../src/volume-grid.js';
 import * as post from '../src/post.js';
+import '../src/linear-output-shader.js';
 
 const SIZE = 64;
 const GRID_NAME = 'linear-output-fire';
@@ -26,7 +27,7 @@ const GLOWING_GRID = { shape: 'grid', grid: GRID_NAME, center: [0, 1.2, 0], dens
 
 test('the linear step adds an early return only to the program that asks for it', () => {
   const display = post.createPostFragment(post.POST_STEPS);
-  const linear = post.createPostFragment([...post.POST_STEPS, post.LINEAR_OUTPUT_STEP]);
+  const linear = post.createPostFragment([...post.POST_STEPS, 'linearOutput']);
   assert.ok(!display.includes('linearAlpha'), 'the display program keeps its source');
   assert.ok(linear.includes('linearAlpha'));
   assert.ok(linear.indexOf('linearAlpha') < linear.indexOf('2.51 * color'), 'the linear exit comes before the view transform');
@@ -59,6 +60,7 @@ async function renderBothWays(page) {
     const { CrucibleRenderer } = await import('/src/renderer.js');
     const { createFloatOutput, readFloatPixels } = await import('/src/float-output.js');
     await import('/src/fog-shader.js');
+    await import('/src/linear-output-shader.js');
     const canvas = document.createElement('canvas');
     canvas.width = size;
     canvas.height = size;

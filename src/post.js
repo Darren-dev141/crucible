@@ -61,21 +61,9 @@ const POST_MAIN_BODY = `void main() {
 }
 `;
 
-// A marker step (#1749): the frame writes the linear scene radiance, as it stands after every pass that adds light, with no view
-// transform, look, display-space finishing or clamp. The text is spliced in only when the step is on, so every other program keeps the source it had.
-export const LINEAR_OUTPUT_STEP = 'linearOutput';
-const LINEAR_OUTPUT_ANCHOR = '  if (POST_VOLUME) color = volumeFog(color);\n';
-const LINEAR_OUTPUT_EXIT = `  if (hdrEnabled > 0.5) {
-    float linearAlpha = POST_TRANSPARENT ? coverage : 1.0;
-    outputColor = vec4(color * linearAlpha, linearAlpha);
-    return;
-  }
-`;
-
+// The linear output step (#1749) holds its GLSL in linear-output-shader.js, so only a frame that asks for it carries that text.
 function postMainFor(enabledSteps) {
-  if (!enabledSteps.has(LINEAR_OUTPUT_STEP)) return POST_MAIN_BODY;
-  if (!POST_MAIN_BODY.includes(LINEAR_OUTPUT_ANCHOR)) throw new Error('The post shader no longer holds the line that linear output is written after.');
-  return POST_MAIN_BODY.replace(LINEAR_OUTPUT_ANCHOR, LINEAR_OUTPUT_ANCHOR + LINEAR_OUTPUT_EXIT);
+  return enabledSteps.has('linearOutput') ? requireFeatureCode('linearOutput').post(POST_MAIN_BODY) : POST_MAIN_BODY;
 }
 
 function postFragmentSource(definitions, explosionFunction, fogDeclarations, fogFunctions, mainBody = POST_MAIN_BODY) {
@@ -196,7 +184,7 @@ const POST_STEP_CONDITIONS = {
 // The program with every step is the one a frame draws while a variant builds. It leaves out the steps below: the fog sky grid,
 // field and lights exist only inside a fog, and the volume fog and explosion code load from fog-shader.js and explosion-shader.js
 // only for a renderer that draws them.
-export const POST_STEPS_WITH_OPTIONAL_CODE = Object.freeze(['volume', 'sky', 'field', 'detail', 'lights', 'local', 'explosion']);
+export const POST_STEPS_WITH_OPTIONAL_CODE = Object.freeze(['volume', 'sky', 'field', 'detail', 'lights', 'local', 'explosion', 'linearOutput']);
 export const POST_STEPS = Object.freeze(Object.keys(POST_STEP_CONDITIONS).filter(step => !POST_STEPS_WITH_OPTIONAL_CODE.includes(step)));
 
 const EXPLOSION_STUB = 'vec3 explosion(vec3 background) { return background; }';

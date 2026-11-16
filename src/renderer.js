@@ -3,7 +3,7 @@ import { materialTags } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { BLEND_FACTORS } from './blend-output.js';
 import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
-import { postFragment, createPostFragment, LINEAR_OUTPUT_STEP, GRID_MOTION_STEP, NOISE_OCTAVES_STEP, localVolumeKindSteps, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
+import { postFragment, createPostFragment, GRID_MOTION_STEP, NOISE_OCTAVES_STEP, localVolumeKindSteps, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
 import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
 import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError } from './budget.js';
@@ -2299,7 +2299,10 @@ export class CrucibleRenderer {
     if (localVolumes && this.localVolumeBuffers.noiseOctaves) steps.push(NOISE_OCTAVES_STEP);
     if (fogSky) steps.push('sky');
     if (frame.volumeExplosion) steps.push('explosion');
-    if (frame.linearOutput) steps.push(LINEAR_OUTPUT_STEP);
+    if (frame.linearOutput) {
+      requireFeatureCode('linearOutput').validate(this, frame);
+      steps.push('linearOutput');
+    }
     const gradesColor = effects.saturation !== 1 || effects.contrast !== 1 || effects.temperature !== 0;
     const finishes = gradesColor || (frame.monochrome ?? 0) !== 0 || Boolean(frame.cinematic) || effects.vignette !== 0 || effects.grain !== 0;
     if (finishes) steps.push('finish');
@@ -2318,7 +2321,7 @@ export class CrucibleRenderer {
     }
     if (variant.pending) {
       const parallelCompile = this.context.getExtension('KHR_parallel_shader_compile');
-      const building = !this.exactFrames && parallelCompile && !POST_STEPS_WITH_OPTIONAL_CODE.some(step => steps.includes(step)) && !steps.includes(LINEAR_OUTPUT_STEP) && !this.context.getProgramParameter(variant.pending.program, parallelCompile.COMPLETION_STATUS_KHR);
+      const building = !this.exactFrames && parallelCompile && !POST_STEPS_WITH_OPTIONAL_CODE.some(step => steps.includes(step)) && !this.context.getProgramParameter(variant.pending.program, parallelCompile.COMPLETION_STATUS_KHR);
       if (building) return { program: this.postProgram, uniforms: this.postUniforms };
       variant.program = finishProgram(this.context, variant.pending);
       variant.uniforms = postUniformLocations(this.context, variant.program);
@@ -2353,9 +2356,6 @@ export class CrucibleRenderer {
     if (effects.bloom.strength > 0) this.drawBloom(effects.bloom, sourceTexture);
     const occluded = effects.ambientOcclusion > 0 && Boolean(this.depthTexture);
     if (occluded) this.drawAmbientOcclusion(frame, effects);
-    if (frame.linearOutput && (!this.hdr || !frame.outputFramebuffer)) {
-      throw new Error('linearOutput needs hdr: true and an outputFramebuffer from createFloatOutput; pass both or drop linearOutput.');
-    }
     // A frame that names an outputFramebuffer (src/float-output.js) draws its final pass there, not on the canvas.
     context.bindFramebuffer(context.FRAMEBUFFER, frame.outputFramebuffer ?? null);
     context.viewport(0, 0, this.canvas.width, this.canvas.height);
