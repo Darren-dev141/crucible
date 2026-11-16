@@ -256,7 +256,7 @@ test('explicit wavelet and no filter never reach the a-trous filter', async () =
 // A sequence that returns flat frames of the given brightness, each through a session with the same camera block.
 function sequenceOfFlatFrames(levels, { withoutSessionAt = -1, changedSceneAt = -1 } = {}) {
   const pixels = 4 * 4;
-  const kernelParams = new Uint8Array(320);
+  const kernelParams = new Uint8Array(336);
   const view = new DataView(kernelParams.buffer);
   [[0, 0, 0], [0, 0, -1], [1, 0, 0], [0, 1, 0]].forEach((vector, row) => vector.forEach((value, axis) => view.setFloat32(112 + row * 16 + axis * 4, value, true)));
   let frame = 0;
