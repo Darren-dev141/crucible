@@ -124,3 +124,22 @@ test('the CPU path tracer leaves a still grid and a closed shutter as they were,
   const middle = Math.floor((rear + edge) / 2);
   assert.ok(Math.abs(blurred[middle] - sharp[middle]) < 0.03, 'in the middle of the gas, behind the edge, the gas is there for the whole shutter');
 });
+
+const MOTION_IDENTIFIERS = ['localGridShutter', 'localGridVelocityTexture', 'localGridMotionPosition'];
+
+test('a frame with the shutter off compiles the grid march it had before the blur existed, in the post pass and in the glow composite', async () => {
+  await import('../src/fog-shader.js');
+  const { createPostFragment, createLocalVolumeCompositeFragment, GRID_MOTION_STEP } = await import('../src/post.js');
+  const shutterOff = [createPostFragment(['local']), createPostFragment(['bloom', 'volume', 'local', 'finish']), createLocalVolumeCompositeFragment(), createLocalVolumeCompositeFragment(false)];
+  for (const source of shutterOff) {
+    for (const identifier of MOTION_IDENTIFIERS) assert.ok(!source.includes(identifier), `a shutter-off program must not mention ${identifier}`);
+    assert.ok(source.includes('vec3 cell = localGridSample(nearest, position);'));
+    assert.ok(source.includes('localGridBlackbody(nearest, position) * localVolumeGrid[nearest].z'));
+  }
+  const shutterOn = [createPostFragment(['local', GRID_MOTION_STEP]), createLocalVolumeCompositeFragment(true)];
+  for (const source of shutterOn) {
+    for (const identifier of MOTION_IDENTIFIERS) assert.ok(source.includes(identifier), `a shutter-on program carries ${identifier}`);
+    assert.ok(!source.includes('vec3 cell = localGridSample(nearest, position);'));
+  }
+  assert.ok(!createPostFragment(['finish', GRID_MOTION_STEP]).includes('localGridShutter'), 'the marker alone adds nothing without the local step');
+});
