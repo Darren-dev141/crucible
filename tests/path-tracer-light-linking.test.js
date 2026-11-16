@@ -38,9 +38,10 @@ function unlinkedScene(extraMaterial = {}) {
 
 const SMALL = { width: 32, height: 24, samples: 4, bounces: 3, threads: 1 };
 
+// The hash moved once, with the denoiser's luminance guide (#1335); it pins that linking itself changes no pixel.
 test('a scene without links keeps the pixels it had before linking was traced', async () => {
   const image = await renderPathTracedImage(unlinkedScene(), SMALL);
-  assert.equal(createHash('sha256').update(image.rgba).digest('hex'), '796f20c1155f33e4b9e235b02a95a965a99251b360c1062b18384e0c8b5693fc');
+  assert.equal(createHash('sha256').update(image.rgba).digest('hex'), '87c0951fbd398f8eb1140b5825d7127a6004e85a45ab11305f9fb1cb3a23dfc3');
 });
 
 test('a mask that lets every light through gives the pixels of no mask', async () => {

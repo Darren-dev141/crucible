@@ -29,6 +29,7 @@ export function parseIesPhotometry(text) {
   const verticalCount = numbers[3];
   const horizontalCount = numbers[4];
   const header = 13;
+  if (!Number.isInteger(verticalCount) || !Number.isInteger(horizontalCount)) throw new RangeError('The IES file needs whole numbers of vertical and horizontal angles in its header.');
   if (!(verticalCount >= 2) || !(horizontalCount >= 1) || numbers.length < header + verticalCount + horizontalCount + verticalCount * horizontalCount) {
     throw new RangeError('The IES file is shorter than its header says.');
   }

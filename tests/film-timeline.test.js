@@ -233,3 +233,19 @@ test('shot focus distance and blur are checked at the boundary', () => {
     assert.throws(() => createAgentScene(recipeWith({ timeline: { shots: [{ name: 'a', duration: 1, ...fields }] } })), message);
   }
 });
+
+test('a frame time on a shot boundary belongs to the later shot even when shot lengths sum with float error', () => {
+  const timeline = normalizeFilmTimeline({ shots: [
+    { name: 'first', duration: 0.1 },
+    { name: 'second', duration: 0.2 },
+    { name: 'third', duration: 1, dip: 0.2 },
+  ] }, {});
+  const firstOfThird = sampleFilmTimeline(timeline, {}, 9 / 30);
+  assert.equal(firstOfThird.shotName, 'third');
+  assert.equal(firstOfThird.shotTime, 0);
+  assert.equal(firstOfThird.brightness, 0);
+  assert.equal(sampleFilmTimeline(timeline, {}, 8 / 30).shotName, 'second');
+  const longer = normalizeFilmTimeline({ shots: [{ name: 'a', duration: 1.1 }, { name: 'b', duration: 2.2 }, { name: 'c', duration: 1 }] }, {});
+  assert.equal(sampleFilmTimeline(longer, {}, 99 / 30).shotName, 'c');
+  assert.equal(sampleFilmTimeline(longer, {}, 98 / 30).shotName, 'b');
+});

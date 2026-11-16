@@ -12,10 +12,10 @@ function triangleMeasures({ positions, indices }) {
   let volume = 0;
   let area = 0;
   for (let offset = 0; offset < indices.length; offset += 3) {
-    const [a, b, c] = [0, 1, 2].map(corner => Array.from(positions.subarray(indices[offset + corner] * 3, indices[offset + corner] * 3 + 3)));
-    volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6;
-    const first = b.map((value, axis) => value - a[axis]);
-    const second = c.map((value, axis) => value - a[axis]);
+    const [firstCorner, secondCorner, thirdCorner] = [0, 1, 2].map(corner => Array.from(positions.subarray(indices[offset + corner] * 3, indices[offset + corner] * 3 + 3)));
+    volume += (firstCorner[0] * (secondCorner[1] * thirdCorner[2] - secondCorner[2] * thirdCorner[1]) - firstCorner[1] * (secondCorner[0] * thirdCorner[2] - secondCorner[2] * thirdCorner[0]) + firstCorner[2] * (secondCorner[0] * thirdCorner[1] - secondCorner[1] * thirdCorner[0])) / 6;
+    const first = secondCorner.map((value, axis) => value - firstCorner[axis]);
+    const second = thirdCorner.map((value, axis) => value - firstCorner[axis]);
     area += Math.hypot(first[1] * second[2] - first[2] * second[1], first[2] * second[0] - first[0] * second[2], first[0] * second[1] - first[1] * second[0]) / 2;
   }
   return { volume, area };

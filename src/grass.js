@@ -8,6 +8,7 @@ import {
   FULL_TURN, WORLD_UP, clamp, createMeshBuilder, createRandom, crossProduct, lerp, lerpVectors, normalized, valueNoise,
 } from './vegetation-geometry.js';
 import { createTileField, hashTile, tileMatrix } from './tile-field.js';
+import { requireSeed } from './seeded-random.js';
 
 export const GRASS_LEVELS = Object.freeze([
   Object.freeze({ distance: 10, keep: 1, segments: 4, widthScale: 1 }),
@@ -242,6 +243,7 @@ function resolveSettings(options) {
  */
 export function createGrass(options = {}) {
   const settings = resolveSettings({ tileSize: 4, seed: 1, terrainHeight: () => 0, castShadow: false, ...options });
+  requireSeed(settings.seed, 'grass seed');
   const material = { tag: 'grass', color: [1, 1, 1], roughness: 0.8, metallic: 0, emission: 0, doubleSided: true };
 
   function buildParts(tile, levelIndex) {

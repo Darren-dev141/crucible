@@ -124,7 +124,11 @@ function createSplatPacker(data) {
       const base = index * TEXELS_PER_SPLAT * WORDS_PER_TEXEL;
       floats.set(data.positions.subarray(index * 3, index * 3 + 3), base);
       words[base + 3] = colorWords[index];
-      floats.set(covarianceOf(data.scales, data.rotations, index), base + 4);
+      const covariance = covarianceOf(data.scales, data.rotations, index);
+      if (!covariance.every(value => Number.isFinite(Math.fround(value)))) {
+        throw new RangeError(`Gaussian splat ${index} has a covariance that overflows 32-bit floats (its scales or rotation are non-finite or too large). Re-export the file or drop that splat.`);
+      }
+      floats.set(covariance, base + 4);
     }
   }
   return { packRange, packed: { words, rows } };

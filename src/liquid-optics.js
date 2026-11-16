@@ -14,7 +14,9 @@ export function resolveLiquidOptics(options = {}) {
   for (const name in LIQUID_OPTICS) {
     optics[name] = LIQUID_OPTICS[name][0];
   }
-  Object.assign(optics, options);
+  for (const name in LIQUID_OPTICS) {
+    if (options?.[name] !== undefined) optics[name] = options[name];
+  }
   for (const name in LIQUID_OPTICS) {
     const [, minimum, maximum] = LIQUID_OPTICS[name];
     const value = optics[name];

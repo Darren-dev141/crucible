@@ -8,7 +8,7 @@ import { brotliCompressSync, gzipSync } from 'node:zlib';
 import { build } from 'esbuild';
 import { glslCommentStripperForEsbuild } from './strip-glsl-comments.mjs';
 import { budgetsFrom, compareToBudgets, formatRows, initialOutputPaths } from './size-budget.mjs';
-import { compareToBase, formatGrowthRows, goalProblems } from './size-growth.mjs';
+import { compareToBase, formatGrowthRows, goalProblems, unknownNoteProblems } from './size-growth.mjs';
 import { measureArchiveBytes } from './measure-archive.mjs';
 import { renameChunksByContent } from './size-chunk-names.mjs';
 import { DEFAULT_BASE_REF, baseRefExists, measureBase, readAcceptedBundles } from './size-base.mjs';
@@ -212,6 +212,7 @@ if (checkGrowth) {
   console.log(formatGrowthRows(growth.rows));
   for (const [name, reason] of accepted) console.log(`Accepted: ${name}, ${reason}`);
   problems.push(...growth.problems);
+  problems.push(...unknownNoteProblems(accepted, measured, budgetFile.goals));
   problems.push(...goalProblems(measured, await baseMeasurement, budgetFile.goals, accepted));
 } else if (!refreshing) {
   console.log(`No ${baseRef} to compare with, so the growth check is skipped. Fetch it, or pass --base <ref>.`);

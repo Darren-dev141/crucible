@@ -55,6 +55,12 @@ const LOOK_RANGES = {
   geometry: { oceanTime: [-1e6, 1e6] },
 };
 const INTERPOLATIONS = ['LINEAR', 'STEP', 'SMOOTH', 'CUBICSPLINE'];
+// A recipe path such as environment.lightDirection is not a track field; the key light of the environment is the sun kind, under any sky (#1342).
+const TRACK_PATH_HINTS = {
+  'environment.lightDirection': '{ "kind": "sun", "property": "direction" }',
+  'environment.keyColor': '{ "kind": "sun", "property": "color" }',
+  'environment.keyIntensity': '{ "kind": "sun", "property": "intensity" }',
+};
 const MAX_IK_SOLVERS = 16;
 const IK_SWEEP_SAMPLES = 33;
 const TRACK_SWEEP_SAMPLES = 33;
@@ -522,6 +528,10 @@ export function normalizeAgentMotion(input, recipe) {
   const identities = new Set();
   let keyframeCount = 0;
   const tracks = inputTracks.map((track, index) => {
+    if (typeof track?.target === 'string' && !Object.hasOwn(track, 'kind')) {
+      const hint = TRACK_PATH_HINTS[track.target] ? `; for ${track.target} use ${TRACK_PATH_HINTS[track.target]}, which moves the sun under any sky, an HDRI included` : `; kinds: ${Object.keys(PROPERTIES).join(', ')}`;
+      throw invalidField(`motion.tracks[${index}].target`, track.target, `a field left out: a track names a "kind" and a "property", not a path, and its keys are "keyframes"${hint}`, TypeError);
+    }
     knownKeys(track, ['kind', 'id', 'property', 'interpolation', 'keyframes', 'extrapolation', 'modifiers'], 'motion track');
     if (!Object.hasOwn(PROPERTIES, track.kind) || !Object.hasOwn(PROPERTIES[track.kind], track.property)) {
       const known = Object.hasOwn(PROPERTIES, track.kind) ? ` ${track.kind} properties: ${Object.keys(PROPERTIES[track.kind]).join(', ')}.` : ` Kinds: ${Object.keys(PROPERTIES).join(', ')}.`;
@@ -555,12 +565,16 @@ export function normalizeAgentMotion(input, recipe) {
     if (track.property === 'visible' && interpolation !== 'STEP') {
       throw invalidField(`motion.tracks[${index}].interpolation`, interpolation, 'STEP, or the field left out, since a visible track is 1 (shown) or 0 (hidden) and cannot blend between them');
     }
-    denseArray(track.keyframes, 64, 'Motion keyframes');
+    denseArray(track.keyframes, 64, `motion.tracks[${index}].keyframes`);
+    if (!track.keyframes.length) throw invalidField(`motion.tracks[${index}].keyframes`, [], 'one or more keyframes');
     keyframeCount += track.keyframes.length;
     if (keyframeCount > 2048) {
       throw invalidField(`motion.tracks[${index}].keyframes`, track.keyframes.length, `fewer keyframes, since a motion holds at most 2048 in total and this track reaches ${keyframeCount}`);
     }
     const keyframes = track.keyframes.map((keyframe, keyframeIndex) => withFieldPrefix(`motion.tracks[${index}].keyframes[${keyframeIndex}]`, () => normalizedKeyframe(keyframe, track, duration, interpolation)));
+    const times = keyframes.map(keyframe => keyframe.time);
+    const repeated = times.findIndex((time, position) => times.indexOf(time) !== position);
+    if (repeated >= 0) throw invalidField(`motion.tracks[${index}].keyframes[${repeated}].time`, times[repeated], 'distinct times');
     const clip = createAnimationClip({
       duration, loop,
       tracks: [{ target: String(index), property: coreProperty(track), interpolation, keyframes, extrapolation: track.extrapolation, modifiers: track.modifiers }],

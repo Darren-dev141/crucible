@@ -21,7 +21,7 @@ It does not copy anything until a ray needs a part.
 A ray first tests the world bounds of every part, nearest first, and builds the BVH of a part on its first candidate hit.
 The index stays cached, so only the first queries pay for building.
 
-`raycast({ origin, direction, maxDistance })` returns the nearest hit over all parts.
+`raycast({ origin, direction, maxDistance })` returns the nearest hit over all parts, using each part's matrix as it is at the time of the call. `maxDistance` must be a number (default `Infinity`).
 `normal` is the face normal in world space, turned toward the side the ray came from.
 `id` is the part ID (`id`, else `name`), and `material` is the part's own `material` value.
 

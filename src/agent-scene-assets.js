@@ -349,6 +349,7 @@ export function expandAssetPlacements(recipe, assets, limits, outputCache = new 
         geometry: geometryId, material: materialKey, assetPart: { placement: node.id, index, matrix: Array.from(part.matrix) },
       });
       runtime.partExtras.set(partNodeId, {
+        group: node.id,
         ...(part.skin ? { skin: part.skin } : {}), ...(part.morph ? { morph: part.morph } : {}),
         ...(part.castShadow !== undefined ? { castShadow: part.castShadow } : {}),
       });
@@ -404,7 +405,7 @@ export function stageAssetClips(runtime, graph, time) {
     for (const record of runtime.animators) {
       let transaction;
       if (record.crowd) {
-        transactions.push(record.crowd.stage(time ?? 0));
+        transactions.push(record.crowd.stage(time ?? 0, graph.getNode(record.node)?.worldMatrix));
         continue;
       }
       if (record.pose) {

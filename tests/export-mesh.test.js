@@ -88,17 +88,17 @@ test('STL roundtrip keeps the triangle count and world bounds', () => {
 
 test('OBJ roundtrip keeps the triangle count and world bounds, and the MTL names every material', () => {
   const parts = sceneParts();
-  const { obj, mtl } = exportObj(parts);
-  const read = readObj(obj);
+  const { obj: objText, mtl: mtlText } = exportObj(parts);
+  const read = readObj(objText);
   const bounds = worldBounds(parts);
   assert.equal(read.faces, expectedTriangleCount(parts));
   assertClose(read.minimum, bounds.minimum);
   assertClose(read.maximum, bounds.maximum);
-  assert.match(obj, /^mtllib model\.mtl$/m);
-  assert.equal(obj.match(/^o Part_one$/gm).length, 2);
-  assert.match(mtl, /newmtl material_0\nKd 0\.8 0\.1 0\.1\nPr 0\.4\nPm 0\nd 1/);
-  assert.match(mtl, /newmtl material_1\nKd 0\.1 0\.2 0\.9\nKe 0\.5 0\.25 0\nPr 0\.2\nPm 1/);
-  assert.ok(obj.includes('usemtl material_1'));
+  assert.match(objText, /^mtllib model\.mtl$/m);
+  assert.equal(objText.match(/^o Part_one$/gm).length, 2);
+  assert.match(mtlText, /newmtl material_0\nKd 0\.8 0\.1 0\.1\nPr 0\.4\nPm 0\nd 1/);
+  assert.match(mtlText, /newmtl material_1\nKd 0\.1 0\.2 0\.9\nKe 0\.5 0\.25 0\nPr 0\.2\nPm 1/);
+  assert.ok(objText.includes('usemtl material_1'));
 });
 
 test('exports have the same triangles as the GLB export of the same parts', async () => {
@@ -197,4 +197,13 @@ test('the triangle limit is enforced before any output is built', () => {
   const geometry = { positions: new Float32Array(9), indices: new Uint32Array(MAX_MESH_EXPORT_TRIANGLES * 3 + 3) };
   assert.throws(() => exportStl([{ geometry }]), /limited to 1000000 triangles/);
   assert.throws(() => exportObj([{ geometry }]), /limited to 1000000 triangles/);
+});
+
+test('OBJ rejects uvs and normals whose length does not match the vertex count', () => {
+  const [part] = sceneParts();
+  const vertexCount = part.geometry.positions.length / 3;
+  const shortUvs = new Float32Array(vertexCount * 2 - 2);
+  assert.throws(() => exportObj([{ ...part, geometry: { ...part.geometry, uvs: shortUvs } }]), /geometry\.uvs/);
+  const shortNormals = new Float32Array(vertexCount * 3 - 3);
+  assert.throws(() => exportObj([{ ...part, geometry: { ...part.geometry, normals: shortNormals } }]), /geometry\.normals/);
 });

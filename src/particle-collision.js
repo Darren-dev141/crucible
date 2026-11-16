@@ -18,12 +18,12 @@ export function createCollisionSurface(meshes) {
     const first = written;
     for (let corner = 0; corner < mesh.indices.length; corner += 3) {
       const base = written * 9;
-      const [a, b, c] = [0, 1, 2].map(offset => mesh.indices[corner + offset] * 3);
+      const [firstOffset, secondOffset, thirdOffset] = [0, 1, 2].map(offset => mesh.indices[corner + offset] * 3);
       for (let axis = 0; axis < 3; axis++) {
-        triangles[base + axis] = mesh.positions[a + axis];
-        triangles[base + 3 + axis] = mesh.positions[b + axis] - mesh.positions[a + axis];
-        triangles[base + 6 + axis] = mesh.positions[c + axis] - mesh.positions[a + axis];
-        for (const vertex of [a, b, c]) {
+        triangles[base + axis] = mesh.positions[firstOffset + axis];
+        triangles[base + 3 + axis] = mesh.positions[secondOffset + axis] - mesh.positions[firstOffset + axis];
+        triangles[base + 6 + axis] = mesh.positions[thirdOffset + axis] - mesh.positions[firstOffset + axis];
+        for (const vertex of [firstOffset, secondOffset, thirdOffset]) {
           bounds[axis] = Math.min(bounds[axis], mesh.positions[vertex + axis]);
           bounds[3 + axis] = Math.max(bounds[3 + axis], mesh.positions[vertex + axis]);
         }

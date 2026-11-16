@@ -13,8 +13,8 @@ Weights can be negative or exceed one without normalization or clamping.
 ```js
 import {
   createMorphPose, validateMorphGeometry, validateMorphPose, packMorphTargets,
-} from '../src/morph.js';
-import { skinTextureLayout } from '../src/skinning.js';
+} from 'crucible/addons/morph';
+import { skinTextureLayout } from 'crucible/addons/skinning';
 
 const geometry = {
   positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),

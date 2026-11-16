@@ -126,10 +126,10 @@ function quadCandidate(mesh, edge, faceA, faceB, normals, maxAngle) {
   const verticesB = faceVertices(mesh, faceB);
   const startA = verticesA.findIndex(vertex => !(vertex === sharedFrom || vertex === sharedTo));
   const apexA = verticesA[startA];
-  const p = verticesA[(startA + 1) % 3];
-  const q = verticesA[(startA + 2) % 3];
-  const apexB = verticesB.find(vertex => vertex !== p && vertex !== q);
-  const quad = [apexA, p, apexB, q];
+  const firstSideVertex = verticesA[(startA + 1) % 3];
+  const secondSideVertex = verticesA[(startA + 2) % 3];
+  const apexB = verticesB.find(vertex => vertex !== firstSideVertex && vertex !== secondSideVertex);
+  const quad = [apexA, firstSideVertex, apexB, secondSideVertex];
   const dotNormals = normals[faceA * 3] * normals[faceB * 3] + normals[faceA * 3 + 1] * normals[faceB * 3 + 1] + normals[faceA * 3 + 2] * normals[faceB * 3 + 2];
   if (Math.acos(Math.max(-1, Math.min(1, dotNormals))) * 180 / Math.PI > maxAngle) return null;
   const points = quad.map(vertex => positionOf(mesh, vertex));

@@ -102,3 +102,15 @@ test('perspective fit shares renderer clipping defaults and rejects unrepresenta
   const distantView = { eye: [0, 0, 0], target: [1e20, 0, 0], fov: 45, far: 600 };
   assert.throws(() => fitPerspectiveDistance(distantBounds, distantView, 1), /Float32/);
 });
+
+test('fitOrthographicHeight rejects a view whose up is parallel to the view direction (#1406)', () => {
+  const bounds = { minimum: [-1, -1, -1], maximum: [1, 1, 1] };
+  assert.throws(() => fitOrthographicHeight(bounds, { eye: [0, 5, 0], target: [0, 0, 0], up: [0, 1, 0] }, 1), /parallel to the view direction/);
+  assert.ok(fitOrthographicHeight(bounds, cameraView('top'), 1) > 0);
+});
+
+test('fitOrthographicHeight rejects eye equal to target and non-finite vectors (#1406)', () => {
+  const bounds = { minimum: [-1, -1, -1], maximum: [1, 1, 1] };
+  assert.throws(() => fitOrthographicHeight(bounds, { eye: [0, 0, 0], target: [0, 0, 0] }, 1), /must differ/);
+  assert.throws(() => fitOrthographicHeight(bounds, { eye: [0, 0, NaN], target: [0, 0, 0] }, 1), /finite/);
+});

@@ -15,7 +15,7 @@ function traceEnvironment({ lights }) {
   if (linked) throw new RangeError('A light bake on the GPU backend does not support light linking (`affects`). Use the CPU backend.');
   return {
     pointLights: lights.pointLights,
-    spotLights: lights.spotLights.map(light => ({ ...light, angle: Math.acos(light.cosineHalfAngle), penumbra: light.blend / (1 - light.cosineHalfAngle) })),
+    spotLights: lights.spotLights.map(light => ({ ...light, angle: Math.acos(light.cosineHalfAngle), penumbra: light.cosineHalfAngle < 1 ? light.blend / (1 - light.cosineHalfAngle) : 0 })),
     areaLights: lights.areaLights.map(light => ({ ...light, direction: light.normal, up: light.along })),
     keyColor: lights.sun?.color ?? [0, 0, 0],
     lightDirection: lights.sun?.direction ?? [0, 1, 0],

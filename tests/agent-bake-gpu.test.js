@@ -46,3 +46,10 @@ test('a page kernel that fails leaves the kernel to the worker', async () => {
   assert.equal(result, 'from the worker');
   assert.match(kernelStats().fallbacks[0].reason, /page kernel failed: context lost/);
 });
+
+test('a sun link (keyAffects) keeps the bake on the CPU like a light link, and an unset or null link does not (#1218)', () => {
+  assert.equal(canBakeOnGpu({ pointLights: [], keyAffects: undefined }), true);
+  assert.equal(canBakeOnGpu({ pointLights: [], keyAffects: null }), true);
+  assert.equal(canBakeOnGpu({ pointLights: [], keyAffects: ['floor'] }), false);
+  assert.equal(canBakeOnGpu({ pointLights: [], keyAffects: [] }), false);
+});

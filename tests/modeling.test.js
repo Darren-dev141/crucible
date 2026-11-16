@@ -20,11 +20,11 @@ function signedVolume(mesh) {
   for (let index = 0; index < mesh.indices.length; index += 3) {
     const a = mesh.indices[index] * 3;
     const b = mesh.indices[index + 1] * 3;
-    const c = mesh.indices[index + 2] * 3;
-    const p = mesh.positions;
-    volume += (p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1]) +
-      p[a + 1] * (p[b + 2] * p[c] - p[b] * p[c + 2]) +
-      p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c])) / 6;
+    const thirdVertexOffset = mesh.indices[index + 2] * 3;
+    const positions = mesh.positions;
+    volume += (positions[a] * (positions[b + 1] * positions[thirdVertexOffset + 2] - positions[b + 2] * positions[thirdVertexOffset + 1]) +
+      positions[a + 1] * (positions[b + 2] * positions[thirdVertexOffset] - positions[b] * positions[thirdVertexOffset + 2]) +
+      positions[a + 2] * (positions[b] * positions[thirdVertexOffset + 1] - positions[b + 1] * positions[thirdVertexOffset])) / 6;
   }
   return volume;
 }

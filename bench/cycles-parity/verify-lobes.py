@@ -174,7 +174,7 @@ def evaluate_lobe_probe(probe_entry):
     else:
         bounded = all(0.01 <= val <= 1.0 + FURNACE_TOLERANCE for val in furnace_mean)
         order = probe_entry.get("expectColorOrder")
-        ordered = True if not order else all(furnace_mean[order[idx]] > furnace_mean[order[idx + 1]] for idx in range(len(order) - 1))
+        ordered = True if not order else all(furnace_mean[order[order_index]] > furnace_mean[order[order_index + 1]] for order_index in range(len(order) - 1))
         furnace_pass = bool(bounded and ordered)
 
     chi_square_report = None

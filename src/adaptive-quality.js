@@ -64,6 +64,7 @@ export class AdaptiveResolution {
     if (!(minimumScale > 0) || minimumScale > 1) throw new RangeError('minimumScale must be above 0 and at most 1.');
     if (!(step > 0) || step >= 1) throw new RangeError('step must be above 0 and below 1.');
     if (!Number.isInteger(window) || window < 1) throw new RangeError('window must be a whole number of frames.');
+    if (!(raiseBelow > 0) || raiseBelow > 1) throw new RangeError('raiseBelow must be above 0 and at most 1, the share of the target a window must stay under before the scale rises.');
     this.targetMilliseconds = targetMilliseconds;
     this.minimumScale = minimumScale;
     this.step = step;

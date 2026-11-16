@@ -25,7 +25,8 @@ import { GAME_CAPABILITIES } from '../src/game-setup-notes.js';
 import { USER_PASS_CAPABILITIES } from '../src/user-pass.js';
 import { MESH_BLEND_CAPABILITIES } from '../src/mesh-blend.js';
 import { MATERIAL_SNIPPET_CAPABILITIES } from '../src/material-snippet.js';
-import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_MEMORY_MIB, BAKE_WORKER_MAXIMUM_SECONDS } from '../src/agent-scene-capabilities.js';
+import { estimateFrameBytes } from '../src/budget.js';
+import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, MAXIMUM_MEMORY_MIB, BAKE_WORKER_MAXIMUM_SECONDS } from '../src/agent-scene-capabilities.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { gameAssetIds } from '../src/game-assets.js';
 import { sequenceFrameIds } from '../src/agent-texture-sequence.js';
@@ -57,6 +58,8 @@ runTest('runtime reports real scene capabilities without launching a browser and
   assert.equal(capabilities.preview.memoryBudgetMiB, 64);
   assert.equal(capabilities.preview.backend, 'cpu');
   assert.equal(capabilities.review.maximumShots, 4);
+  assert.deepEqual([capabilities.jobs.maximumWidth, capabilities.jobs.maximumHeight, capabilities.jobs.maximumPixels], [3840, 3840, 3840 * 2160]);
+  assert.deepEqual([capabilities.jobs.maximumSequenceWidth, capabilities.jobs.maximumSequenceHeight, capabilities.jobs.maximumSequencePixels], [1920, 1920, 1920 * 1080]);
   assert.equal(capabilities.review.maximumGridHeight, 1008);
   assert.equal(capabilities.review.maximumPendingFrames, 1);
   assert.equal(capabilities.sceneLimits.maxGeometryBytes, 32 * 1024 * 1024);
@@ -107,7 +110,7 @@ async function importedBindings(source) {
 }
 
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
-  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, disposeGate, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0 } = {}) {
+  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, disposeGate, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
   const events = [];
   const sandboxTimers = new Set();
   const viewports = [];
@@ -144,7 +147,8 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
       if (method === 'dispose' && disposeGate) await disposeGate;
       if (method === 'resume' && failResume) throw new Error('Injected resume failure');
       if (method === 'create' && this.privateTarget && blockPrivateCreate) return new Promise((resolve, reject) => { this.rejectShot = reject; });
-      if (method === 'create') return { sessionId: input.sessionId, revision: 0 };
+      if (method === 'create') return { sessionId: input.sessionId, revision: 0, ...(jobRender && this.privateTarget ? { render: jobRender } : {}) };
+      if (method === 'inspect' && inspection) return inspection;
       if (method === 'exportRecipe') return { recipe: exportedRecipe, revision: 1 };
       if (method === 'exportGlb') return { data: Buffer.from('glb bytes').toString('base64') };
       if (method === 'snapshot') {
@@ -191,6 +195,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
   const originalSource = await readFile(new URL('../scripts/agent-runtime.mjs', import.meta.url), 'utf8');
   let source = originalSource
     .replace(/^import .+;\r?$/gm, '')
+    .replace('export function validateLaunchPaths', 'function validateLaunchPaths')
     .replace('export function createAgentRuntime', 'function createAgentRuntime')
     .replaceAll('import.meta.url', JSON.stringify(import.meta.url))
     .replace("import('playwright-core')", 'Promise.resolve({ chromium: globalThis.chromium })');
@@ -355,7 +360,7 @@ runTest('successful review elapsed time includes source renderer recovery', asyn
 runTest('total review deadline closes private page and restores the usable source', async () => {
   const { runtime, sessionId, events } = await reviewRuntimeHarness({ blockShot: true, deadlineMs: 40 });
   try {
-    await assert.rejects(runtime.review({ sessionId, expectedRevision: 0, shots: [{}] }), /total 30 second deadline/);
+    await assert.rejects(runtime.review({ sessionId, expectedRevision: 0, shots: [{}] }), /total [\d.]+ second deadline after 0 of 1 shots/);
     assert.ok(events.includes('private:close'));
     assert.ok(events.includes('source:resume'));
     assert.equal((await runtime.capabilities()).phase, 'ready');
@@ -379,6 +384,78 @@ runTest('a job cut short by its deadline leaves the runtime usable although the 
     assert.equal((await runtime.capabilities()).phase, 'ready');
     assert.equal((await runtime.apply({ sessionId })).revision, 1);
   } finally { await runtime.close(); }
+});
+
+async function runOversizeJob({ requested, jobRender, memory }) {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId, viewports } = await reviewRuntimeHarness({ jobRender,
+    runtimeOptions: { memory, jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', ...requested } });
+    const outcome = await runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', ...requested }, signal: new AbortController().signal, progress: async () => {} }).then(() => undefined, error => error);
+    return { outcome, viewports };
+  } finally { await runtime.close(); }
+}
+
+runTest('a job frame over 1920x1080 that --memory shrinks is refused with the memory it needs, a 1080p one is only reduced (#1241)', async () => {
+  const plan = { width: 1920, height: 1080, samples: 4, hdr: false, bloom: true, depth: false, estimatedBytes: estimateFrameBytes(1920, 1080, 4, 2048, { bloom: true }) };
+  const oversize = await runOversizeJob({ requested: { width: 2880, height: 1620 }, jobRender: plan, memory: 192 });
+  assert.match(oversize.outcome.message, /2880x1620 was reduced to 1920x1080 by --memory 192.*Fix: start the server with --memory 257 or more/);
+  assert.deepEqual(oversize.viewports, [], 'the page is never resized for a refused frame');
+  const standard = await runOversizeJob({ requested: { width: 1920, height: 1080 }, jobRender: { ...plan, width: 960, height: 540 }, memory: 192 });
+  assert.doesNotMatch(String(standard.outcome?.message), /was reduced to/);
+  assert.deepEqual(JSON.parse(JSON.stringify(standard.viewports)), [{ width: 960, height: 540 }]);
+});
+
+const NON_INDEXED_INSPECTION = vertices => ({ counts: { parts: 1, vertices, materials: 1 }, nodes: [], look: {} });
+
+async function submitWithInspection(inspection, settings) {
+  const submitted = [];
+  const controller = { list: () => [], close: async () => {}, submit: async request => { submitted.push(request); return { jobId: 'job' }; } };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ inspection,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async () => controller } });
+  try {
+    const attempt = await runtime.submitJob({ sessionId, expectedRevision: 0, settings }).then(() => undefined, error => error);
+    return { attempt, submitted, phase: (await runtime.capabilities()).phase };
+  } finally { await runtime.close(); }
+}
+
+runTest('submitJob refuses a path trace over the cpu triangle cap with the count, creates no job and stays ready (#1325)', async () => {
+  const rejected = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer' } });
+  assert.match(rejected.attempt?.message ?? '', /about 850000 triangles and the cpu path tracer takes at most 400000/);
+  assert.match(rejected.attempt.message, /this runtime has no GPU backend/);
+  assert.equal(rejected.submitted.length, 0);
+  assert.equal(rejected.phase, 'ready');
+});
+
+runTest('submitJob accepts the same oversized scene as a raster job, with backend gpu, and a non-indexed scene under the cap (#1325)', async () => {
+  const raster = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64 });
+  assert.equal(raster.attempt, undefined);
+  assert.equal(raster.submitted.length, 1);
+  const gpu = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer', backend: 'gpu' } });
+  assert.equal(gpu.attempt, undefined);
+  assert.equal(gpu.submitted.length, 1);
+  // 1,150,000 vertices without indices are about 383,000 real triangles; the estimate says 575,000, inside the safety margin.
+  const borderline = await submitWithInspection(NON_INDEXED_INSPECTION(1150000), { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer' } });
+  assert.equal(borderline.attempt, undefined);
+  assert.equal(borderline.submitted.length, 1);
+});
+
+runTest('submitJob refuses a scene of plain nodes whose exact count is over the cap even inside the safety margin (#1325)', async () => {
+  // 455,168 listed triangles are exact; the vertex-based estimate (3 vertices each, halved) says 682,752, under the 800,000 margin.
+  const exactNodes = Array.from({ length: 4 }, (_, index) => ({ id: `node-${index}`, triangles: 113792 }));
+  const inspection = { counts: { parts: 4, vertices: 455168 * 3, materials: 1 }, nodes: exactNodes, look: {} };
+  const rejected = await submitWithInspection(inspection, { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer' } });
+  assert.match(rejected.attempt?.message ?? '', /this scene has 455168 triangles and the cpu path tracer takes at most 400000/);
+  assert.equal(rejected.submitted.length, 0);
+  assert.equal(rejected.phase, 'ready');
+  const underCap = { ...inspection, nodes: exactNodes.map(node => ({ ...node, triangles: 90000 })) };
+  const accepted = await submitWithInspection(underCap, { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer' } });
+  assert.equal(accepted.attempt, undefined);
 });
 
 runTest('a slow suspend at job start does not fail the runtime (#1256)', async () => {
@@ -497,7 +574,7 @@ runTest('review stale revisions and strict runtime fields reject before leasing 
   const { runtime, sessionId, events } = await reviewRuntimeHarness();
   try {
     await assert.rejects(runtime.review({ sessionId, expectedRevision: 1, shots: [{}] }), /Stale/);
-    await assert.rejects(runtime.review({ sessionId, expectedRevision: 0, shots: [{ url: 'https://example.com' }] }), /unknown/i);
+    await assert.rejects(runtime.review({ sessionId, expectedRevision: 0, shots: [{ url: 'https://example.com' }] }), /Review shot field not accepted: url/);
     assert.ok(!events.includes('source:suspend'));
     assert.equal((await runtime.apply({ sessionId })).revision, 1);
   } finally { await runtime.close(); }

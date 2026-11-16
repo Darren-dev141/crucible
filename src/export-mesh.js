@@ -1,6 +1,8 @@
 // OBJ (with MTL) and binary STL export of the same parts `exportGlb` takes, with world transforms applied.
 // Both formats carry triangles only: no lights, cameras, animation, skins, morph weights or textures.
 
+import { requireOneOf } from './export-checks.js';
+
 export const MAX_MESH_EXPORT_TRIANGLES = 1_000_000;
 const MAX_NAME_LENGTH = 64;
 const STL_HEADER_TEXT = 'Crucible binary STL';
@@ -177,6 +179,10 @@ function mtlBlock(name, material) {
  * Colors in the MTL are the linear base colors of the parts, with roughness and metallic as `Pr` and `Pm`
  * and the opacity of a mask, blend or add material as `d`.
  */
+function checkAttribute(part, name, expectedLength) {
+  requireOneOf('OBJ', `part ${part.name} geometry.${name} length`, part.geometry[name]?.length ?? 0, [0, expectedLength]);
+}
+
 export function exportObj(parts, options = {}) {
   checkParts(parts, 'OBJ');
   const mtlFilename = options.mtlFilename ?? 'model.mtl';
@@ -202,13 +208,15 @@ export function exportObj(parts, options = {}) {
     for (let vertex = 0; vertex < vertexCount; vertex++) {
       lines.push(`v ${formatNumber(world[vertex * 3])} ${formatNumber(world[vertex * 3 + 1])} ${formatNumber(world[vertex * 3 + 2])}`);
     }
-    const uvs = part.geometry.uvs?.length === vertexCount * 2 ? part.geometry.uvs : null;
+    checkAttribute(part, 'uvs', vertexCount * 2);
+    checkAttribute(part, 'normals', vertexCount * 3);
+    const uvs = part.geometry.uvs?.length ? part.geometry.uvs : null;
     if (uvs) {
       for (let vertex = 0; vertex < vertexCount; vertex++) {
         lines.push(`vt ${formatNumber(uvs[vertex * 2])} ${formatNumber(uvs[vertex * 2 + 1])}`);
       }
     }
-    const normals = part.geometry.normals?.length === vertexCount * 3 ? worldNormals(part.geometry.normals, matrix) : null;
+    const normals = part.geometry.normals?.length ? worldNormals(part.geometry.normals, matrix) : null;
     if (normals) {
       for (let vertex = 0; vertex < vertexCount; vertex++) {
         lines.push(`vn ${formatNumber(normals[vertex * 3])} ${formatNumber(normals[vertex * 3 + 1])} ${formatNumber(normals[vertex * 3 + 2])}`);
@@ -234,15 +242,15 @@ export function exportObj(parts, options = {}) {
 
 // Normals use the inverse transpose of the upper 3x3 so non-uniform scale keeps them perpendicular to the surface.
 function worldNormals(normals, matrix) {
-  const [a, b, c, , d, e, f, , g, h, i] = matrix;
+  const [r0c0, r1c0, r2c0, , r0c1, r1c1, r2c1, , r0c2, r1c2, r2c2] = matrix;
   const cofactor = [
-    e * i - f * h, f * g - d * i, d * h - e * g,
-    c * h - b * i, a * i - c * g, b * g - a * h,
-    b * f - c * e, c * d - a * f, a * e - b * d,
+    r1c1 * r2c2 - r2c1 * r1c2, r2c1 * r0c2 - r0c1 * r2c2, r0c1 * r1c2 - r1c1 * r0c2,
+    r2c0 * r1c2 - r1c0 * r2c2, r0c0 * r2c2 - r2c0 * r0c2, r1c0 * r0c2 - r0c0 * r1c2,
+    r1c0 * r2c1 - r2c0 * r1c1, r2c0 * r0c1 - r0c0 * r2c1, r0c0 * r1c1 - r1c0 * r0c1,
   ];
   // Column-major matrix: the cofactor matrix is the inverse transpose up to the determinant's sign and size, which normalizing removes.
   const result = new Float64Array(normals.length);
-  const sign = (a * cofactor[0] + b * cofactor[1] + c * cofactor[2]) < 0 ? -1 : 1;
+  const sign = (r0c0 * cofactor[0] + r1c0 * cofactor[1] + r2c0 * cofactor[2]) < 0 ? -1 : 1;
   for (let vertex = 0; vertex < normals.length; vertex += 3) {
     const x = normals[vertex];
     const y = normals[vertex + 1];

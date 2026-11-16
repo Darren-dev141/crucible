@@ -35,7 +35,7 @@ test('the recipe field is true, an integer node count or off, and anything else 
   assert.equal(normalizeIrradianceGrid(false), null);
   assert.equal(normalizeIrradianceGrid(true), true);
   assert.equal(normalizeIrradianceGrid(16), 16);
-  for (const bad of [4, 49, 1.5, 'big', {}]) {
+  for (const bad of [4, 41, 48, 49, 1.5, 'big', {}]) {
     assert.throws(() => normalizeIrradianceGrid(bad), /bake\.irradianceGrid/);
   }
   assert.equal(normalizeAgentBake({ preset: 'draft' }).irradianceGrid, undefined);
@@ -145,4 +145,14 @@ test('the grid scatters in the fog only when the lighting carries the fog', () =
   assert.ok(withFog.fogScattered.some(value => value > 0), 'the sun the fog scattered is recorded');
   assert.notDeepEqual(Array.from(withFog.data), Array.from(without.data));
   assert.deepEqual(Array.from(traceIrradianceGrid(sunlitRoom(), sun, options).data), Array.from(without.data));
+});
+
+test('a grid resolution under 2 or samples under 1 is refused before nodes land at infinity or NaN', () => {
+  const parts = sunlitRoom();
+  for (const resolution of [1, 0, -3, Number.NaN, 2.5]) {
+    assert.throws(() => traceIrradianceGrid(parts, sun, { resolution, samples: 4, bounces: 1 }), /resolution/, `resolution ${resolution}`);
+  }
+  for (const samples of [0, -1, 1.5]) {
+    assert.throws(() => traceIrradianceGrid(parts, sun, { resolution: 8, samples, bounces: 1 }), /samples/, `samples ${samples}`);
+  }
 });

@@ -8,7 +8,7 @@ const fragmentsFolder = resolve(root, 'changes');
 const changelogPath = resolve(root, 'CHANGELOG.md');
 const semver = /^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/;
 
-function isFragmentName(name) {
+export function isFragmentName(name) {
   return name.endsWith('.md') && !name.endsWith('.size.md') && name.toLowerCase() !== 'readme.md';
 }
 
@@ -128,12 +128,36 @@ export async function readChangelogData({ changelogText, version, folder = fragm
   return { version, released, unreleased };
 }
 
+// The body of a changelog section from several fragments. A "### Group" heading groups every line below it until the next
+// heading, so a fragment that opens a group would pull the bullets of the next fragment into it, and they would read as
+// belonging to that group (as breaking, for "Breaking changes"). Lines without a group come first and each group follows
+// once, so every bullet keeps the group its own fragment gave it.
+function sectionBody(fragments) {
+  const plainLines = [];
+  const groups = new Map();
+  for (const fragment of fragments) {
+    let groupLines = plainLines;
+    for (const line of fragment.text.split('\n')) {
+      const heading = line.match(groupHeading);
+      if (heading) {
+        if (!groups.has(heading[1])) groups.set(heading[1], []);
+        groupLines = groups.get(heading[1]);
+      } else {
+        groupLines.push(line);
+      }
+    }
+  }
+  const lines = [...plainLines];
+  for (const [name, groupLines] of groups) lines.push(`### ${name}`, ...groupLines);
+  return mediaLinesToMarkdown(lines.join('\n'));
+}
+
 // The changelog text with a "## Unreleased" section above the released ones, for the site's /changelog.md.
 export async function changelogWithUnreleased(changelogText, folder = fragmentsFolder) {
   const fragments = await readFragments(folder);
   if (fragments.length === 0) return changelogText;
   const text = changelogText.replace(/\r\n/g, '\n');
-  const section = `## Unreleased\n\n${fragments.map((fragment) => mediaLinesToMarkdown(fragment.text)).join('\n')}\n\n`;
+  const section = `## Unreleased\n\n${sectionBody(fragments)}\n\n`;
   const firstSection = text.search(/^## /m);
   return firstSection === -1 ? `${text.replace(/\s+$/, '')}\n\n${section.trimEnd()}\n` : `${text.slice(0, firstSection)}${section}${text.slice(firstSection)}`;
 }
@@ -146,7 +170,7 @@ export function foldIntoChangelog(changelogText, version, fragments) {
   if (new RegExp(`^## ${version.replaceAll('.', '\\.')}$`, 'm').test(changelog)) {
     throw new Error(`CHANGELOG.md already has a section for ${version}.`);
   }
-  const section = `## ${version}\n\n${fragments.map((fragment) => mediaLinesToMarkdown(fragment.text)).join('\n')}\n\n`;
+  const section = `## ${version}\n\n${sectionBody(fragments)}\n\n`;
   const firstSection = changelog.search(/^## /m);
   if (firstSection === -1) return `${changelog.replace(/\s+$/, '')}\n\n${section.trimEnd()}\n`;
   return `${changelog.slice(0, firstSection)}${section}${changelog.slice(firstSection)}`;

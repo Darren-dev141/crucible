@@ -45,7 +45,9 @@ const RUNNING_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0
 const COMPARATOR_PATTERN = /^(>=|<=|>|<|=|\^|~)?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/;
 const PATH_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
 const REMOTE_URL_PATTERN = /(?:^|[\s"'(=])(?:https?|ftp|wss?|file|blob|javascript):/i;
-const PROTOCOL_RELATIVE_PATTERN = /^\s*\/\/[^\s/]/;
+// A browser drops tabs and line breaks inside a URL and reads a backslash as a slash, so "/\host" and "ht\ttp://host" are remote too.
+const URL_IGNORED_CHARACTERS = /[\t\n\r]/g;
+const PROTOCOL_RELATIVE_PATTERN = /^\s*[/\\]{2}[^\s/\\]/;
 const REMOTE_HOST_PATTERN = /(?:https?|ftp|wss?):\/\//i;
 const IMAGE_DATA_URL_PATTERN = /^data:image\/(?:png|jpeg|webp);base64,/i;
 
@@ -123,7 +125,8 @@ export function semverSatisfies(version, range) {
     && (!bounds.upperInclusive || compareVersions(current, bounds.upperInclusive) <= 0));
 }
 
-function isRemoteString(text) {
+function isRemoteString(rawText) {
+  const text = rawText.replace(URL_IGNORED_CHARACTERS, '');
   if (/^\s*data:/i.test(text)) return !IMAGE_DATA_URL_PATTERN.test(text.trim());
   return REMOTE_URL_PATTERN.test(text) || PROTOCOL_RELATIVE_PATTERN.test(text) || REMOTE_HOST_PATTERN.test(text);
 }

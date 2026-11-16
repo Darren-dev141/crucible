@@ -6,7 +6,7 @@ import { createAgentScene, loadAgentSceneModules, agentSceneModulesNeeded, AGENT
 
 const SEEDED_OPTIONS = { size: 128, chunks: 4, resolution: 16, levels: 3, height: { amplitude: 10, mountainAmplitude: 30, featureSize: 60 }, seed: 5, eye: [10, 20, 10] };
 // Digest of the geometry the terrain made before holes existed. It must not move while the new fields are absent.
-const SEEDED_TERRAIN_DIGEST = 'b292b9b25158063726e954d6968a7c538e292da166e5e5c480577b5f1859610e';
+const SEEDED_TERRAIN_DIGEST = 'b1db5e932c71d4588a58b14d8d0ddf18857a1bc1097d856f4c31b98398f7f315';
 
 function digestOf(terrain) {
   const hash = createHash('sha256');

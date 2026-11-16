@@ -1,0 +1,1 @@
+- The site wordmark is Plus Jakarta Sans Bold, and the mark gets a lighter body on dark pages (#1199)

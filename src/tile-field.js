@@ -2,6 +2,7 @@
 // Grass and ground clutter share it: each supplies `buildParts(tile, levelIndex)` and gets streamable parts back.
 
 const HYSTERESIS = 1.1;
+export const MAXIMUM_TILES = 262144;
 
 /** Stable 32-bit hash of a tile (or any integer cell) and a seed. */
 export function hashTile(seed, column, row) {
@@ -23,6 +24,9 @@ export function tileMatrix(tile) {
 export function createTileField({ area, tileSize, levels, cullDistance, terrainHeight, buildParts }) {
   const columns = Math.ceil((area.maxX - area.minX) / tileSize);
   const rows = Math.ceil((area.maxZ - area.minZ) / tileSize);
+  if (!(columns * rows <= MAXIMUM_TILES)) {
+    throw new RangeError(`The area needs ${columns} by ${rows} tiles, over the limit of ${MAXIMUM_TILES}. Pass a larger tileSize or a smaller area.`);
+  }
   const tiles = [];
   for (let row = 0; row < rows; row++) {
     for (let column = 0; column < columns; column++) {

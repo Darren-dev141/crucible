@@ -91,6 +91,14 @@ test('normalSpeed sends surface points straight out along the face normal', () =
   }
 });
 
+test('normalSpeed from vertices moves at the stated speed on a scaled mesh', () => {
+  const centres = emittedCentres({ from: 'vertices', normalSpeed: 3 }, {}, 0.5);
+  for (const centre of centres) {
+    const distanceOutOfWall = distanceBeyondWall(centre);
+    assert.ok(Math.abs(distanceOutOfWall - 1.5) < 1e-3, `point ${centre} is ${distanceOutOfWall} m out of the wall, not the 1.5 m that speed 3 for half a second gives`);
+  }
+});
+
 test('the same seed gives identical bytes, another seed gives other points, and more particles keep the earlier ones', () => {
   const bytesOf = system => {
     const scene = createAgentScene(recipe({ emitter: { shape: 'mesh', mesh: 'wall', from: 'volume' }, ...system }));
@@ -272,4 +280,25 @@ test('a sharp angle off edges or out of range names the field and what to pass',
   failure({ from: 'surface', sharpAngle: 30 }, /emitter\.sharpAngle[\s\S]*"edges"/);
   failure({ from: 'edges', sharpAngle: 200 }, /emitter\.sharpAngle[\s\S]*180/);
   failure({ from: 'edges', sharpAngle: 'sharp' }, /emitter\.sharpAngle/);
+});
+
+// Two separate triangles; the first is outside the vertex group (weight 0), the second is fully painted.
+function unpaintedAndPaintedTriangles() {
+  return {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 10, 0, 0, 11, 0, 0, 10, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    indices: new Uint32Array([0, 1, 2, 3, 4, 5]),
+    weights: new Float32Array([0, 0, 0, 1, 1, 1]),
+  };
+}
+
+test('a draw of exactly zero never picks a triangle or an edge outside the vertex group', async () => {
+  const { createMeshSource } = await import('../src/particle-emitter-mesh.js');
+  const mesh = unpaintedAndPaintedTriangles();
+  for (const mode of ['surface', 'edges']) {
+    const source = createMeshSource(mesh.positions, mesh.normals, mesh.indices, mode, mesh.weights);
+    const draws = [0, 0.5, 0.5];
+    const sample = source.sample(() => draws.shift() ?? 0.5);
+    assert.ok(sample.point[0] >= 10, `${mode} emitted at x=${sample.point[0]}, inside the unpainted triangle`);
+  }
 });

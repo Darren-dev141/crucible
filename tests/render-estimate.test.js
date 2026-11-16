@@ -28,7 +28,7 @@ function settingsFor(overrides) {
 
 test('scene size counts every placed node, textures and lights', () => {
   const size = sceneSizeFrom(inspection({ nodeCount: 10, trianglesEach: 1200 }), recipe);
-  assert.deepEqual(size, { parts: 10, assetParts: 0, triangles: 12000, materials: 3, textures: 2, lights: 4 });
+  assert.deepEqual(size, { parts: 10, assetParts: 0, triangles: 12000, listedTriangles: 12000, materials: 3, textures: 2, lights: 4 });
 });
 
 test('a truncated node list is scaled up to the part count', () => {

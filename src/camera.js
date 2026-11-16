@@ -63,7 +63,7 @@ export function cameraFieldOfView(frame, aspect) {
 
 export const MAX_APERTURE_BLADES = 64;
 
-function requirePositiveFinite(value, name) {
+export function requirePositiveFinite(value, name) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     throw new RangeError(`Camera ${name} must be a positive finite number, got ${JSON.stringify(value)}.`);
   }
@@ -130,9 +130,27 @@ export function cameraView(name = 'front', { target = [0, 1.5, 0], height = 3.8,
   return { eye, target: [...target], up: name === 'top' ? [0, 0, -1] : [0, 1, 0], projection: name === 'perspective' ? 'perspective' : 'orthographic', orthographicHeight: height, fov: 45 };
 }
 
+function requireNonDegenerateView(view) {
+  const up = view?.up ?? [0, 1, 0];
+  const isFiniteVector = vector => vector?.length === 3 && Array.from(vector).every(value => typeof value === 'number' && Number.isFinite(value));
+  if (!isFiniteVector(view?.eye) || !isFiniteVector(view?.target) || !isFiniteVector(up)) {
+    throw new RangeError('Fit camera eye, target and up must be three finite numbers each.');
+  }
+  const forward = vec3.subtract(vec3.create(), view.target, view.eye);
+  const upDirection = vec3.normalize(vec3.create(), up);
+  if (vec3.length(forward) === 0 || vec3.length(upDirection) === 0) {
+    throw new RangeError('Fit eye and target must differ and up must be nonzero.');
+  }
+  vec3.normalize(forward, forward);
+  if (Math.abs(vec3.dot(forward, upDirection)) >= 1 - 1e-10) {
+    throw new RangeError('Fit up must not be parallel to the view direction; pass another up, such as [0, 0, -1] for a top view.');
+  }
+}
+
 export function fitOrthographicHeight(bounds, view, aspect, padding = 1.15) {
   if (!Number.isFinite(aspect) || aspect <= 0 || !Number.isFinite(padding) || padding < 1) throw new RangeError('Fit aspect must be positive and padding at least one');
   if (bounds.minimum.length !== 3 || bounds.maximum.length !== 3 || !bounds.minimum.every(Number.isFinite) || !bounds.maximum.every((value, axis) => Number.isFinite(value) && value >= bounds.minimum[axis])) throw new RangeError('Fit bounds must be finite and ordered');
+  requireNonDegenerateView(view);
   const basis = mat4.lookAt(mat4.create(), view.eye, view.target, view.up ?? [0, 1, 0]);
   const minimum = [Infinity, Infinity];
   const maximum = [-Infinity, -Infinity];

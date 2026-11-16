@@ -19,7 +19,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 480, height: 270 } });
   await page.goto(`${serverUrl}/bench/reference/depth-precision.html`, { timeout: 180000 });
   await page.waitForFunction(() => window.drawDepthCase, null, { timeout: 180000 });
-  const dataUrl = await page.evaluate(([d, g, j, r]) => window.drawDepthCase(d, g, j, r), [Number(distance), Number(gap), Number(jitter), reversed === '1']);
+  const dataUrl = await page.evaluate(([caseDistance, caseGap, caseJitter, caseReversed]) => window.drawDepthCase(caseDistance, caseGap, caseJitter, caseReversed), [Number(distance), Number(gap), Number(jitter), reversed === '1']);
   await writeFile(outputPath, Buffer.from(dataUrl.split(',')[1], 'base64'));
 } finally {
   await browser.close();

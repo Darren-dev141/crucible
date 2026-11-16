@@ -86,6 +86,23 @@ function boneJoint(bone, parent, index) {
   return { name: `ragdoll-joint-${index}`, type: 'spherical', bodyA: parent.id, bodyB: bone.id, anchorA: Array.from(anchorInParent), anchorB: [0, 0, 0] };
 }
 
+// writePatches reads each parent's pose before its child's, so a parent listed later would crash there with no bone named.
+function boneOrderProblem(bone, seen, bones) {
+  if (seen.has(bone.id)) return 'is listed twice';
+  if (bone.parentId === bone.id) return 'is its own parent';
+  if (!seen.has(bone.parentId) && bones.some(other => other.id === bone.parentId)) return `comes before its parent ${bone.parentId}`;
+  return null;
+}
+
+function requireParentsFirst(bones) {
+  const seen = new Set();
+  for (const bone of bones) {
+    const problem = boneOrderProblem(bone, seen, bones);
+    if (problem) throw new RangeError(`Ragdoll bone ${bone.id} ${problem}; list each bone once, after its parent.`);
+    seen.add(bone.id);
+  }
+}
+
 /**
  * Describe a ragdoll for the solver and read its result back as local node poses.
  * Each bone is `{ id, parentId, worldMatrix, parentWorldMatrix, tail }`: `parentId` names the bone above it (or null),
@@ -96,6 +113,7 @@ export function createRagdoll(bones, options = {}) {
   if (!Array.isArray(bones) || bones.length < 1 || bones.length > MAX_RAGDOLL_BONES) {
     throw new RangeError(`A ragdoll needs 1 to ${MAX_RAGDOLL_BONES} bones; this rig has ${Array.isArray(bones) ? bones.length : 0}.`);
   }
+  requireParentsFirst(bones);
   const described = bones.map(describeBone);
   const byId = new Map(described.map(bone => [bone.id, bone]));
   const longestLength = Math.max(...described.map(bone => bone.length));

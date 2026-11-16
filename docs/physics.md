@@ -14,7 +14,7 @@ npm install @dimforge/rapier3d-compat@0.21.0
 Use a package-aware development server such as Vite to resolve the solver import.
 
 ```js
-import { createPhysicsScene, planPhysicsScene } from '../src/physics.js';
+import { createPhysicsScene, planPhysicsScene } from 'crucible/addons/physics';
 
 const definition = {
   gravity: [0, -9.81, 0],
@@ -376,7 +376,7 @@ A scene recipe takes a `physics` section, and `set-physics` edits it (`null` cle
 ```
 
 Each body is a root node with a geometry. Its collider is fitted to that geometry at the node scale: `box`, `ball`, `capsule`, `cylinder` and `cone` from the bounds, `convex` from at most 2048 distinct vertices, `trimesh` from every triangle, or `compound` with a `shapes` list of up to 16 sub-colliders (`box`, `ball`, `capsule`, `cylinder`, `cone` with optional `translation` and `rotation`).
-Recipe joints also accept `spring` (`restLength`, `stiffness`, `damping`), `motor` (`{ mode: "position" | "velocity", target, stiffness?, damping, maxForce }`) and `contactsEnabled`. Recipe `physics.events` schedules up to 128 `impulse`, `kinematicPose` and `jointMotor` events by `time` in seconds (or `tick`), and `physics.fields` applies up to 8 force fields (`wind`, `turbulence`, `vortex`, `drag`, `magnet`) to dynamic bodies at every step.
+Recipe joints also accept `name` (what `jointMotor` events refer to; fracture-node writes `glue-a-b`), `breakImpulse` (fixed joints only), `spring` (`restLength`, `stiffness`, `damping`), `motor` (`{ mode: "position" | "velocity", target, stiffness?, damping, maxForce }`) and `contactsEnabled`. Recipe `physics.events` schedules up to 128 `impulse`, `kinematicPose` and `jointMotor` events by `time` in seconds (or `tick`), and `physics.fields` applies up to 8 force fields (`wind`, `turbulence`, `vortex`, `drag`, `magnet`) to dynamic bodies at every step.
 Defaults are `box` for dynamic bodies and sensors, `trimesh` for fixed ones.
 `layer` (0 to 15) and `collidesWith` replace raw bit masks.
 A node cannot have both a physics body and a motion `translation` or `rotation` track.
@@ -435,10 +435,10 @@ The boat code is part of the buoyancy chunk, so a scene without floating bodies 
 
 ## Fracture and breakable glue
 
-`src/fracture.js` splits a closed convex part (a box, cylinder, sphere or any convex mesh of at most 2048 triangles) into Voronoi fragments and describes the glue that holds them together. A concave part is rejected with a message to split it into convex parts first.
+`crucible/addons/fracture` splits a closed convex part (a box, cylinder, sphere or any convex mesh of at most 2048 triangles) into Voronoi fragments and describes the glue that holds them together. A concave part is rejected with a message to split it into convex parts first.
 
 ```js
-import { fractureMesh, fragmentPhysics } from './src/fracture.js';
+import { fractureMesh, fragmentPhysics } from 'crucible/addons/fracture';
 const fracture = fractureMesh(wallGeometry, { seed: 7, cells: 24, impact: [1.2, 0.5, 0], impactRadius: 0.6 });
 const parts = fragmentPhysics(fracture, { translation: [0, 2, 0], strength: 20, density: 100 });
 // parts.bodies, parts.colliders and parts.joints go into a physics definition next to a ball and a floor.
@@ -637,6 +637,7 @@ function frame(deltaSeconds) {
 - `setExtraMass(index, kilograms)` hangs mass on a particle on top of `cloth.particleMass` (density times area, shared evenly). A heavy particle moves less when the constraints pull, so the sheet sags around it.
 - Tearing: `tearStretch` (a stretch constraint breaks when its length passes this multiple of its rest length) and `tearForce` (it breaks when it carries more than this many newtons) are options; both default to never. The bend constraint across a broken edge breaks with it. `cloth.broken` lists them in order as `{ constraint, first, second, kind }`, where `first` and `second` are particle indices and `kind` is `'stretch'` or `'bend'`; `breakConstraint(edge)` tears one by hand. A broken constraint never heals, and the triangles are not removed: hide a triangle whose edge is in the list to show the tear.
 - A particle index is a welded particle (`weldVertices` maps mesh vertices to them), as in `bakeCloth`.
+- `step(deltaSeconds)` takes 0 to 1 second; 0 changes nothing, and a negative, NaN or longer step throws a `RangeError`. `bakeCloth` needs a whole `frameCount` of at least 1 and `framesPerSecond` of at least 1.
 
 ## Deforming a drawn part in place
 
@@ -727,7 +728,7 @@ Every field also takes `strength` (default 1, -1000 to 1000), `position` (defaul
 A recipe `particles` section holds up to 4 systems (`src/particles.js`, `src/hair.js`, `src/agent-particles.js`). It needs no peer dependency and loads on demand with the `particles` module, so a scene without particles pays nothing. Blender's particle system has the same two kinds, Emitter and Hair.
 
 ```json
-{ "geometries": [{ "id": "speck", "type": "box" }],
+{ "geometries": [{ "id": "speck", "type": "box", "bevel": 0 }],
   "nodes": [{ "id": "sparks", "geometry": "speck", "material": "glow" }],
   "particles": { "systems": [{ "node": "sparks", "seed": 11, "count": 300, "rate": 150, "lifetime": [0.8, 1.6],
                                "speed": [2, 4], "spread": 35, "size": 0.035, "drag": 0.3, "floor": 0, "scale": "shrink",
