@@ -593,6 +593,11 @@ vec3 localVolumeBlurred(vec3 background, float opticalDepth, float firstEntry, v
   }
   return mix(background, sum / weight, min(radiusPixels, 1.0));
 }
+int localVolumeShapeSteps(int index, float length) {
+  int steps = int(localVolumeSteps[index].x);
+  if (localVolumeAbsorption[index].w > 0.0) steps = min(${LOCAL_VOLUME_MAXIMUM_STEPS}, max(steps, int(ceil(length * localVolumeEmission[index].w * ${LOCAL_VOLUME_STEPS_PER_NOISE_CELL.toFixed(1)}))));
+  return steps;
+}
 vec3 localVolumes(vec3 background) {
   vec2 clipXY = textureCoordinate * 2.0 - 1.0;
   vec4 farPoint = inverseViewProjection * vec4(clipXY, 1.0, 1.0);
@@ -632,7 +637,7 @@ vec3 localVolumes(vec3 background) {
   vec3 radiance = vec3(0.0);
   float blurDepth = 0.0;
   float blurEntry = 1e30;
-  for (int pass = 0; pass < 8; pass++) {
+  for (int pass = 0; pass < 16; pass++) {
     int nearest = -1;
     float nearestEntry = 1e29;
     for (int index = 0; index < 8; index++) {
@@ -677,24 +682,43 @@ vec3 localVolumes(vec3 background) {
       blurEntry = min(blurEntry, entry);
       continue;
     }
-    int steps = int(localVolumeSteps[nearest].x);
-    float noiseAmount = localVolumeAbsorption[nearest].w;
-    if (noiseAmount > 0.0) steps = min(${LOCAL_VOLUME_MAXIMUM_STEPS}, max(steps, int(ceil((exitDistance - entry) * localVolumeEmission[nearest].w * ${LOCAL_VOLUME_STEPS_PER_NOISE_CELL.toFixed(1)}))));
-    float stepSize = (exitDistance - entry) / float(steps);
+    // Overlapping box and sphere volumes march together (#1722): the volume starting here joins in, density and emission add per step.
+    int partner = -1;
+    float segmentEnd = exitDistance;
+    for (int other = 0; other < 8; other++) {
+      if (other >= localVolumeCount || entries[other] > 1e29 || localVolumeCenters[other].w > 1.5 || localVolumeGrid[other].x > 0.5) continue;
+      if (entries[other] <= entry) {
+        if (partner < 0) partner = other;
+      } else {
+        segmentEnd = min(segmentEnd, entries[other]);
+      }
+    }
+    if (partner >= 0) segmentEnd = min(segmentEnd, exits[partner]);
+    int steps = localVolumeShapeSteps(nearest, segmentEnd - entry);
+    if (partner >= 0) steps = max(steps, localVolumeShapeSteps(partner, segmentEnd - entry));
+    float stepSize = (segmentEnd - entry) / float(steps);
     float jitter = fract(localVolumeJitter() + float(nearest) * 0.618034);
-    float scatterAlbedo = localVolumeSteps[nearest].z;
+    float jitterSecond = fract(localVolumeJitter() + float(partner) * 0.618034);
     for (int step = 0; step < 32; step++) {
       if (step >= steps) break;
-      vec3 position = origin + direction * (entry + (float(step) + jitter) * stepSize);
-      float profile = localVolumeProfile(nearest, position, true);
-      radiance += transmittance * localVolumeEmission[nearest].rgb * (profile * stepSize);
-      if (localVolumeRampSetup[nearest].y > 0.5) radiance += transmittance * localVolumeRampLight(nearest, profile) * stepSize;
-      vec3 extinction = localVolumeAbsorption[nearest].rgb * (profile * stepSize);
-      if (scatterAlbedo > 0.0 && profile > 0.0) radiance += transmittance * (scatterAlbedo * (1.0 - exp(-extinction))) * localVolumeInScatterShape(nearest, position, direction);
-      transmittance *= exp(-extinction);
-      blurDepth += localVolumeSteps[nearest].w * dot(extinction, vec3(0.3333));
+      vec3 stepExtinction = vec3(0.0);
+      for (int lane = 0; lane < 2; lane++) {
+        int member = lane == 0 ? nearest : partner;
+        if (member < 0) break;
+        vec3 position = origin + direction * (entry + (float(step) + (lane == 0 ? jitter : jitterSecond)) * stepSize);
+        float profile = localVolumeProfile(member, position, true);
+        radiance += transmittance * localVolumeEmission[member].rgb * (profile * stepSize);
+        if (localVolumeRampSetup[member].y > 0.5) radiance += transmittance * localVolumeRampLight(member, profile) * stepSize;
+        vec3 extinction = localVolumeAbsorption[member].rgb * (profile * stepSize);
+        if (localVolumeSteps[member].z > 0.0 && profile > 0.0) radiance += transmittance * (localVolumeSteps[member].z * (1.0 - exp(-extinction))) * localVolumeInScatterShape(member, position, direction);
+        stepExtinction += extinction;
+        blurDepth += localVolumeSteps[member].w * dot(extinction, vec3(0.3333));
+      }
+      transmittance *= exp(-stepExtinction);
     }
     blurEntry = min(blurEntry, entry);
+    if (segmentEnd < exitDistance) entries[nearest] = segmentEnd;
+    if (partner >= 0) entries[partner] = segmentEnd < exits[partner] ? segmentEnd : 1e30;
   }
   if (blurDepth > 0.0) background = localVolumeBlurred(background, blurDepth, blurEntry, origin, direction);
   if (depth < 1.0 && surfacePoint.w > 0.0 && max(volumeLightColor.r, max(volumeLightColor.g, volumeLightColor.b)) > 0.0) {
