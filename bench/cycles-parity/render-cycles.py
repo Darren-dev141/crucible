@@ -285,6 +285,44 @@ def connect_emissive_map(material, principled_node, material_entry, emission_col
     links.new(multiply_node.outputs["Color"], principled_node.inputs["Emission Color"])
 
 
+def read_normal_strength(material_entry):
+    normal_scale = material_entry.get("normalScale", 1.0)
+    if isinstance(normal_scale, (list, tuple)):
+        if abs(normal_scale[0]) != abs(normal_scale[1]):
+            raise ValueError("normalScale has two different strengths, but Cycles' Normal Map node has one. Pass equal values.")
+        return float(normal_scale[0])
+    return float(normal_scale)
+
+
+def connect_normal_map(material, principled_node, material_entry, image_entries, built_images):
+    """Cycles' Normal Map node on the material's `normalMap`, tangent space on the UV map, strength from `normalScale`.
+
+    Cook's V axis runs down the image and Blender's runs up, so a map that tilts a normal along Cook's bitangent tilts the
+    opposite way here. The green channel is inverted with nodes before the Normal Map node (not in the shared image, which
+    other slots may read) so one set of texels means the same thing on both sides (#1111).
+    """
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    texture_node = nodes.new("ShaderNodeTexImage")
+    texture_node.image = unpack_shared_image(f"{material.name}-normal", material_entry["normalMap"], image_entries, built_images)
+    separate_node = nodes.new("ShaderNodeSeparateColor")
+    invert_green_node = nodes.new("ShaderNodeMath")
+    invert_green_node.operation = "SUBTRACT"
+    invert_green_node.inputs[0].default_value = 1.0
+    combine_node = nodes.new("ShaderNodeCombineColor")
+    normal_map_node = nodes.new("ShaderNodeNormalMap")
+    normal_map_node.space = "TANGENT"
+    normal_map_node.uv_map = "UVMap"
+    normal_map_node.inputs["Strength"].default_value = read_normal_strength(material_entry)
+    links.new(texture_node.outputs["Color"], separate_node.inputs["Color"])
+    links.new(separate_node.outputs["Green"], invert_green_node.inputs[1])
+    links.new(separate_node.outputs["Red"], combine_node.inputs["Red"])
+    links.new(invert_green_node.outputs[0], combine_node.inputs["Green"])
+    links.new(separate_node.outputs["Blue"], combine_node.inputs["Blue"])
+    links.new(combine_node.outputs["Color"], normal_map_node.inputs["Color"])
+    links.new(normal_map_node.outputs["Normal"], principled_node.inputs["Normal"])
+
+
 def configure_anisotropy(principled_node, material_entry):
     strength = material_entry.get("anisotropy", 0.0)
     if strength <= 0.0:
@@ -418,6 +456,8 @@ def build_blender_material(material_name, material_entry, has_vertex_colors, ima
         connect_base_color_texture(material, principled_node, material_entry, has_vertex_colors, image_entries, built_images)
     elif has_vertex_colors:
         connect_vertex_colors(material, principled_node, material_entry)
+    if "normalMap" in material_entry:
+        connect_normal_map(material, principled_node, material_entry, image_entries, built_images)
     configure_diffuse_transmission(material, principled_node, material_entry, has_vertex_colors)
     return material
 

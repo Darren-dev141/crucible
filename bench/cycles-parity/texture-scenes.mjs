@@ -197,7 +197,109 @@ function textureWrapsScene() {
   ]);
 }
 
+const NORMAL_MAP_SIZE = 64;
+
+// A tangent-space normal map as 8-bit texels. 'bumpy' tilts the normal by the slope of a smooth egg-box height field; 'tilt-r' and
+// 'tilt-g' tilt every texel 30 degrees along the map's red or green axis, so the tangent and the bitangent can be told apart.
+function normalMapTexels(kind) {
+  const data = new Uint8Array(NORMAL_MAP_SIZE * NORMAL_MAP_SIZE * 4);
+  for (let y = 0; y < NORMAL_MAP_SIZE; y++) {
+    for (let x = 0; x < NORMAL_MAP_SIZE; x++) {
+      const offset = (y * NORMAL_MAP_SIZE + x) * 4;
+      let tiltX = 0;
+      let tiltY = 0;
+      if (kind === 'bumpy') {
+        const phaseX = (x + 0.5) / NORMAL_MAP_SIZE * 2 * Math.PI * 2;
+        const phaseY = (y + 0.5) / NORMAL_MAP_SIZE * 2 * Math.PI * 2;
+        tiltX = 0.6 * Math.cos(phaseX) * Math.sin(phaseY);
+        tiltY = 0.6 * Math.sin(phaseX) * Math.cos(phaseY);
+      } else if (kind === 'tilt-r') {
+        tiltX = 0.5;
+      } else if (kind === 'tilt-g') {
+        tiltY = 0.5;
+      }
+      const length = Math.hypot(tiltX, tiltY, 1);
+      data[offset] = Math.round((tiltX / length * 0.5 + 0.5) * 255);
+      data[offset + 1] = Math.round((tiltY / length * 0.5 + 0.5) * 255);
+      data[offset + 2] = Math.round((1 / length * 0.5 + 0.5) * 255);
+      data[offset + 3] = 255;
+    }
+  }
+  return { width: NORMAL_MAP_SIZE, height: NORMAL_MAP_SIZE, data };
+}
+
+// A UV sphere of radius one with smooth normals; u runs around the axis and v from the top pole down. The UVs repeat the map
+// `repeatU` by `repeatV` times, so the texels are not stretched into one big patch.
+function uvSphereGeometry(segments, rings, repeatU, repeatV) {
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const indices = [];
+  for (let ring = 0; ring <= rings; ring++) {
+    const polar = Math.PI * ring / rings;
+    for (let segment = 0; segment <= segments; segment++) {
+      const azimuth = 2 * Math.PI * segment / segments;
+      const x = Math.sin(polar) * Math.cos(azimuth);
+      const y = Math.cos(polar);
+      const z = Math.sin(polar) * Math.sin(azimuth);
+      positions.push(x, y, z);
+      normals.push(x, y, z);
+      uvs.push(repeatU * segment / segments, repeatV * ring / rings);
+    }
+  }
+  const stride = segments + 1;
+  for (let ring = 0; ring < rings; ring++) {
+    for (let segment = 0; segment < segments; segment++) {
+      const first = ring * stride + segment;
+      const second = first + stride;
+      if (ring > 0) {
+        indices.push(first, first + 1, second);
+      }
+      if (ring < rings - 1) {
+        indices.push(first + 1, second + 1, second);
+      }
+    }
+  }
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices) };
+}
+
+// One normal-mapped plane or sphere in front of a dark backdrop-free world, lit by the two point lights of `environment()` (#1111).
+// Both the plane and the sphere repeat the map, and Cycles' Normal Map node reads the same texels (render-cycles.py flips green).
+function normalMapScene(shape, mapKind, segments = 48, variant = {}) {
+  const normalMap = { image: normalMapTexels(mapKind), colorSpace: 'linear' };
+  const material = { color: [0.7, 0.7, 0.7], roughness: 0.6, ...(mapKind === 'none' ? {} : { normalMap }), ...variant.material };
+  const geometry = shape === 'sphere' ? uvSphereGeometry(segments, segments / 2, 6, 3) : quadGeometry(4);
+  const size = shape === 'sphere' ? [1.5, 1.5, 1.5] : [1.8, 1.8, 1];
+  const parts = [part(shape, geometry, [0, 0, 0], size, material)];
+  if (variant.sharedCopy) {
+    // A second part on the same geometry, far out of frame, so `--instancing` keeps both as instances of one mesh.
+    parts.push(part(`${shape}-copy`, geometry, [60, 0, -20], size, material));
+  }
+  return {
+    parts,
+    blenderWorld: { type: 'constant', value: LIGHT_LEVEL },
+    environment: variant.oneLight ? { ...environment(), pointLights: environment().pointLights.slice(0, 1) } : environment(),
+    camera: { eye: [0, 0, 6], target: [0, 0, 0], up: [0, 1, 0], fov: 40, near: 0.1, far: 50 },
+  };
+}
+
+const DIFFUSE_ONLY = { material: { specular: 0, roughness: 1 } };
+
 export const TEXTURE_SCENES = {
+  'normal-plane-shared': () => normalMapScene('plane', 'bumpy', 48, { sharedCopy: true }),
+  'normal-plane-tilt-r-shared': () => normalMapScene('plane', 'tilt-r', 48, { sharedCopy: true }),
+  'normal-sphere-shared': () => normalMapScene('sphere', 'bumpy', 48, { sharedCopy: true }),
+  'normal-plane-flat': () => normalMapScene('plane', 'none'),
+  'normal-plane-tilt-r-diffuse': () => normalMapScene('plane', 'tilt-r', 48, DIFFUSE_ONLY),
+  'normal-plane-tilt-r-diffuse-one': () => normalMapScene('plane', 'tilt-r', 48, { ...DIFFUSE_ONLY, oneLight: true }),
+  'normal-plane-tilt-r-one': () => normalMapScene('plane', 'tilt-r', 48, { oneLight: true }),
+  'normal-plane': () => normalMapScene('plane', 'bumpy'),
+  'normal-sphere': () => normalMapScene('sphere', 'bumpy'),
+  'normal-sphere-coarse': () => normalMapScene('sphere', 'bumpy', 16),
+  'normal-plane-tilt-r': () => normalMapScene('plane', 'tilt-r'),
+  'normal-plane-tilt-g': () => normalMapScene('plane', 'tilt-g'),
+  'normal-sphere-tilt-r': () => normalMapScene('sphere', 'tilt-r'),
+  'normal-sphere-tilt-g': () => normalMapScene('sphere', 'tilt-g'),
   'tex-repeat': () => textureRepeatScene('srgb'),
   'tex-repeat-linear': () => textureRepeatScene('linear'),
   'tex-wraps': textureWrapsScene,
