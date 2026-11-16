@@ -27,7 +27,7 @@ import { createAgentAssetCatalog } from './agent-asset-catalog.mjs';
 import { createPackRegistry } from './agent-packs.mjs';
 import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMUM_PACK_FILE_BYTES, MAXIMUM_PACK_JSON_BYTES, MAXIMUM_PACK_ITEMS_PER_KIND, PACK_CONTENT_KINDS } from '../src/pack-manifest.js';
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
-import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes, assertCombinedByteTotal } from '../src/agent-asset-limits.js';
+import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { sequenceFrameIds } from '../src/agent-texture-sequence.js';
 import { readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grids.js';
@@ -272,23 +272,38 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     return packsPromise;
   }
 
-  /**
-   * Adds up the sizes of the files one call would send, from the catalog record (the embedded length), and refuses the call over the combined limit
-   * before any file is read or base64 encoded. Reading first peaked at about 2.2 times the total before the check ran. Motion source
-   * assets travel in their own field next to the placed ones, so each counts again even when a recipe also places it.
-   */
-  async function assertPlacedAssetsFitBeforeReading(value, motionSourceIds = []) {
+  /** The catalog IDs a recipe or edit list loads: placed assets, map sequence frames and the HDRI and .cube files that are not shipped. */
+  function catalogIdsOf(value) {
     const catalogIds = new Set([...recipeAssetNeeds(value).map(need => need.id), ...sequenceFrameIds(value)]);
     const { environments, looks } = catalogLookReferences(value);
     for (const reference of [...environments, ...looks]) {
       if (!BUNDLED_ENVIRONMENT_NAMES.includes(reference) && !BUNDLED_CUBE_LOOK_NAMES.includes(reference)) catalogIds.add(reference);
     }
+    return catalogIds;
+  }
+
+  /**
+   * Adds up the sizes of the files one call would send, from the catalog record (the embedded length), and refuses the call over the combined limit
+   * before any file is read or base64 encoded. Reading first peaked at about 2.2 times the total before the check ran. Motion source
+   * assets travel in their own field next to the placed ones, so each counts again even when a recipe also places it.
+   * With sceneValue, the assets the scene already holds count too, once per unique ID, because a render job loads the whole scene at once (#1771).
+   */
+  async function assertPlacedAssetsFitBeforeReading(value, motionSourceIds = [], sceneValue = undefined) {
+    const catalogIds = catalogIdsOf(value);
+    if (sceneValue) for (const id of catalogIdsOf(sceneValue)) catalogIds.add(id);
     let total = volumeGridFileBytes(value);
     if (catalogIds.size || motionSourceIds.length) {
       const readyCatalog = await catalog();
       for (const id of [...catalogIds, ...motionSourceIds]) total += await readyCatalog.size(id);
     }
-    assertCombinedByteTotal(total);
+    assertCombinedByteTotal(total, sceneValue ? sceneAssetBytesLimitMessage : undefined);
+  }
+
+  /** Refuses an edit that adds catalog assets to a scene whose unique assets would then pass the combined limit, before the preview page loads them. */
+  async function assertSceneAssetsFitAfterEdit(sessionId, editedValue) {
+    if (!catalogIdsOf(editedValue).size) return;
+    const { recipe } = await invoke('exportRecipe', { sessionId });
+    await assertPlacedAssetsFitBeforeReading(editedValue, [], recipe);
   }
 
   /** Bytes of the catalog assets a recipe or edit list places, base64 by asset id, for the page that decodes them. */
@@ -1134,6 +1149,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         const motions = (input.operations ?? []).filter(operation => operation.type === 'set-motion').map(operation => operation.motion);
         const gameAssets = await gameAssetNeeds(input);
         const placedValue = gameAssets?.recipe ?? input.operations;
+        await assertSceneAssetsFitAfterEdit(input.sessionId, placedValue);
         const applyInput = { ...input, ...(await motionSources(motions, placedValue)), ...(await placedAssetData(placedValue)), ...(gameAssets ? { assetNeeds: gameAssets.recipe } : {}) };
         const addsGridVolume = (input.operations ?? []).some(operation => operation.type === 'add-explosion');
         const applyTimeout = rebakes ? BAKE_EVALUATION_TIMEOUT_MS : addsGridVolume ? GRID_VOLUME_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS;
