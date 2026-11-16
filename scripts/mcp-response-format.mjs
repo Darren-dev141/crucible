@@ -66,6 +66,7 @@ function conciseRenderReport(report) {
   const concise = { seconds: report.measured?.seconds };
   if (report.secondsRatio !== undefined) concise.secondsRatio = report.secondsRatio;
   if (report.fallbacks?.length) concise.fallbacks = report.fallbacks;
+  if (report.noise?.relative != null) concise.noise = report.noise;
   return concise;
 }
 
