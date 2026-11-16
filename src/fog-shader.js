@@ -6,7 +6,7 @@ import { LOCAL_VOLUME_RAMP_STOPS } from './local-volume-ramp.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
-import { BLACKBODY_RADIANCE_SCALE, BLACKBODY_HUE_TABLE, BLACKBODY_TABLE_FIRST_KELVIN, BLACKBODY_TABLE_STEP_KELVIN, BLACKBODY_TABLE_COUNT } from './volume-grid.js';
+import { GRID_BORDER_VOXELS, HALF_FLOAT_MAXIMUM, bakedGridEmission, floatToHalf } from './volume-grid.js';
 import { drawMeshVolumes } from './mesh-volume-pass.js';
 import { FogFieldTexture, createFogLightBuffers, packFogLights, volumeShadowAmbient, DEFAULT_FLOW_STRENGTH, DEFAULT_FLOW_PERIOD, resolveFogDetail, fogUsesDetail } from './fog-field.js';
 
@@ -203,23 +203,38 @@ function bindLocalVolumes(renderer, post, frame, environment) {
   context.activeTexture(context.TEXTURE8);
   context.bindTexture(context.TEXTURE_3D, localGridTexture(renderer, buffers.gridVolume?.gridData ?? null));
   context.uniform1i(locate('localGridTexture'), 8);
+  context.activeTexture(context.TEXTURE9);
+  context.bindTexture(context.TEXTURE_3D, localGridEmissionTexture(renderer, buffers.gridVolume));
+  context.uniform1i(locate('localGridEmissionTexture'), 9);
 }
 
-/** The luminance 1 blackbody hues of volume-grid.js as GLSL vec3 constructors, in table order. */
-function blackbodyHueGlsl() {
-  const entries = [];
-  for (let entry = 0; entry < BLACKBODY_TABLE_COUNT; entry++) {
-    entries.push(`vec3(${[0, 1, 2].map((channel) => BLACKBODY_HUE_TABLE[entry * 3 + channel].toFixed(5)).join(', ')})`);
-  }
-  return entries.join(', ');
-}
-
-// The 3D texture of a grid volume: RGBA16F, r density, g temperature, b flame (the density when the grid has no flame channel), linear and clamped, uploaded
-// once per grid. A frame with no grid volume gets a 1 x 1 x 1 texture, so the sampler is always valid.
+// The two 3D textures of a grid volume, RGBA16F, linear and clamped, uploaded once per grid (and per temperature scale for the emission): `localGridTexture` holds
+// r density, g temperature, b flame (the density when the grid has no flame channel) and `localGridEmissionTexture` the blackbody radiance of each voxel's
+// temperature, baked on the CPU (bakedGridEmission) so the march reads it with one linear tap and the interpolation happens after the blackbody, as Cycles does
+// (#1752). Both carry GRID_BORDER_VOXELS empty voxels on every face. A frame with no grid volume gets 1 x 1 x 1 textures, so the samplers are always valid.
 function localGridTexture(renderer, grid) {
+  return uploadGridTexture(renderer, 'localGridTextureCache', grid, null, (texels, voxel, texel) => {
+    const { density, temperature, flame } = grid.channels;
+    texels[texel] = density[voxel];
+    texels[texel + 1] = temperature ? temperature[voxel] : 0;
+    texels[texel + 2] = (flame ?? density)[voxel];
+  });
+}
+
+function localGridEmissionTexture(renderer, volume) {
+  const grid = volume?.gridData ?? null;
+  const baked = grid ? bakedGridEmission(grid, volume.temperatureScale) : null;
+  return uploadGridTexture(renderer, 'localGridEmissionCache', grid, volume?.temperatureScale ?? 0, (texels, voxel, texel) => {
+    texels[texel] = floatToHalf(Math.min(baked.red[voxel], HALF_FLOAT_MAXIMUM));
+    texels[texel + 1] = floatToHalf(Math.min(baked.green[voxel], HALF_FLOAT_MAXIMUM));
+    texels[texel + 2] = floatToHalf(Math.min(baked.blue[voxel], HALF_FLOAT_MAXIMUM));
+  });
+}
+
+function uploadGridTexture(renderer, cacheName, grid, scale, writeVoxel) {
   const context = renderer.context;
-  const cached = renderer.localGridTextureCache;
-  if (cached && cached.grid === grid) return cached.texture;
+  const cached = renderer[cacheName];
+  if (cached && cached.grid === grid && cached.scale === scale) return cached.texture;
   const resolution = grid ? grid.resolution : [1, 1, 1];
   // The next frame of a sequence has the resolution of the one before: overwrite its texture instead of making a new one.
   const reuse = cached && cached.resolution.join('x') === resolution.join('x');
@@ -231,23 +246,26 @@ function localGridTexture(renderer, grid) {
     context.texParameteri(context.TEXTURE_3D, context.TEXTURE_MAG_FILTER, context.LINEAR);
     for (const wrap of [context.TEXTURE_WRAP_S, context.TEXTURE_WRAP_T, context.TEXTURE_WRAP_R]) context.texParameteri(context.TEXTURE_3D, wrap, context.CLAMP_TO_EDGE);
   }
-  const voxels = resolution[0] * resolution[1] * resolution[2];
-  const texels = new Uint16Array(voxels * 4);
+  const padded = resolution.map(count => count + 2 * GRID_BORDER_VOXELS);
+  const texels = new Uint16Array(padded[0] * padded[1] * padded[2] * 4);
   if (grid) {
-    const { density, temperature, flame } = grid.channels;
-    for (let voxel = 0; voxel < voxels; voxel++) {
-      texels[voxel * 4] = density[voxel];
-      texels[voxel * 4 + 1] = temperature ? temperature[voxel] : 0;
-      texels[voxel * 4 + 2] = (flame ?? density)[voxel];
+    for (let z = 0; z < resolution[2]; z++) {
+      for (let y = 0; y < resolution[1]; y++) {
+        for (let x = 0; x < resolution[0]; x++) {
+          const voxel = x + resolution[0] * (y + resolution[1] * z);
+          const texel = ((x + GRID_BORDER_VOXELS) + padded[0] * ((y + GRID_BORDER_VOXELS) + padded[1] * (z + GRID_BORDER_VOXELS))) * 4;
+          writeVoxel(texels, voxel, texel);
+        }
+      }
     }
   }
   context.pixelStorei(context.UNPACK_ALIGNMENT, 1);
   if (reuse) {
-    context.texSubImage3D(context.TEXTURE_3D, 0, 0, 0, 0, resolution[0], resolution[1], resolution[2], context.RGBA, context.HALF_FLOAT, texels);
+    context.texSubImage3D(context.TEXTURE_3D, 0, 0, 0, 0, padded[0], padded[1], padded[2], context.RGBA, context.HALF_FLOAT, texels);
   } else {
-    context.texImage3D(context.TEXTURE_3D, 0, context.RGBA16F, resolution[0], resolution[1], resolution[2], 0, context.RGBA, context.HALF_FLOAT, texels);
+    context.texImage3D(context.TEXTURE_3D, 0, context.RGBA16F, padded[0], padded[1], padded[2], 0, context.RGBA, context.HALF_FLOAT, texels);
   }
-  renderer.localGridTextureCache = { grid, texture, resolution };
+  renderer[cacheName] = { grid, scale, texture, resolution };
   return texture;
 }
 
@@ -292,6 +310,7 @@ uniform vec4 localVolumeGrid[8];
 uniform vec4 localVolumeRampSetup[8];
 uniform vec4 localVolumeRamp[${MAX_LOCAL_VOLUMES * LOCAL_VOLUME_RAMP_STOPS}];
 uniform highp sampler3D localGridTexture;
+uniform highp sampler3D localGridEmissionTexture;
 `;
 
 // Each volume is marched on its own between its entry and exit (cut at the first surface) and composited nearest first: the colour
@@ -355,18 +374,17 @@ float localVolumeWarpedFade(float position, float noiseAmount, float noise) {
 }
 // A grid volume (#1045) reads its box as a 3D texture: x density, y temperature, z flame. localVolumeGrid holds, per volume, x 1 for a grid, y the temperature
 // scale, z the blackbody intensity times the emission strength and w the anisotropy. volume-grid.js (blackbodyRadiance) repeats the blackbody.
+// A grid cell at a world point: x density, y temperature, z flame, all linear taps of the padded texture (a texel centre is at i + 0.5).
 vec3 localGridSample(int index, vec3 position) {
   vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
-  return textureLod(localGridTexture, unit, 0.0).rgb;
+  vec3 paddedSize = vec3(textureSize(localGridTexture, 0));
+  return textureLod(localGridTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
 }
-const vec3 localBlackbodyHue[${BLACKBODY_TABLE_COUNT}] = vec3[${BLACKBODY_TABLE_COUNT}](${blackbodyHueGlsl()});
-vec3 localGridBlackbody(float kelvin) {
-  if (kelvin <= 0.0) return vec3(0.0);
-  float position = clamp((kelvin - ${BLACKBODY_TABLE_FIRST_KELVIN.toFixed(1)}) / ${BLACKBODY_TABLE_STEP_KELVIN.toFixed(1)}, 0.0, ${(BLACKBODY_TABLE_COUNT - 1).toFixed(1)});
-  int lower = min(int(floor(position)), ${BLACKBODY_TABLE_COUNT - 2});
-  float scaledKelvin = kelvin * 0.001;
-  float scaledFourth = scaledKelvin * scaledKelvin * scaledKelvin * scaledKelvin;
-  return mix(localBlackbodyHue[lower], localBlackbodyHue[lower + 1], position - float(lower)) * (${(BLACKBODY_RADIANCE_SCALE * 1e12).toExponential(9)} * scaledFourth);
+// The baked blackbody radiance at a world point (volume-grid.js bakedGridEmission), before the blackbody intensity and the emission strength.
+vec3 localGridBlackbody(int index, vec3 position) {
+  vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
+  vec3 paddedSize = vec3(textureSize(localGridEmissionTexture, 0));
+  return textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
 }
 // The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
 // code (0 none, 1 density, 2 temperature, 3 flame), y the stop count and z, w the source range; the stops are baked in local-volume-ramp.js with the exposure and
@@ -584,7 +602,7 @@ vec3 localVolumes(vec3 background) {
         vec3 position = origin + direction * (entry + (float(step) + gridJitter) * gridStepSize);
         vec3 cell = localGridSample(nearest, position);
         vec3 extinction = localVolumeAbsorption[nearest].rgb * (cell.x * gridStepSize);
-        radiance += transmittance * (localVolumeEmission[nearest].rgb * cell.z + localGridBlackbody(cell.y * localVolumeGrid[nearest].y) * localVolumeGrid[nearest].z) * gridStepSize;
+        radiance += transmittance * (localVolumeEmission[nearest].rgb * cell.z + localGridBlackbody(nearest, position) * localVolumeGrid[nearest].z) * gridStepSize;
         if (localVolumeRampSetup[nearest].y > 0.5) radiance += transmittance * localVolumeRampLight(nearest, localVolumeRampSetup[nearest].x < 1.5 ? cell.x : (localVolumeRampSetup[nearest].x < 2.5 ? cell.y : cell.z)) * gridStepSize;
         if (gridScatter > 0.0 && cell.x > 0.0) radiance += transmittance * (gridScatter * (1.0 - exp(-extinction))) * localVolumeInScatter(nearest, position, direction);
         transmittance *= exp(-extinction);

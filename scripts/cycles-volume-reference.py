@@ -18,6 +18,7 @@ Spec (JSON). The same file is meant to drive Glaze and Cook renders of the same 
         "absorption": [1, 1, 1],                                   default white
         "emission": [1, 0.45, 0.12], "emissionStrength": 14,       light per unit length times the flame channel (the density when there is none)
         "temperatureScale": 1000, "blackbodyIntensity": 0.3,       kelvin per temperature unit; 0 ignores the temperature channel
+        "interpolation": "LINEAR",                                 the material's Volume Interpolation: LINEAR (Cycles' default, Cycles samples stochastically) or CUBIC
         "scatter": 0, "anisotropy": 0                              scatter above 0 sets Principled Volume's Color, so the sun lights the smoke
       },
       "camera": { "eye": [6, 3, 8], "target": [0, 2, 0], "up": [0, 1, 0], "fov": 40 },   fov: vertical, in degrees
@@ -210,6 +211,10 @@ def build_volume(scene, vdb_path, volume):
         principled.inputs["Temperature"].default_value = volume.get("temperatureScale", 1)
         principled.inputs["Blackbody Intensity"].default_value = volume["blackbodyIntensity"] * strength
         principled.inputs["Blackbody Tint"].default_value = (1, 1, 1, 1)
+    interpolation = volume.get("interpolation", "LINEAR")
+    if interpolation not in ("LINEAR", "CUBIC", "CLOSEST"):
+        raise SystemExit(f"volume.interpolation is {interpolation!r}; use LINEAR (Cycles' default), CUBIC or CLOSEST")
+    material.cycles.volume_interpolation = interpolation
     data.materials.append(material)
 
 

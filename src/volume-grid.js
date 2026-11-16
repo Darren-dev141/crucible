@@ -40,6 +40,10 @@ function bakeBlackbodyTable() {
 
 /** The linear RGB colour of luminance 1 of a blackbody at each table temperature, `BLACKBODY_TABLE_COUNT * 3` values. */
 export const BLACKBODY_HUE_TABLE = bakeBlackbodyTable();
+/** Empty voxels the rasterizer's texture adds on every face of a grid, so the field ramps to 0 across the outer half voxel as an OpenVDB grid does (#1752). */
+export const GRID_BORDER_VOXELS = 1;
+/** The largest finite half float. The rasterizer's emission texture clamps to it, which only matters above about 35,000 K (sigma * T^4 / pi passes it there). */
+export const HALF_FLOAT_MAXIMUM = 65504;
 
 const floatBuffer = new Float32Array(1);
 const floatBits = new Uint32Array(floatBuffer.buffer);
@@ -210,42 +214,88 @@ export function volumeGridFloats(grid) {
 }
 
 /**
- * Writes the density, temperature and flame at a point of the unit cube into `out`, trilinear with texel centres at (i + 0.5) / n, clamped at the
- * edges: what a linear filtered, clamped 3D texture returns. A channel the grid lacks reads 0, and `flame` reads the density when there is no flame channel.
+ * Writes the density, temperature and flame at a point of the unit cube into `out`, trilinear with texel centres at (i + 0.5) / n and 0 beyond the grid's faces,
+ * as an OpenVDB grid reads (the rasterizer's textures have a border of empty voxels, GRID_BORDER_VOXELS, for the same ramp). A channel the grid lacks reads 0,
+ * and `flame` reads the density when there is no flame channel. With `baked` (bakedGridEmission) the blackbody radiance at the point goes to out[3] to out[5],
+ * interpolated after the blackbody, so the field is what Cycles' one linear tap averages to and the fourth power of the blackbody never amplifies the crease of
+ * an interpolated temperature (#1752). `out` then needs six entries.
  */
-export function sampleVolumeGrid(floats, resolution, u, v, w, out) {
-  const coordinate = [u * resolution[0] - 0.5, v * resolution[1] - 0.5, w * resolution[2] - 0.5];
-  const base = [0, 0, 0];
-  const fraction = [0, 0, 0];
-  for (let axis = 0; axis < 3; axis++) {
-    const clamped = Math.min(Math.max(coordinate[axis], 0), resolution[axis] - 1);
-    base[axis] = Math.min(Math.floor(clamped), resolution[axis] - 2 < 0 ? 0 : resolution[axis] - 2);
-    fraction[axis] = resolution[axis] === 1 ? 0 : clamped - base[axis];
-  }
-  const strideY = resolution[0];
-  const strideZ = resolution[0] * resolution[1];
-  const channelNames = ['density', 'temperature', 'flame'];
-  for (let channel = 0; channel < 3; channel++) {
-    const data = floats[channelNames[channel]] ?? (channel === 2 ? floats.density : null);
-    if (!data) {
-      out[channel] = 0;
-      continue;
-    }
-    let total = 0;
-    for (let corner = 0; corner < 8; corner++) {
-      const stepX = corner & 1;
-      const stepY = (corner >> 1) & 1;
-      const stepZ = (corner >> 2) & 1;
-      const weight = (stepX ? fraction[0] : 1 - fraction[0]) * (stepY ? fraction[1] : 1 - fraction[1]) * (stepZ ? fraction[2] : 1 - fraction[2]);
-      if (weight === 0) continue;
-      const x = Math.min(base[0] + stepX, resolution[0] - 1);
-      const y = Math.min(base[1] + stepY, resolution[1] - 1);
-      const z = Math.min(base[2] + stepZ, resolution[2] - 1);
-      total += weight * data[x + y * strideY + z * strideZ];
-    }
-    out[channel] = total;
+export function sampleVolumeGrid(floats, resolution, u, v, w, out, baked = null) {
+  gatherCorners(resolution, u, v, w);
+  out[0] = mixCorners(floats.density);
+  out[1] = mixCorners(floats.temperature);
+  out[2] = mixCorners(floats.flame ?? floats.density);
+  if (baked) {
+    out[3] = mixCorners(baked.red);
+    out[4] = mixCorners(baked.green);
+    out[5] = mixCorners(baked.blue);
   }
   return out;
+}
+
+const cornerVoxel = new Int32Array(8);
+const cornerWeight = new Float64Array(8);
+
+// The eight voxels around a point and their trilinear weights; a voxel beyond the grid, or with weight 0, is -1 and reads 0.
+function gatherCorners(resolution, u, v, w) {
+  const x = u * resolution[0] - 0.5;
+  const y = v * resolution[1] - 0.5;
+  const z = w * resolution[2] - 0.5;
+  const baseX = Math.floor(x);
+  const baseY = Math.floor(y);
+  const baseZ = Math.floor(z);
+  const fractionX = x - baseX;
+  const fractionY = y - baseY;
+  const fractionZ = z - baseZ;
+  for (let corner = 0; corner < 8; corner++) {
+    const stepX = corner & 1;
+    const stepY = (corner >> 1) & 1;
+    const stepZ = (corner >> 2) & 1;
+    const voxelX = baseX + stepX;
+    const voxelY = baseY + stepY;
+    const voxelZ = baseZ + stepZ;
+    const weight = (stepX ? fractionX : 1 - fractionX) * (stepY ? fractionY : 1 - fractionY) * (stepZ ? fractionZ : 1 - fractionZ);
+    const inside = voxelX >= 0 && voxelY >= 0 && voxelZ >= 0 && voxelX < resolution[0] && voxelY < resolution[1] && voxelZ < resolution[2];
+    cornerVoxel[corner] = inside && weight !== 0 ? voxelX + resolution[0] * (voxelY + resolution[1] * voxelZ) : -1;
+    cornerWeight[corner] = weight;
+  }
+}
+
+function mixCorners(data) {
+  if (!data) return 0;
+  let total = 0;
+  for (let corner = 0; corner < 8; corner++) {
+    const voxel = cornerVoxel[corner];
+    if (voxel >= 0) total += cornerWeight[corner] * data[voxel];
+  }
+  return total;
+}
+
+const bakedEmissionByGrid = new WeakMap();
+
+/**
+ * The blackbody radiance of every voxel's temperature times `temperatureScale`, as three Float32Arrays (`red`, `green`, `blue`) with the grid's voxel order,
+ * decoded once per grid and scale. Values past the half float limit (HALF_FLOAT_MAXIMUM, above about 35,000 K) are
+ * clamped by the rasterizer's upload. The blackbody intensity and emission strength stay uniforms. A grid without a temperature channel bakes to all zeros.
+ */
+export function bakedGridEmission(grid, temperatureScale) {
+  const cached = bakedEmissionByGrid.get(grid);
+  if (cached?.temperatureScale === temperatureScale) return cached;
+  const temperature = volumeGridFloats(grid).temperature;
+  const voxels = grid.resolution[0] * grid.resolution[1] * grid.resolution[2];
+  const baked = { temperatureScale, red: new Float32Array(voxels), green: new Float32Array(voxels), blue: new Float32Array(voxels) };
+  const radiance = [0, 0, 0];
+  if (temperature) {
+    for (let voxel = 0; voxel < voxels; voxel++) {
+      if (!(temperature[voxel] > 0)) continue;
+      blackbodyRadiance(temperature[voxel] * temperatureScale, radiance);
+      baked.red[voxel] = radiance[0];
+      baked.green[voxel] = radiance[1];
+      baked.blue[voxel] = radiance[2];
+    }
+  }
+  bakedEmissionByGrid.set(grid, baked);
+  return baked;
 }
 
 /** Writes the linear RGB radiance of a blackbody at `kelvin` into `out` (zero at 0 K or below): sigma * T^4 / pi times the luminance 1 hue. See BLACKBODY_RADIANCE_SCALE. */

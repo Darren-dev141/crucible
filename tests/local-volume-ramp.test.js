@@ -161,8 +161,9 @@ test('the ramp adds to the constant emission and a volume without it emits exact
 });
 
 function gridBytes(channels) {
-  const voxels = 4 * 4 * 4;
-  return decodeVolumeGrid(encodeVolumeGrid({ resolution: [4, 4, 4], channels: Object.fromEntries(Object.entries(channels).map(([name, value]) => [name, new Float32Array(voxels).fill(value)])) }));
+  // 32 voxels a side, so the ramp to empty across the faces and the cubic temperature (#1752) stay within a few percent of the flame channel.
+  const voxels = 32 * 32 * 32;
+  return decodeVolumeGrid(encodeVolumeGrid({ resolution: [32, 32, 32], channels: Object.fromEntries(Object.entries(channels).map(([name, value]) => [name, new Float32Array(voxels).fill(value)])) }));
 }
 
 function gridVolume(grid, rampFields) {
@@ -183,7 +184,8 @@ test('a grid volume reads its ramp from the channel named by source, and no ligh
   };
   assert.ok(lightOf(hot)[0] > 1, `a hot cell glows: ${lightOf(hot)}`);
   assert.deepEqual(lightOf(cold), [0, 0, 0]);
-  assert.deepEqual(lightOf(flame), lightOf(hot));
+  const [flameLight, hotLight] = [lightOf(flame)[0], lightOf(hot)[0]];
+  assert.ok(Math.abs(flameLight - hotLight) < 0.03 * flameLight, `the temperature ramp ${hotLight} matches the flame ramp ${flameLight} to the cubic filter`);
 });
 
 // ---- The rasterizer against the CPU path tracer ----

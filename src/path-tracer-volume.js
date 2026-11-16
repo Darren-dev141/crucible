@@ -1,7 +1,6 @@
 import { resolveVolumeFog } from './volumetric.js';
 import { localVolumeInterval, localVolumeProfile, localVolumeStepCount, localVolumeGridSample, LOCAL_VOLUME_DETAIL_SHADOW_TAPS, LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_SURFACE_SHADOW_TAPS, LOCAL_VOLUME_GRID_SHADOW_TAPS, LOCAL_VOLUME_MULTI_SCATTER, LOCAL_VOLUME_MULTI_EXTINCTION, LOCAL_VOLUME_MULTI_ANISOTROPY } from './local-volumes.js';
 import { countOpenEdges } from './local-volume-parts.js';
-import { blackbodyRadiance } from './volume-grid.js';
 import { bakeEmissionRamp, emissionRampPosition, sampleBakedRamp } from './local-volume-ramp-bake.js';
 import { buildTriangleBvh } from './triangle-bvh.js';
 import { createTracer } from './ray-query.js';
@@ -274,21 +273,19 @@ export function createLocalVolumeCrossing(volumes, lighting = null) {
     for (let channel = 0; channel < 3; channel++) emitted[channel] += throughput[channel] * rampColor[channel] * volume.emissionStrength * position * stepLength;
   }
 
-  const gridCell = new Float64Array(3);
-  const blackbody = new Float64Array(3);
+  const gridCell = new Float64Array(6);
 
   // One step through a grid volume (shape "grid"): extinction from the density, emission from the flame channel and, with blackbodyIntensity, from the
   // temperature channel. The rasterizer's march repeats it (fog-shader.js).
   function crossGridStep(volume, x, y, z, directionX, directionY, directionZ, stepLength, throughput, emitted) {
-    localVolumeGridSample(volume, x, y, z, gridCell);
+    localVolumeGridSample(volume, x, y, z, gridCell, volume.blackbodyIntensity > 0);
     const width = gridCell[0] * stepLength;
     if (width > 0 && volume.scatter > 0 && lighting) addScatteredLight(volume, x, y, z, directionX, directionY, directionZ, width, throughput, emitted);
-    blackbodyRadiance(gridCell[1] * volume.temperatureScale, blackbody);
     const flameWidth = gridCell[2] * stepLength;
     const blackbodyWidth = volume.blackbodyIntensity * volume.emissionStrength * stepLength;
     if (volume.emissionRamp) addRampLight(volume, gridCell[rampSourceChannel(volume.emissionRamp.source)], stepLength, throughput, emitted);
     for (let channel = 0; channel < 3; channel++) {
-      emitted[channel] += throughput[channel] * (volume.emission[channel] * volume.emissionStrength * flameWidth + blackbody[channel] * blackbodyWidth);
+      emitted[channel] += throughput[channel] * (volume.emission[channel] * volume.emissionStrength * flameWidth + gridCell[3 + channel] * blackbodyWidth);
       throughput[channel] *= Math.exp(-volume.absorption[channel] * volume.density * width);
     }
   }
