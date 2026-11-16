@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request as httpRequest } from 'node:http';
-import { prepareFileScene } from '../scripts/file-scene.mjs';
+import { prepareFileScene, prepareServedFileScene } from '../scripts/file-scene.mjs';
 import { LARGE_ASSET_BYTES, startAssetServer } from '../scripts/asset-server.mjs';
 
 async function writeWorld(glbBytes) {
@@ -104,4 +104,22 @@ test('a file that disappears after it was listed answers 500, not an uncaught ex
   } finally {
     await server.close();
   }
+});
+
+test('prepareServedFileScene serves a GLB over the limit from HTTP for the native trace script, and close() stops the server', async () => {
+  const config = await writeWorld(300_000);
+  const pageOrigin = 'http://127.0.0.1:4321';
+  const world = await prepareServedFileScene({ configPath: config, pageOrigin, largeAssetBytes: 1024 });
+  assert.match(world.description.glb, /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f-]+\/asset\/0\/scene\.glb$/);
+  assert.equal(world.description.hdri, '/__file/asset/1/sky.hdr');
+  const response = await fetch(world.description.glb);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('access-control-allow-origin'), pageOrigin);
+  assert.equal((await response.arrayBuffer()).byteLength, 300_000);
+  await world.close();
+  await assert.rejects(fetch(world.description.glb));
+});
+
+test('prepareServedFileScene stops its server when the scene file is bad', async () => {
+  await assert.rejects(prepareServedFileScene({ configPath: join(tmpdir(), 'no-such-scene-1811.json') }), /ENOENT/);
 });
