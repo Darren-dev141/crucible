@@ -47,13 +47,12 @@ test('withInjectedLatency drops sends still waiting when the transport closes, a
   assert.equal(withInjectedLatency(fake.transport, 0), fake.transport);
 });
 
-test('the relay must be a ws: or wss: URL on this machine', () => {
-  assert.equal(relaySocketUrl('ws://127.0.0.1:8787/', 'bob'), 'ws://127.0.0.1:8787/?id=bob');
-  assert.equal(relaySocketUrl('wss://localhost:9000/play?room=1', 'a b'), 'wss://localhost:9000/?id=a%20b');
-  assert.throws(() => relaySocketUrl('ws://relay.example.com:8787/', 'bob'), /must run on this machine/);
-  assert.throws(() => relaySocketUrl('ws://127.0.0.1.example.com/', 'bob'), /must run on this machine/);
-  assert.throws(() => relaySocketUrl('https://example.com/', 'bob'), /must use ws: or wss:/);
-  assert.throws(() => relaySocketUrl('javascript:alert(1)', 'bob'), /must use ws: or wss:/);
-  assert.throws(() => relaySocketUrl('127.0.0.1:8787', 'bob'), /must use ws: or wss:|full WebSocket URL/);
-  assert.throws(() => relaySocketUrl('not a url', 'bob'), /full WebSocket URL/);
+test('the relay socket goes to the page host with a numeric port and the page protocol', () => {
+  const lanPage = { protocol: 'http:', hostname: '192.168.1.20' };
+  assert.equal(relaySocketUrl(lanPage, '8787', 'bob'), 'ws://192.168.1.20:8787/?id=bob');
+  assert.equal(relaySocketUrl({ protocol: 'https:', hostname: 'game.example.com' }, 9000, 'a b'), 'wss://game.example.com:9000/?id=a%20b');
+  assert.throws(() => relaySocketUrl(lanPage, '8787@evil.example', 'bob'), /whole number from 1 to 65535/);
+  assert.throws(() => relaySocketUrl(lanPage, '0', 'bob'), /whole number from 1 to 65535/);
+  assert.throws(() => relaySocketUrl(lanPage, '70000', 'bob'), /whole number from 1 to 65535/);
+  assert.throws(() => relaySocketUrl(lanPage, '87.5', 'bob'), /whole number from 1 to 65535/);
 });
