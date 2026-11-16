@@ -73,6 +73,8 @@ const EXAMPLES = {
     block => create(mergedRecipe(block)),
     block => apply(baseRecipe({ geometries: [{ id: 'block', type: 'box' }], nodes: [floor, boxNode('wall', { translation: [0, 1, -2], scale: [6, 2, 0.3] })] }), [block]),
     block => create(mergedRecipe(block)),
+    // The spark system of #1758: unlit specks with type sparks and the explosion preset.
+    block => create(mergedRecipe(block)),
   ],
   'docs/mesh.md': [
     'field expressions, not a recipe',
