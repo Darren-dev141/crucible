@@ -53,6 +53,7 @@ try {
     const { metrics } = await call('scene_render_result', { jobId: submitted.jobId, response_format: 'detailed' });
     const tracer = metrics.pathTracer ?? {};
     if (tracer.backend !== 'native') failures += 1;
+    console.log(`NOTE ${JSON.stringify(tracer.backendNote ?? null)} gpu ${tracer.gpu}`);
     console.log(`RESULT ${width}x${height}: completed in ${seconds}s, peak Node RSS ${mebibytes(metrics.peakNodeBytes)} MiB, backend ${tracer.backend}, denoiser ${tracer.denoiser}, oidnMode ${tracer.oidnMode}, routes ${JSON.stringify((metrics.nativeSessionRoutes ?? []).slice(0, 3))}`);
   }
 } finally {
