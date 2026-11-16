@@ -112,9 +112,9 @@ function recomputeNormals(geometry, movedVertices) {
   for (let corner = 0; corner < indices.length; corner += 3) {
     const triangle = [indices[corner], indices[corner + 1], indices[corner + 2]];
     if (!triangle.some(vertex => sums.has(vertex))) continue;
-    const [a, b, c] = triangle.map(vertex => positions.subarray(vertex * 3, vertex * 3 + 3));
-    const edgeOne = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-    const edgeTwo = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const [vertexA, vertexB, vertexC] = triangle.map(vertex => positions.subarray(vertex * 3, vertex * 3 + 3));
+    const edgeOne = [vertexB[0] - vertexA[0], vertexB[1] - vertexA[1], vertexB[2] - vertexA[2]];
+    const edgeTwo = [vertexC[0] - vertexA[0], vertexC[1] - vertexA[1], vertexC[2] - vertexA[2]];
     const areaNormal = [
       edgeOne[1] * edgeTwo[2] - edgeOne[2] * edgeTwo[1],
       edgeOne[2] * edgeTwo[0] - edgeOne[0] * edgeTwo[2],
