@@ -189,7 +189,7 @@ async function runTask(task, attempt, systemPromptAddition) {
     if (run.errors) await writeFile(join(rawDirectory, `${fileStem}.stderr.txt`), run.errors);
     if (transcript.recipe) await writeFile(join(rawDirectory, `${fileStem}.recipe.json`), JSON.stringify(transcript.recipe, null, 2));
     const grade = transcript.recipe
-      ? await gradeRecipe(task, transcript.recipe)
+      ? await gradeRecipe(task, transcript.recipe, transcript.toolsByName)
       : { pass: false, passed: 0, total: task.checks.length, results: [{ kind: 'export', pass: false, detail: 'no exported recipe' }] };
     const usage = transcript.result?.usage ?? {};
     return {

@@ -3,7 +3,7 @@
 // Used by config/vite.lib.config.js, which builds the page that carries the packers.
 import { fileURLToPath } from 'node:url';
 
-const PACKER_SPECIFIERS = new Set(['@codepawlhq/cook/pack-input', '@codepawlhq/cook/job-input']);
+const PACKER_SPECIFIERS = new Set(['@codepawlhq/cook/pack-input', '@codepawlhq/cook/job-input', '@codepawlhq/cook/grid-volume-input']);
 const MISSING_STUB_PATH = fileURLToPath(new URL('./cook-missing.js', import.meta.url));
 
 function isResolvable(specifier) {
