@@ -60,11 +60,12 @@ jobs:
         run: |
           start=$(date +%s)
           # The summary step decides pass or fail: tests that lose the device on lavapipe are counted apart.
-          # Two test files at a time: lavapipe JIT-compiles the Cook kernel in every process (one peaked at 3.2 GB of RSS, #1186),
-          # and with the default concurrency the light-tree file crashed (SIGSEGV) and byte-for-byte tests differed, while each
-          # passed alone and two runs of one render were byte-identical on lavapipe (#1717).
+          # One llvmpipe thread per test process, four files at a time. llvmpipe splits a compute dispatch over its threads, so
+          # under CPU contention the order of the accumulation changed: byte-for-byte tests differed by about 6e-5 and the
+          # light-tree file crashed (SIGSEGV), while each passed alone. Two files at a time (#1717) made it rarer, not gone
+          # (run 43839172626). A single thread keeps the order fixed; four processes keep the runner's four cores busy (#1186).
           set +e
-          node --test --test-concurrency=2 --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --test-reporter=tap --test-reporter-destination=addon-tests.tap $(git grep -l "support/cook.js" -- tests)
+          LP_NUM_THREADS=1 node --test --test-concurrency=4 --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --test-reporter=tap --test-reporter-destination=addon-tests.tap $(git grep -l "support/cook.js" -- tests)
           status=$?
           echo "test_seconds=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
           echo "node --test exit code $status"
