@@ -356,6 +356,7 @@ on:
       - 'tests/native-bake.test.js'
       - 'tests/native-camera-environment.test.js'
       - 'tests/native-camera-params.test.js'
+      - 'tests/native-clip-start.test.js'
       - 'tests/native-cycles-russian-roulette.test.js'
       - 'tests/native-denoise.test.js'
       - 'tests/native-diffuse-transmission.test.js'

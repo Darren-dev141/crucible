@@ -128,6 +128,7 @@
     "./addons/splat-shader": "./build/splat-shader.js",
     "./addons/subsurface-shader": "./build/subsurface-shader.js",
     "./addons/fog-shader": "./build/fog-shader.js",
+    "./addons/linear-output-shader": "./build/linear-output-shader.js",
     "./addons/light-linking": "./build/light-linking.js",
     "./addons/cascaded-shadows": "./build/cascaded-shadows.js",
     "./addons/light-shapes": "./build/light-shapes.js",
@@ -286,7 +287,7 @@
   },
   "devDependencies": {
     "@codepawlhq/crucible-denoise-oidn": "file:packages/denoise-oidn",
-    "@codepawlhq/cook": "git+https://github.com/codepawl/cook.git#158384e4cb2046c71e84f0c9c540a1995d3db7b2",
+    "@codepawlhq/cook": "git+https://github.com/codepawl/cook.git#8ee9843a0a2c2b553cd53f28059f3dc41324b2ca",
     "@dimforge/rapier3d-compat": "0.21.0",
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",
