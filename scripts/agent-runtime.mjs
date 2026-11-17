@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { totalmem } from 'node:os';
 import { sampleBrowserHeap, memoryGuardLimits, exceedsMemoryGuard, memoryGuardMessage, createNativeMemoryAllowance } from './agent-memory-guard.mjs';
@@ -50,7 +50,7 @@ import { filmTimelineDuration, filmTimelineShotStarts, sampleFilmTimeline } from
 import { isPreviewHost } from './preview-host.mjs';
 import { runAnnotateSession } from './annotate-session.mjs';
 import { openInDefaultBrowser } from './annotate-open.mjs';
-import { ANNOTATE_LIMITS } from '../src/agent-annotate.js';
+import { ANNOTATE_LIMITS, validateMarks, isBoundedPng } from '../src/agent-annotate.js';
 import { normalizeReview, reviewDeadlineMessage, REVIEW_LIMITS } from './agent-review.mjs';
 import { mergeFrameDiagnostics, pathTracerFindingsLimit } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
@@ -166,6 +166,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   let cancelReview;
   // One per scene_ask_user call that is waiting for the person; close() aborts them so the page server and its timer end at once.
   const pendingAskControllers = new Set();
+  // Views shown inline by an MCP Apps host (#923): the person's marks come back in a later call, so the frame they marked is kept here.
+  const inlineAsks = new Map();
+  const MAXIMUM_INLINE_ASKS = 8;
   // Open scenes, least recently used first; the last one is what a call without a sessionId means.
   const openSessionIds = new Set();
   // Set once a recipe with a streamed texture sequence is read; from then on a call with a motion time supplies its frames first.
@@ -628,6 +631,14 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   function forgetAllSessions() {
     openSessionIds.clear();
     bakedSessionIds.clear();
+  }
+
+  async function resolveSentMarks({ sessionId, frame, marks, image }) {
+    const base = { sessionId, revision: frame.metadata.revision, view: { width: frame.width, height: frame.height, camera: frame.camera } };
+    const picked = await enqueue(() => invoke('pickMarks', { sessionId, camera: frame.camera, marks, width: frame.width, height: frame.height }));
+    const sceneChanged = picked.revision !== frame.metadata.revision;
+    return { image, content: { ...base, outcome: 'sent', marks: picked.marks,
+      ...(sceneChanged ? { warning: `The scene changed from revision ${frame.metadata.revision} to ${picked.revision} while the person marked; part IDs and points describe revision ${picked.revision}, the picture shows ${frame.metadata.revision}.` } : {}) } };
   }
 
   function requireSession(sessionId) {
@@ -1262,6 +1273,14 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return invoke('annotateFrame', { sessionId: input.sessionId });
       });
       if (closing) throw new Error('The agent runtime is closing.');
+      if (input.inline) {
+        const askId = randomBytes(12).toString('hex');
+        inlineAsks.set(askId, { sessionId: input.sessionId, frame, maxMarks });
+        while (inlineAsks.size > MAXIMUM_INLINE_ASKS) inlineAsks.delete(inlineAsks.keys().next().value);
+        return { image: frame.data, content: { sessionId: input.sessionId, outcome: 'pending', askId, revision: frame.metadata.revision,
+          view: { width: frame.width, height: frame.height, camera: frame.camera }, maxMarks, maxNoteLength: ANNOTATE_LIMITS.maxNoteLength, prompt: input.prompt ?? '',
+          message: 'The view is open in the chat for the person. Their marks arrive as a message from them: stop here and do not call scene_ask_user again.' } };
+      }
       const askController = new AbortController();
       pendingAskControllers.add(askController);
       let session;
@@ -1281,10 +1300,18 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           ? `The person did not press Send within ${timeoutSeconds} seconds. Ask in text, or call scene_ask_user again with a longer timeoutSeconds.`
           : 'The person cancelled without sending marks. Ask what they meant in text.' } };
       }
-      const picked = await enqueue(() => invoke('pickMarks', { sessionId: input.sessionId, camera: frame.camera, marks: session.marks, width: frame.width, height: frame.height }));
-      const sceneChanged = picked.revision !== frame.metadata.revision;
-      return { image: session.image, content: { ...base, outcome: 'sent', marks: picked.marks,
-        ...(sceneChanged ? { warning: `The scene changed from revision ${frame.metadata.revision} to ${picked.revision} while the person marked; part IDs and points describe revision ${picked.revision}, the picture shows ${frame.metadata.revision}.` } : {}) } };
+      return resolveSentMarks({ sessionId: input.sessionId, frame, marks: session.marks, image: session.image });
+    },
+    // The second half of an inline scene_ask_user: the MCP Apps view sends the marks it collected, the answer has the same shape as a
+    // browser answer. An unknown or used askId fails, so a view cannot resolve marks against a frame it was not shown.
+    async submitAskUser({ askId, marks, image }) {
+      const pending = inlineAsks.get(askId);
+      if (!pending) throw new Error('This annotate view is no longer open. Call scene_ask_user again to get a fresh one.');
+      const clean = validateMarks(marks, { width: pending.frame.width, height: pending.frame.height, maxMarks: pending.maxMarks });
+      if (!clean.length) throw new TypeError('Add at least one pin before sending.');
+      if (!isBoundedPng(image)) throw new TypeError('The marked picture is not a PNG within 1 MiB.');
+      inlineAsks.delete(askId);
+      return resolveSentMarks({ sessionId: pending.sessionId, frame: pending.frame, marks: clean, image });
     },
     checkpoint(input) {
       return enqueue(async () => {

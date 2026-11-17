@@ -168,6 +168,8 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
         const { width, height } = this.viewport;
         return { mimeType: 'image/png', data: Buffer.alloc(Math.round(width * height * lookBytesPerPixel)).toString('base64'), metadata: { width, height } };
       }
+      if (method === 'annotateFrame') return { mimeType: 'image/png', data: 'iVBORw0KGgo=', width: 64, height: 48, camera: {}, metadata: { revision: sourceRevision } };
+      if (method === 'pickMarks') return { revision: sourceRevision, marks: input.marks.map((mark, index) => ({ number: index + 1, pixel: [mark.x, mark.y], note: mark.note, partId: 'lamp' })) };
       if (method === 'reviewResult') return { mimeType: 'image/png',
         data: Buffer.alloc(oversize ? 1024 * 1024 + 1 : 16).toString('base64') };
       if (method === 'dispose' && failDispose) throw new Error('Injected disposal failure');
@@ -630,6 +632,30 @@ runTest('runtime close settles a pending scene_ask_user at once and stops its pa
   assert.match(await askingOutcome, /closed|closing/);
   assert.ok(sessionSignal.aborted);
   assert.ok(performance.now() - started < 3000);
+});
+
+runTest('an inline scene_ask_user keeps the frame for the view and resolves its marks once (#923)', async () => {
+  let browserSessions = 0;
+  const { runtime, sessionId } = await reviewRuntimeHarness({ contextOverrides: { runAnnotateSession: async () => { browserSessions++; return { outcome: 'timeout' }; } } });
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(16)]).toString('base64');
+  const pending = await runtime.askUser({ sessionId, inline: true, prompt: 'Pin it' });
+  assert.equal(browserSessions, 0, 'an inline ask opens no browser page');
+  assert.equal(pending.content.outcome, 'pending');
+  assert.equal(pending.content.prompt, 'Pin it');
+  assert.match(pending.content.askId, /^[a-f0-9]{24}$/);
+  assert.deepEqual([pending.content.view.width, pending.content.view.height], [64, 48]);
+  assert.ok(pending.image);
+  await assert.rejects(runtime.submitAskUser({ askId: pending.content.askId, marks: [{ x: 500, y: 5, note: 'outside' }], image: png }), /x must be a pixel from 0 to 64/);
+  await assert.rejects(runtime.submitAskUser({ askId: pending.content.askId, marks: [], image: png }), /at least one pin/);
+  await assert.rejects(runtime.submitAskUser({ askId: pending.content.askId, marks: [{ x: 5, y: 5, note: 'dull' }], image: 'not a png' }), /PNG/);
+  const sent = await runtime.submitAskUser({ askId: pending.content.askId, marks: [{ x: 5, y: 5, note: ' dull ' }], image: png });
+  assert.equal(sent.content.outcome, 'sent');
+  assert.equal(sent.content.marks[0].partId, 'lamp');
+  assert.equal(sent.content.marks[0].note, 'dull');
+  assert.equal(sent.image, png);
+  assert.deepEqual(Object.keys(sent.content).sort(), ['marks', 'outcome', 'revision', 'sessionId', 'view']);
+  await assert.rejects(runtime.submitAskUser({ askId: pending.content.askId, marks: [{ x: 5, y: 5 }], image: png }), /no longer open/);
+  await runtime.close();
 });
 
 runTest('a failed browser launch leaves the runtime idle so the next call retries (#1246)', async () => {
