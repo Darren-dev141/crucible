@@ -19,6 +19,12 @@ export const EXPLOSION_EMPTY_VELOCITY_GRID = 'explosion-empty-velocity.67vg';
 export const EXPLOSION_MOTION_BLUR_DEFAULT = true;
 export { GAS_SIM_TEMPERATURE_UNIT };
 
+/**
+ * Bump this whenever the output of gas-sim.js changes: the on-disk bake cache (explosion-bake-cache.js) is keyed by it, so a stale file would
+ * otherwise be served for the new solver. tests/explosion-bake-cache.test.js fails when the solver's output and this number disagree.
+ */
+export const EXPLOSION_BAKE_VERSION = 1;
+
 const MAX_CACHED_BAKES = 4;
 const BAKE_SECONDS_LIMIT = 90;
 // A bake with velocity (for the motion blur of the fireball) says so in its name: `explosion-dry-7-velocity_0000.67vg`.
@@ -30,6 +36,12 @@ const FUEL_OPTIONS = Object.freeze({
 });
 
 const bakes = new Map();
+let bakeStore = null;
+
+/** Installs a store with `load(descriptor)` and `save(descriptor, frames)` that keeps bakes across processes (the MCP server installs a disk cache); null removes it. */
+export function setExplosionBakeStore(store) {
+  bakeStore = store;
+}
 const emptyFrames = new Map();
 
 function gridSize() {
@@ -45,10 +57,7 @@ export function explosionGridNames(fuel, seed, velocity = false) {
   return Array.from({ length: EXPLOSION_GRID_FRAMES }, (_, index) => `${bakeLabel(fuel, seed, velocity)}_${String(index).padStart(4, '0')}.67vg`);
 }
 
-function bakeFrames(fuel, seed, velocity) {
-  const key = bakeLabel(fuel, seed, velocity);
-  const cached = bakes.get(key);
-  if (cached) return cached;
+function simulateFrames(fuel, seed, velocity) {
   const baked = bakeGasSim({
     resolution: EXPLOSION_GRID_RESOLUTION,
     cellSize: EXPLOSION_GRID_BOX / EXPLOSION_GRID_RESOLUTION,
@@ -59,7 +68,26 @@ function bakeFrames(fuel, seed, velocity) {
     velocity,
     ...FUEL_OPTIONS[fuel],
   });
-  const frames = baked.frames.map(frame => encodeVolumeGrid({ resolution: baked.resolution, channels: frame, size: gridSize() }));
+  return baked.frames.map(frame => encodeVolumeGrid({ resolution: baked.resolution, channels: frame, size: gridSize() }));
+}
+
+function bakeFrames(fuel, seed, velocity) {
+  const key = bakeLabel(fuel, seed, velocity);
+  const cached = bakes.get(key);
+  if (cached) return cached;
+  const descriptor = {
+    version: EXPLOSION_BAKE_VERSION,
+    fuel,
+    seed,
+    velocity,
+    frames: EXPLOSION_GRID_FRAMES,
+    parameters: [EXPLOSION_GRID_RESOLUTION, EXPLOSION_GRID_BOX, EXPLOSION_GRID_FRAMES, EXPLOSION_GRID_FPS, FUEL_OPTIONS[fuel]],
+  };
+  let frames = bakeStore?.load(descriptor) ?? null;
+  if (!frames) {
+    frames = simulateFrames(fuel, seed, velocity);
+    bakeStore?.save(descriptor, frames);
+  }
   bakes.set(key, frames);
   if (bakes.size > MAX_CACHED_BAKES) bakes.delete(bakes.keys().next().value);
   return frames;

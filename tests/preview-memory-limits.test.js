@@ -28,7 +28,7 @@ test('a 16000x16000 sequence frame is refused from its header and never reaches 
   const sequenceData = { [`${'a'.repeat(64)}`]: pngWithDeclaredSize(16000, 16000).toString('base64') };
   await assert.rejects(
     () => harness.preview.createWithAssets({ recipe: recipe(), sessionId: 'oversized-frame', backend: 'cpu', memoryBudgetMiB: 192, assetData: {}, sequenceData }),
-    /Sequence frame aaaaaaaaaaaa is 16000x16000.*at most 1024 pixels/s,
+    /Sequence frame aaaaaaaaaaaa is 16000x16000.*at most 2048 pixels/s,
   );
   assert.equal(decodeCalls, 0);
 });
@@ -47,7 +47,7 @@ test('a JPEG with a restart marker before its frame header is refused with zero 
   const sequenceData = { [`${'b'.repeat(64)}`]: jpegWithRestartBeforeFrame(16000, 16000).toString('base64') };
   await assert.rejects(
     () => harness.preview.createWithAssets({ recipe: recipe(), sessionId: 'rst-frame', backend: 'cpu', memoryBudgetMiB: 192, assetData: {}, sequenceData }),
-    /Sequence frame bbbbbbbbbbbb is 16000x16000.*at most 1024 pixels/s,
+    /Sequence frame bbbbbbbbbbbb is 16000x16000.*at most 2048 pixels/s,
   );
   assert.equal(decodeCalls, 0);
 });
@@ -59,7 +59,7 @@ test('a frame whose header gives no size is refused with zero decode calls and n
   const sequenceData = { [`${'c'.repeat(64)}`]: unreadable.toString('base64') };
   await assert.rejects(
     () => harness.preview.createWithAssets({ recipe: recipe(), sessionId: 'no-size', backend: 'cpu', memoryBudgetMiB: 192, assetData: {}, sequenceData }),
-    /Sequence frame cccccccccccc has no readable size.*1024 pixel/s,
+    /Sequence frame cccccccccccc has no readable size.*2048 pixel/s,
   );
   assert.equal(decodeCalls, 0);
 });
