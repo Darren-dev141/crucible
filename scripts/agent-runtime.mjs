@@ -24,6 +24,7 @@ import { readNativeCapacity } from './native-capacity.mjs';
 import { chooseNativeInstancing, chooseNativeKernel, chooseTraceBackend, createNativeTracerLocator, fetchNativeExport, isNativeTimeLimitError, traceFrameNative, traceTexelsNative } from './agent-native-trace.mjs';
 import { addonCapabilities, addonFileFor, addonImportMap } from './mcp-addons.mjs';
 import { createAgentAssetCatalog } from './agent-asset-catalog.mjs';
+import { launchWithShaderCache, shaderCacheDirectory } from './agent-shader-cache.mjs';
 import { createPackRegistry } from './agent-packs.mjs';
 import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMUM_PACK_FILE_BYTES, MAXIMUM_PACK_JSON_BYTES, MAXIMUM_PACK_ITEMS_PER_KIND, PACK_CONTENT_KINDS } from '../src/pack-manifest.js';
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
@@ -569,9 +570,12 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       if (backend === 'cpu') {
         args.push('--use-angle=swiftshader', '--enable-unsafe-swiftshader');
       }
-      browserInstance = await chromium.launch({ headless: true, args,
-        ...(browserPath ? { executablePath: browserPath } : { channel: 'chrome' }),
-      });
+      const launchOptions = { headless: true, args, ...(browserPath ? { executablePath: browserPath } : { channel: 'chrome' }) };
+      // The shader cache only helps the GPU backend: the CPU backend compiles in SwiftShader, which has no driver compile to skip.
+      const shaderCacheFolder = backend === 'gpu' ? shaderCacheDirectory() : null;
+      browserInstance = shaderCacheFolder
+        ? await launchWithShaderCache(chromium, launchOptions, shaderCacheFolder, { viewport: { width: 768, height: 512 }, deviceScaleFactor: 1 })
+        : await chromium.launch(launchOptions);
       page = await browserInstance.newPage({ viewport: { width: 768, height: 512 }, deviceScaleFactor: 1 });
       await page.route('**/*', route => {
         const url = new URL(route.request().url());
