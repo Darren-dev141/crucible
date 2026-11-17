@@ -59,6 +59,16 @@ test('the same options give identical bytes for every frame, another seed does n
   first.forEach((hash, index) => assert.notEqual(hash, other[index], `frame ${index} ignores the seed`));
 });
 
+// The bytes a bake wrote before the advection located each traced position once per step (#1768): every grid an explosion names must keep them.
+test('a bake with velocity keeps the exact bytes it had before positions were located once per step', () => {
+  const baked = bakeGasSim({ resolution: 24, frames: 8, seed: 7, velocity: true });
+  const hash = createHash('sha256');
+  for (const frame of baked.frames) {
+    for (const channel of Object.keys(frame).sort()) hash.update(Buffer.from(frame[channel].buffer));
+  }
+  assert.equal(hash.digest('hex'), 'af906fb809df1d869d7008851c1325dbdddda7eb223e4838ca249c63d8ccaf9d');
+});
+
 test('the plume rises over the first second', () => {
   const bake = bakeGasSim({ ...SMALL, frames: 24 });
   const early = densityCentroidHeight(bake.frames[5], bake);
