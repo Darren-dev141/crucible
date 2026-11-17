@@ -51,6 +51,8 @@ import { isPreviewHost } from './preview-host.mjs';
 import { runAnnotateSession } from './annotate-session.mjs';
 import { openInDefaultBrowser } from './annotate-open.mjs';
 import { ANNOTATE_LIMITS } from '../src/agent-annotate.js';
+import { REVIEW_LINK_LIMITS, newReviewId, parseReviewFile, validateReviewMarks } from '../src/review-link.js';
+import { writeReviewBuild } from './review-page.mjs';
 import { normalizeReview, reviewDeadlineMessage, REVIEW_LIMITS } from './agent-review.mjs';
 import { mergeFrameDiagnostics, pathTracerFindingsLimit } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
@@ -166,6 +168,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   let cancelReview;
   // One per scene_ask_user call that is waiting for the person; close() aborts them so the page server and its timer end at once.
   const pendingAskControllers = new Set();
+  // The view each exported review page shows (reviewId to sessionId, revision and camera), so a saved review file needs no camera of its
+  // own and a forged file cannot aim a ray. Oldest first, bounded.
+  const rememberedReviews = new Map();
   // Open scenes, least recently used first; the last one is what a call without a sessionId means.
   const openSessionIds = new Set();
   // Set once a recipe with a streamed texture sequence is read; from then on a call with a motion time supplies its frames first.
@@ -201,6 +206,69 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   }
   const savedGlbPaths = [];
   const savedWebBuildPaths = [];
+  // One frame for marking, with the camera it was drawn with. Shared by the local annotate page and the exported review page.
+  async function captureAnnotateFrame(sessionId, width, height) {
+    if (![width, height].every(value => Number.isInteger(value) && value >= 64 && value <= 1024)) {
+      throw new RangeError('Preview dimensions must be integers from 64 to 1024.');
+    }
+    return enqueue(async () => {
+      await requirePreviewRenderer();
+      requireSession(sessionId);
+      await page.setViewportSize({ width, height });
+      return invoke('annotateFrame', { sessionId });
+    });
+  }
+  // Resolves pixel marks to parts, points and normals against the camera of the picture they were made on. The answer is the same
+  // shape whether the marks came from the local page or from a saved review file.
+  async function sentMarksContent(base, camera, marks, duringText) {
+    const { sessionId, view } = base;
+    const picked = await enqueue(() => invoke('pickMarks', { sessionId, camera, marks, width: view.width, height: view.height }));
+    const sceneChanged = picked.revision !== base.revision;
+    return { ...base, outcome: 'sent', marks: picked.marks,
+      ...(sceneChanged ? { warning: `The scene changed from revision ${base.revision} to ${picked.revision} ${duringText}; part IDs and points describe revision ${picked.revision}, the picture shows ${base.revision}.` } : {}) };
+  }
+  // scene_export_web with review: a static page of the current view that a person pins on any device and saves as a file. It shares the
+  // export folder, naming and retention of the game builds, and needs no game.
+  async function exportReviewPage({ sessionId, title }) {
+    await jobs();
+    const frame = await captureAnnotateFrame(sessionId, 768, 512);
+    const directory = join(jobRoot, EXPORT_DIRECTORY_NAME);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await seedKeptExports(directory);
+    const outputDirectory = join(directory, `web-${randomUUID()}`);
+    const reviewId = newReviewId();
+    let summary;
+    try {
+      summary = await writeReviewBuild({ frame, outputDirectory, title, reviewId });
+    } catch (error) {
+      await rm(outputDirectory, { recursive: true, force: true });
+      throw error;
+    }
+    savedWebBuildPaths.push(outputDirectory);
+    while (savedWebBuildPaths.length > MAXIMUM_KEPT_WEB_BUILDS) await rm(savedWebBuildPaths.shift(), { recursive: true, force: true });
+    const view = { width: frame.width, height: frame.height, camera: frame.camera };
+    rememberReview(reviewId, { sessionId, revision: frame.metadata.revision, view });
+    return { sessionId, revision: frame.metadata.revision, review: true, ...summary, entry: join(outputDirectory, 'index.html'),
+      host: 'Serve the folder with any static file server, or send it as is. The reviewer saves a file; pass its text to scene_ask_user as reviewFile.' };
+  }
+  function rememberReview(reviewId, entry) {
+    rememberedReviews.set(reviewId, entry);
+    while (rememberedReviews.size > REVIEW_LINK_LIMITS.maxRememberedReviews) rememberedReviews.delete(rememberedReviews.keys().next().value);
+  }
+  // scene_ask_user with reviewFile: the saved marks of an exported review page, read as if the person had pressed Send here.
+  async function readReviewFile(input) {
+    const { reviewId, marks: rawMarks } = parseReviewFile(input.reviewFile);
+    const review = rememberedReviews.get(reviewId);
+    if (!review) {
+      throw new Error('This review file does not match a review page exported by this server run (or its export was dropped after eight newer ones). Export the review page again with scene_export_web review: true and ask for a new file.');
+    }
+    if (review.sessionId !== input.sessionId) {
+      throw new Error(`This review file was made for scene ${review.sessionId}, not ${input.sessionId}. Pass that sessionId.`);
+    }
+    const marks = validateReviewMarks(rawMarks, { width: review.view.width, height: review.view.height, maxMarks: input.maxMarks });
+    const base = { sessionId: review.sessionId, revision: review.revision, view: review.view };
+    return { content: await sentMarksContent(base, review.view.camera, marks, 'after the review page was exported') };
+  }
   // Capabilities must work without the job store: a store that cannot open is reported here, not thrown.
   async function jobRecords() {
     if (!jobRoot) return { records: [] };
@@ -1248,19 +1316,12 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     // Shows the current view in the person's own browser, waits for their pins and notes, and resolves each pin to a part and a
     // world point. The wait holds no preview queue slot, so other tools keep working while the person marks.
     async askUser(input) {
+      if (input.reviewFile !== undefined) return readReviewFile(input);
       const width = input.width ?? 768;
       const height = input.height ?? 512;
-      if (![width, height].every(value => Number.isInteger(value) && value >= 64 && value <= 1024)) {
-        throw new RangeError('Preview dimensions must be integers from 64 to 1024.');
-      }
       const maxMarks = input.maxMarks ?? ANNOTATE_LIMITS.maxMarks;
       const timeoutSeconds = input.timeoutSeconds ?? ANNOTATE_LIMITS.defaultTimeoutSeconds;
-      const frame = await enqueue(async () => {
-        await requirePreviewRenderer();
-        requireSession(input.sessionId);
-        await page.setViewportSize({ width, height });
-        return invoke('annotateFrame', { sessionId: input.sessionId });
-      });
+      const frame = await captureAnnotateFrame(input.sessionId, width, height);
       if (closing) throw new Error('The agent runtime is closing.');
       const askController = new AbortController();
       pendingAskControllers.add(askController);
@@ -1281,10 +1342,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           ? `The person did not press Send within ${timeoutSeconds} seconds. Ask in text, or call scene_ask_user again with a longer timeoutSeconds.`
           : 'The person cancelled without sending marks. Ask what they meant in text.' } };
       }
-      const picked = await enqueue(() => invoke('pickMarks', { sessionId: input.sessionId, camera: frame.camera, marks: session.marks, width: frame.width, height: frame.height }));
-      const sceneChanged = picked.revision !== frame.metadata.revision;
-      return { image: session.image, content: { ...base, outcome: 'sent', marks: picked.marks,
-        ...(sceneChanged ? { warning: `The scene changed from revision ${frame.metadata.revision} to ${picked.revision} while the person marked; part IDs and points describe revision ${picked.revision}, the picture shows ${frame.metadata.revision}.` } : {}) } };
+      return { image: session.image, content: await sentMarksContent(base, frame.camera, session.marks, 'while the person marked') };
     },
     checkpoint(input) {
       return enqueue(async () => {
@@ -1470,7 +1528,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return { ...summary, ...file };
       });
     },
-    exportWeb({ sessionId, title }) {
+    exportWeb({ sessionId, title, review = false }) {
+      if (review) return exportReviewPage({ sessionId, title });
       return enqueue(async () => {
         await requirePreviewRenderer();
         await jobs();
