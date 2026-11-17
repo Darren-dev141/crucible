@@ -79,7 +79,7 @@ editor is a non-goal of the engine (`docs/goal.md`), so there are no layers, ove
 Imported assets have no timeline.
 
 A frame depends only on its timeline time and keeps no state, so a seek to any time gives the same pixels as that frame inside a video or stills run.
-Videos are capped at 60 s and 900 frames, so a 60 s video needs 15 fps or less.
+Videos are capped at 60 s and 900 frames, so a 60 s video needs 15 fps or less. `scene_capabilities` jobs reports the caps as `maximumFps` (60) and `maximumFrames` (900), the same constants the job validator uses.
 
 **Audio.** Start the server with `--audio <absolute folder>` and pass `settings.audio: { file, offset }` on a video job.
 `file` is a plain name in that folder ending in `.wav`, `.mp3`, `.ogg` or `.flac` (no path, drive or protocol syntax); the file must be a regular file of up to 32 MiB without links.
