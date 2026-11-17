@@ -104,14 +104,27 @@ function suggestTopics(name, allNames) {
   }).slice(0, 3);
 }
 
+// One answer for planning a mesh: each branch is the answer of its own topic, so the two cannot drift apart.
+const MODELING_TOPIC = 'modeling';
+const MODELING_BRANCHES = Object.freeze(['geometries.box', 'meshEdit.set_position', 'meshEdit.inset_region', 'meshEdit.extrude_individual', 'meshEdit.extrude_face_region', 'meshEdit.boolean', 'meshEdit.uv_project']);
+
 /** The topics a caller can ask for, by name. */
 export function capabilityTopicNames(capabilities, outlineSources) {
   const names = {
-    scene: [...sceneTopics(capabilities.scene).keys()],
+    scene: [...sceneTopics(capabilities.scene).keys(), MODELING_TOPIC],
     runtime: RUNTIME_SECTIONS,
     schemas: [...outlineSources.keys()],
   };
   return names;
+}
+
+function answerModeling(capabilities, branchName, names, outlineSources) {
+  if (branchName !== undefined) {
+    throw new Error(`Topic ${MODELING_TOPIC} has no branch ${branchName}: it answers ${MODELING_BRANCHES.join(', ')} together. Ask for one of those by name for a single branch.`);
+  }
+  const answers = {};
+  for (const branch of MODELING_BRANCHES) answers[branch] = answerOneTopic(capabilities, branch, names, outlineSources);
+  return { topic: MODELING_TOPIC, answers };
 }
 
 /** The most topics one scene_capabilities call may list. */
@@ -129,7 +142,7 @@ function indexAnswer(capabilities, names) {
   return {
     format: capabilities.scene.format, schemaVersion: capabilities.scene.schemaVersion,
     phase: capabilities.phase, availableIn: capabilities.availableIn,
-    how: `Call scene_capabilities with topic set to a name below, or to a list of up to ${MAX_TOPICS_PER_CALL} names to read several at once. Tools list common fields; schemas names the full field list of a recipe part (meshEdit and meshStack also take <name>.<op>, geometries takes geometries.<type>). examples.<tool> is one complete call.`,
+    how: `Call scene_capabilities with topic set to a name below, or to a list of up to ${MAX_TOPICS_PER_CALL} names to read several at once. Planning a mesh: topic "modeling". Tools list common fields; schemas names the full field list of a recipe part (meshEdit and meshStack also take <name>.<op>, geometries takes geometries.<type>). examples.<tool> is one complete call.`,
     topics: names,
   };
 }
@@ -142,6 +155,7 @@ function answerOneTopic(capabilities, topic, names, outlineSources) {
   const [requestedName, branchName] = parts;
   const aliased = TOPIC_ALIASES[requestedName.toLowerCase()];
   const name = closestTopic(requestedName, allNames) ?? (allNames.includes(aliased) ? aliased : requestedName);
+  if (name === MODELING_TOPIC) return answerModeling(capabilities, branchName, names, outlineSources);
   const notes = sceneTopics(capabilities.scene).get(name);
   const runtime = RUNTIME_SECTIONS.includes(name) ? capabilities[name] : undefined;
   const source = outlineSources.get(name);

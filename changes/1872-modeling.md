@@ -1,0 +1,1 @@
+- `scene_capabilities` topic `modeling` answers the common mesh branches (box, `set_position`, `inset_region`, both extrudes, `boolean`, `uv_project`) in one call.
