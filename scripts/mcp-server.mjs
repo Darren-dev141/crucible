@@ -1,4 +1,4 @@
-import { answerCapabilities } from './capabilities-topics.mjs';
+import { answerCapabilities, MAX_TOPICS_PER_CALL } from './capabilities-topics.mjs';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { readEnvironmentVariable } from '../src/environment-variable.js';
@@ -19,7 +19,7 @@ import { BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES, CATALOG_FILE_ID } f
 import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError, MAXIMUM_STILLS_FRAMES } from '../src/agent-scene-capabilities.js';
 import { MATERIAL_LAYER_SCALAR_RANGES, MATERIAL_LAYER_COLOR_RANGES } from '../src/material-layers.js';
 import { SUBSURFACE_RANGES } from '../src/subsurface-limits.js';
-import { responseFormatField, chosenFormat, conciseReview, conciseJobStatus, conciseJobResult, withoutNotes } from './mcp-response-format.mjs';
+import { responseFormatField, chosenFormat, conciseReview, conciseJobStatus, conciseJobResult, conciseCapabilities } from './mcp-response-format.mjs';
 import { resolveAddons } from './mcp-addons.mjs';
 import { createCallLogger, CALL_LOG_ENVIRONMENT_VARIABLE } from './mcp-call-log.mjs';
 import { startUpdateCheck, updateNoticeText, describeUpdateCheck } from '../src/mcp-update-check.js';
@@ -1009,9 +1009,10 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
       return logCall ? logCall(name, call) : call();
     });
   }
-  register('scene_capabilities', 'Index of supported recipe features and runtime budgets; pass topic for the detail of one. Read it before authoring. Does not launch a browser.', z.strictObject({ topic: z.string().min(1).max(64).optional().describe('A name from the index, or name.branch such as meshEdit.bevel. Leave out for the index.'), response_format: responseFormatField }), readOnly, async ({ topic, response_format }) => {
+  const capabilitiesTopic = z.union([z.string().min(1).max(64), z.array(z.string()).max(MAX_TOPICS_PER_CALL)]).optional().describe('A name, name.branch (meshEdit.bevel) or a list of up to 8. Omit for the index.');
+  register('scene_capabilities', 'Index of supported recipe features and runtime budgets; pass topic for the detail of one. Read it before authoring. Does not launch a browser.', z.strictObject({ topic: capabilitiesTopic, response_format: responseFormatField }), readOnly, async ({ topic, response_format }) => {
     const answer = answerCapabilities(relations ? await runtime.capabilities() : withoutRelationsAdvice(await runtime.capabilities()), topic, outlineSources);
-    const shown = chosenFormat('scene_capabilities', response_format) === 'concise' && answer.fields !== undefined ? { ...answer, fields: withoutNotes(answer.fields) } : answer;
+    const shown = chosenFormat('scene_capabilities', response_format) === 'concise' ? conciseCapabilities(answer) : answer;
     // Once per server: the first answer carries the update offer, later ones stay unchanged.
     const pendingUpdate = updateReported ? null : updateAvailable();
     updateReported = updateReported || pendingUpdate !== null;
