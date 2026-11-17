@@ -1035,8 +1035,8 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     return { content: [{ type: 'image', data, mimeType }, { type: 'text', text: JSON.stringify(metadata) }], structuredContent: metadata };
   });
   const askUserTool = register('scene_ask_user', 'Open the view in the browser so the person pins points with notes; waits for Send. Use for a change hard to say in words. Returns marks with partId, point, normal, note, and the marked PNG.', z.strictObject({ ...sessionFields, prompt: z.string().max(200).optional().describe('Line shown above the picture.'), maxMarks: z.number().int().min(1).max(16).default(16), timeoutSeconds: z.number().int().min(10).max(900).default(300) }), askUser, async argumentsValue => {
-    const { content, image } = await runtime.askUser(clientShowsApps ? { ...argumentsValue, inline: true } : argumentsValue);
-    return { content: [...(image ? [{ type: 'image', data: image, mimeType: 'image/png' }] : []), { type: 'text', text: JSON.stringify(content) }] };
+    const { content, image, viewMeta } = await runtime.askUser(clientShowsApps ? { ...argumentsValue, inline: true } : argumentsValue);
+    return { content: [...(image ? [{ type: 'image', data: image, mimeType: 'image/png' }] : []), { type: 'text', text: JSON.stringify(content) }], ...(viewMeta ? { _meta: { 'crucible/annotate': viewMeta } } : {}) };
   });
   // MCP Apps (#923): a host that advertises the extension shows the annotate view inline. The submit tool, the view resource and the
   // tool's UI link stay off until the client says so, so every other host sees the same tool list and the same browser flow as before.
@@ -1045,7 +1045,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     async uri => ({ contents: [{ uri: uri.href, mimeType: MCP_APPS_MIME_TYPE, text: annotateViewHtml() }] }));
   annotateViewResource.disable();
   const submitAskUserTool = register('scene_ask_user_submit', 'Used by the inline annotate view only: send the pins the person placed. Not for the agent.', z.strictObject({
-    askId: z.string().regex(/^[a-f0-9]{24}$/),
+    nonce: z.string().regex(/^[a-f0-9]{32}$/),
     marks: z.array(z.strictObject({ x: z.number(), y: z.number(), note: z.string().max(280).optional() })).min(1).max(16),
     image: z.string().max(1500000),
   }), askUser, async argumentsValue => {

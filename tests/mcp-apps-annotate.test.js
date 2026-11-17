@@ -7,7 +7,7 @@ import { createAgentMcpServer } from '../scripts/mcp-server.mjs';
 import { annotateViewHtml, clientSupportsMcpApps, ANNOTATE_VIEW_URI, MCP_APPS_MIME_TYPE, MAXIMUM_VIEW_BYTES } from '../scripts/annotate-app-view.mjs';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
-const ASK_ID = 'a'.repeat(24);
+const NONCE = 'a'.repeat(32);
 const APPS_CAPABILITIES = { extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: [MCP_APPS_MIME_TYPE] } } };
 
 function createRuntime(record) {
@@ -17,7 +17,7 @@ function createRuntime(record) {
     async askUser(input) {
       record.asks.push(input);
       return input.inline
-        ? { image: PNG, content: { sessionId: input.sessionId, outcome: 'pending', askId: ASK_ID, view: { width: 1, height: 1 }, maxMarks: 16 } }
+        ? { image: PNG, content: { sessionId: input.sessionId, outcome: 'pending', view: { width: 1, height: 1 }, maxMarks: 16 }, viewMeta: { nonce: NONCE } }
         : { image: PNG, content: { sessionId: input.sessionId, outcome: 'sent', marks: [] } };
     },
     async submitAskUser(input) {
@@ -53,7 +53,7 @@ test('a host without MCP Apps gets the browser flow, the same tool list and no U
   const listed = await client.listResources().catch(() => ({ resources: [] }));
   assert.deepEqual(listed.resources, []);
   await assert.rejects(client.readResource({ uri: ANNOTATE_VIEW_URI }));
-  const submit = await client.callTool({ name: 'scene_ask_user_submit', arguments: { askId: ASK_ID, marks: [{ x: 1, y: 1 }], image: PNG } }).catch(error => ({ isError: true, error }));
+  const submit = await client.callTool({ name: 'scene_ask_user_submit', arguments: { nonce: NONCE, marks: [{ x: 1, y: 1 }], image: PNG } }).catch(error => ({ isError: true, error }));
   assert.equal(submit.isError, true);
   assert.equal(record.submits.length, 0);
 });
@@ -72,6 +72,8 @@ test('a host with MCP Apps gets the view resource, a UI link on the tool and a p
   assert.equal(record.asks[0].inline, true);
   assert.equal(result.content[0].type, 'image');
   assert.equal(JSON.parse(result.content[1].text).outcome, 'pending');
+  assert.equal(result._meta['crucible/annotate'].nonce, NONCE);
+  assert.ok(!JSON.stringify(result.content).includes(NONCE), 'the model-visible content never carries the nonce');
 });
 
 test('the view is self-contained, bounded and speaks the MCP Apps handshake (#923)', () => {
@@ -96,20 +98,22 @@ test('only a client that lists the HTML app mime type counts as supporting MCP A
 
 test('the submit tool bounds what a view can send and passes the marks to the runtime (#923)', async context => {
   const { client, record } = await connect(context, APPS_CAPABILITIES);
-  const sent = await client.callTool({ name: 'scene_ask_user_submit', arguments: { askId: ASK_ID, marks: [{ x: 3, y: 4, note: 'dull' }], image: PNG } });
+  const sent = await client.callTool({ name: 'scene_ask_user_submit', arguments: { nonce: NONCE, marks: [{ x: 3, y: 4, note: 'dull' }], image: PNG } });
   assert.equal(sent.content[0].type, 'image');
   const answer = JSON.parse(sent.content[1].text);
   assert.equal(answer.outcome, 'sent');
   assert.equal(answer.marks[0].partId, 'lamp');
   assert.equal(record.submits.length, 1);
+  const forged = await client.callTool({ name: 'scene_ask_user_submit', arguments: { marks: [{ x: 1, y: 1 }], image: PNG } }).catch(error => ({ isError: true, error }));
+  assert.equal(forged.isError, true, 'a submit built only from model-visible data has no nonce');
   const manyMarks = Array.from({ length: 17 }, () => ({ x: 1, y: 1 }));
   for (const argumentsValue of [
-    { askId: 'short', marks: [{ x: 1, y: 1 }], image: PNG },
-    { askId: ASK_ID, marks: [], image: PNG },
-    { askId: ASK_ID, marks: manyMarks, image: PNG },
-    { askId: ASK_ID, marks: [{ x: 1, y: 1, note: 'x'.repeat(281) }], image: PNG },
-    { askId: ASK_ID, marks: [{ x: 1, y: 1 }], image: 'A'.repeat(1500001) },
-    { askId: ASK_ID, marks: [{ x: 1, y: 1, code: 'alert(1)' }], image: PNG },
+    { nonce: 'short', marks: [{ x: 1, y: 1 }], image: PNG },
+    { nonce: NONCE, marks: [], image: PNG },
+    { nonce: NONCE, marks: manyMarks, image: PNG },
+    { nonce: NONCE, marks: [{ x: 1, y: 1, note: 'x'.repeat(281) }], image: PNG },
+    { nonce: NONCE, marks: [{ x: 1, y: 1 }], image: 'A'.repeat(1500001) },
+    { nonce: NONCE, marks: [{ x: 1, y: 1, code: 'alert(1)' }], image: PNG },
   ]) {
     const rejected = await client.callTool({ name: 'scene_ask_user_submit', arguments: argumentsValue }).catch(error => ({ isError: true, error }));
     assert.equal(rejected.isError, true, JSON.stringify(argumentsValue).slice(0, 80));

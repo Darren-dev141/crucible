@@ -1274,10 +1274,12 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       });
       if (closing) throw new Error('The agent runtime is closing.');
       if (input.inline) {
-        const askId = randomBytes(12).toString('hex');
-        inlineAsks.set(askId, { sessionId: input.sessionId, frame, maxMarks });
+        // The nonce goes to the view in the result's _meta only, never in the content the model reads: the model cannot call the
+        // app-only submit tool with a person's marks because it never sees the nonce.
+        const nonce = randomBytes(16).toString('hex');
+        inlineAsks.set(nonce, { sessionId: input.sessionId, frame, maxMarks, expiresAt: Date.now() + timeoutSeconds * 1000 });
         while (inlineAsks.size > MAXIMUM_INLINE_ASKS) inlineAsks.delete(inlineAsks.keys().next().value);
-        return { image: frame.data, content: { sessionId: input.sessionId, outcome: 'pending', askId, revision: frame.metadata.revision,
+        return { image: frame.data, viewMeta: { nonce }, content: { sessionId: input.sessionId, outcome: 'pending', revision: frame.metadata.revision,
           view: { width: frame.width, height: frame.height, camera: frame.camera }, maxMarks, maxNoteLength: ANNOTATE_LIMITS.maxNoteLength, prompt: input.prompt ?? '',
           message: 'The view is open in the chat for the person. Their marks arrive as a message from them: stop here and do not call scene_ask_user again.' } };
       }
@@ -1303,15 +1305,21 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       return resolveSentMarks({ sessionId: input.sessionId, frame, marks: session.marks, image: session.image });
     },
     // The second half of an inline scene_ask_user: the MCP Apps view sends the marks it collected, the answer has the same shape as a
-    // browser answer. An unknown or used askId fails, so a view cannot resolve marks against a frame it was not shown.
-    async submitAskUser({ askId, marks, image }) {
-      const pending = inlineAsks.get(askId);
-      if (!pending) throw new Error('This annotate view is no longer open. Call scene_ask_user again to get a fresh one.');
+    // browser answer. Only the nonce the view received can submit, so the model cannot forge an answer; an unknown, used or
+    // expired nonce fails. The ask stays open until the marks resolve, so a failed pick can be retried.
+    async submitAskUser({ nonce, marks, image }) {
+      const pending = inlineAsks.get(nonce);
+      if (!pending) throw new Error('scene_ask_user_submit only accepts the marks of an open annotate view, using the nonce that view received. Call scene_ask_user again to get a fresh view.');
+      if (Date.now() > pending.expiresAt) {
+        inlineAsks.delete(nonce);
+        throw new Error('The annotate view timed out before the marks were sent. Ask in text, or call scene_ask_user again with a longer timeoutSeconds.');
+      }
       const clean = validateMarks(marks, { width: pending.frame.width, height: pending.frame.height, maxMarks: pending.maxMarks });
       if (!clean.length) throw new TypeError('Add at least one pin before sending.');
       if (!isBoundedPng(image)) throw new TypeError('The marked picture is not a PNG within 1 MiB.');
-      inlineAsks.delete(askId);
-      return resolveSentMarks({ sessionId: pending.sessionId, frame: pending.frame, marks: clean, image });
+      const answer = await resolveSentMarks({ sessionId: pending.sessionId, frame: pending.frame, marks: clean, image });
+      inlineAsks.delete(nonce);
+      return answer;
     },
     checkpoint(input) {
       return enqueue(async () => {
@@ -1484,6 +1492,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         await requirePreviewRenderer();
         const result = await invoke('dispose', input);
         forgetSession(input.sessionId);
+        for (const [nonce, pending] of inlineAsks) if (pending.sessionId === input.sessionId) inlineAsks.delete(nonce);
         return result;
       });
     },
@@ -1600,6 +1609,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         phase = 'closing';
         cancelReview?.(new Error('The agent runtime is closing.'));
         for (const askController of pendingAskControllers) askController.abort();
+        inlineAsks.clear();
         closing = (async () => {
           try {
             // The job store goes first: a client that closes the connection waits only a couple of seconds before it kills this

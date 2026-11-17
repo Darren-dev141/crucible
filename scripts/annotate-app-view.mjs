@@ -20,7 +20,7 @@ export function clientSupportsMcpApps(capabilities) {
 const VIEW_SCRIPT = `(() => {
 const submitTool = 'scene_ask_user_submit';
 let limits = null;
-let askId = null;
+let nonce = null;
 const marks = [];
 const stage = document.getElementById('stage');
 const frame = document.getElementById('frame');
@@ -54,6 +54,11 @@ window.addEventListener('message', event => {
 function textOf(result) {
   const part = (result && result.content || []).find(item => item.type === 'text');
   return part ? part.text : '';
+}
+// The nonce travels in the result _meta, which the host gives the view and not the model.
+function nonceOf(result) {
+  const meta = result && result._meta && result._meta["crucible/annotate"];
+  return meta && meta.nonce;
 }
 function render() {
   if (!limits) return;
@@ -93,12 +98,12 @@ function showResult(result) {
   const image = (result.content || []).find(item => item.type === 'image');
   let details;
   try { details = JSON.parse(textOf(result)); } catch (error) { details = null; }
-  if (!image || !details || details.outcome !== 'pending' || typeof details.askId !== 'string') {
+  if (!image || !details || details.outcome !== 'pending' || typeof nonceOf(result) !== 'string') {
     hint.textContent = (details && details.message) || 'This view has no scene to mark.';
     return;
   }
   limits = details;
-  askId = details.askId;
+  nonce = nonceOf(result);
   document.getElementById('title').textContent = details.prompt || 'Click the scene to mark what you mean';
   frame.width = details.view.width;
   frame.height = details.view.height;
@@ -152,7 +157,7 @@ function tellChat(text) {
 sendButton.addEventListener('click', async () => {
   sendButton.disabled = true;
   try {
-    const answer = await request('tools/call', { name: submitTool, arguments: { askId, marks: marks.map(({ x, y, note }) => ({ x, y, note })), image: markedImage() } });
+    const answer = await request('tools/call', { name: submitTool, arguments: { nonce, marks: marks.map(({ x, y, note }) => ({ x, y, note })), image: markedImage() } });
     if (answer.isError) throw new Error(textOf(answer) || 'The marks were refused.');
     finish('ok', 'Sent to the agent.');
     await tellChat('Marks from the scene annotate view: ' + textOf(answer));
