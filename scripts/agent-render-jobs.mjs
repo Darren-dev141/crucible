@@ -3,7 +3,7 @@ import { mkdir, open, readFile, writeFile, rename, link, unlink, rmdir, readdir,
 import { randomUUID, createHash } from 'node:crypto';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 
-import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, VIDEO_ENCODERS, AUDIO_FILE_PATTERN, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS } from '../src/agent-scene-capabilities.js';
+import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, VIDEO_ENCODERS, AUDIO_FILE_PATTERN, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, MAXIMUM_STILLS_FRAMES, MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE } from '../src/agent-scene-capabilities.js';
 import { parseQuality } from './agent-render-quality.mjs';
 import { estimateFrameBytes } from '../src/budget.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
@@ -109,7 +109,7 @@ export function normalizeJobSettings(input, clips, recipe) {
 }
 
 function settingsFrom(input, clips, recipe) {
-  objectKeys(input, ['kind', 'width', 'height', 'fps', 'duration', 'animation', 'motion', 'rendererTime', 'passes', 'renderer', 'timeline', 'audio', 'encoder', 'transparent', 'format', 'multilayer', 'region', 'quality'], 'settings');
+  objectKeys(input, ['kind', 'width', 'height', 'fps', 'duration', 'animation', 'motion', 'rendererTime', 'passes', 'renderer', 'timeline', 'audio', 'encoder', 'transparent', 'format', 'multilayer', 'region', 'quality', 'stillCount'], 'settings');
   if (!['image', 'stills', 'video'].includes(input.kind)) throw new TypeError('kind must be image, stills or video.');
   const largeFrame = input.kind === 'image';
   const maximumSide = largeFrame ? MAXIMUM_JOB_SIDE : MAXIMUM_SEQUENCE_JOB_SIDE;
@@ -117,7 +117,7 @@ function settingsFrom(input, clips, recipe) {
   const width = boundedNumber(input.width, 64, maximumSide, 'width', true);
   const height = boundedNumber(input.height, 64, maximumSide, 'height', true);
   if (width * height > maximumPixels) {
-    const limit = largeFrame ? '3840x2160' : '1920x1080 (only an image job goes up to 3840x2160)';
+    const limit = largeFrame ? '3840x2160' : `1920x1080 (only an image job goes up to 3840x2160; a square frame fits up to ${MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE}x${MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE})`;
     throw new RangeError(`width x height must not exceed ${limit} pixels.`);
   }
   if (input.kind === 'video' && (width % 2 || height % 2)) throw new RangeError('Video dimensions must be even.');
@@ -127,10 +127,15 @@ function settingsFrom(input, clips, recipe) {
   const bakeSeconds = recipe?.format === 'crucible.scene' && !recipe.motion ? bakedPhysicsDuration(recipe) : undefined;
   const bakeDefault = bakeSeconds && input.kind !== 'image' && input.motion ? Math.max(0.1, bakeSeconds - (Number(input.motion.start) || 0)) : undefined;
   const defaultDuration = timelineStart === undefined || input.kind === 'image' ? bakeDefault ?? 1 : filmTimelineDuration(recipe.timeline) - timelineStart;
-  const duration = boundedNumber(input.duration ?? defaultDuration, 0.1, MAXIMUM_VIDEO_SECONDS, 'duration');
-  const frameCount = input.kind === 'image' ? 1 : input.kind === 'stills' ? 8 : videoFrameCount(fps, duration);
+  const framesAsked = stillsFrameCountFrom(input);
+  // A stills job that sets frames samples the motion clock every 1 / fps seconds, like a video; its duration is the span of those samples.
+  const duration = framesAsked === undefined
+    ? boundedNumber(input.duration ?? defaultDuration, 0.1, MAXIMUM_VIDEO_SECONDS, 'duration')
+    : stillsSequenceDuration(input, framesAsked, fps);
+  const frameCount = input.kind === 'image' ? 1 : input.kind === 'stills' ? framesAsked ?? 8 : videoFrameCount(fps, duration);
   if (frameCount > MAXIMUM_JOB_FRAMES) throw new RangeError(`Job exceeds ${MAXIMUM_JOB_FRAMES} frames. Lower fps or duration.`);
   const result = { kind: input.kind, width, height, fps, duration, frameCount };
+  if (framesAsked !== undefined) result.stillCount = framesAsked;
   if (input.passes !== undefined) result.passes = passesFrom(input.passes, input.kind);
   if (input.renderer !== undefined) result.renderer = rendererFrom(input.renderer, input.passes);
   Object.assign(result, outputOptionsFrom(input, result));
@@ -186,6 +191,20 @@ function settingsFrom(input, clips, recipe) {
   }
   boundedNumber(result.rendererTime.start + lastSampleTime * result.rendererTime.rate, 0, 3600, 'renderer time end');
   return result;
+}
+
+function stillsFrameCountFrom(input) {
+  if (input.stillCount === undefined) return undefined;
+  if (input.kind !== 'stills') throw new TypeError('stillCount needs kind stills; a video sets its length with duration and fps.');
+  return boundedNumber(input.stillCount, 2, MAXIMUM_STILLS_FRAMES, 'stillCount (the most one stills job writes; render a longer clip in parts, each from its own motion.start)', true);
+}
+
+function stillsSequenceDuration(input, frames, fps) {
+  const span = (frames - 1) / fps;
+  if (input.duration !== undefined && Math.abs(input.duration - span) > 1e-9) {
+    throw new RangeError(`duration is (stillCount - 1) / fps = ${span} s when stillCount is set; leave duration out.`);
+  }
+  return span;
 }
 
 /** The optional transparent, format and region settings, kept only when they differ from the defaults so old records read the same. */
@@ -282,10 +301,10 @@ function passesFrom(passes, kind) {
 }
 
 /** Every artifact filename of a job, lit image first and then each requested pass, frame by frame. */
-export function artifactNames(kind, passes = [], format = 'png', multilayer = false) {
+export function artifactNames(kind, passes = [], format = 'png', multilayer = false, stillCount = 8) {
   if (kind === 'video') return ['render.mp4'];
   const extension = format === 'exr' ? 'exr' : 'png';
-  const stems = kind === 'image' ? ['render'] : Array.from({ length: 8 }, (_, index) => `frame-${index}`);
+  const stems = kind === 'image' ? ['render'] : Array.from({ length: stillCount }, (_, index) => `frame-${index}`);
   if (multilayer) return stems.map(stem => `${stem}.${extension}`);
   return stems.flatMap(stem => [`${stem}.${extension}`, ...passes.map(pass => `${stem}-${pass}.${extension}`)]);
 }
@@ -328,7 +347,7 @@ function artifactByteLimit(settings, limits) {
 
 function allowedFile(name) {
   const passNames = RENDER_PASS_NAMES.join('|');
-  const artifact = new RegExp(`^(?:render\\.(?:png|mp4|exr)|(?:render|frame-[0-7])(?:-(?:${passNames}))?\\.(?:png|exr))(?:\\.partial)?$`);
+  const artifact = new RegExp(`^(?:render\\.(?:png|mp4|exr)|(?:render|frame-\\d{1,3})(?:-(?:${passNames}))?\\.(?:png|exr))(?:\\.partial)?$`);
   return INTERNAL_FILES.has(name) || artifact.test(name);
 }
 
@@ -816,7 +835,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       boundedNumber(record.progress.maximumPendingFrames, 0, 1, 'persisted pending frames', true);
       if (record.metrics !== undefined) record.metrics = jsonCopy(record.metrics, 65536);
       if (record.reason !== undefined && (typeof record.reason !== 'string' || record.reason.length > 2048)) throw new Error('Invalid persisted job reason.');
-      const namesAllowed = artifactNames(settings.kind, settings.passes, settings.format, settings.multilayer);
+      const namesAllowed = artifactNames(settings.kind, settings.passes, settings.format, settings.multilayer, settings.frameCount);
       if (!Array.isArray(record.artifacts) || record.artifacts.length > namesAllowed.length) throw new Error('Invalid persisted artifacts.');
       const seen = new Set();
       for (const artifact of record.artifacts) {
@@ -899,7 +918,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       record.state = 'finalizing';
       await persist(job);
       objectKeys(completed, ['artifacts', 'metrics'], 'runner result');
-      const expected = artifactNames(record.settings.kind, record.settings.passes, record.settings.format, record.settings.multilayer);
+      const expected = artifactNames(record.settings.kind, record.settings.passes, record.settings.format, record.settings.multilayer, record.settings.frameCount);
       if (!Array.isArray(completed.artifacts) || completed.artifacts.length !== expected.length) throw new Error('Runner did not return the required fixed artifacts.');
       const directory = await directoryFor(record.jobId);
       const metrics = jsonCopy(completed.metrics ?? {}, 65536);

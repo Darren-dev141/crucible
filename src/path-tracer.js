@@ -172,7 +172,7 @@ export function createCamera(camera, width, height) {
   const clipStart = camera.clipStart ?? 0;
   if (typeof clipStart !== 'number' || !Number.isFinite(clipStart) || clipStart < 0 || clipStart > 1e5) throw new RangeError(`Path tracer camera clipStart must be a distance from 0 to 100000 scene units along the view axis, got ${JSON.stringify(camera.clipStart)}. Leave it out to start rays at the eye.`);
   if (typeof camera.far === 'number' && clipStart >= camera.far) throw new RangeError(`Path tracer camera clipStart ${clipStart} is at or past the far plane ${camera.far}, so nothing would be drawn. Pass a clipStart below far, or raise far.`);
-  const view = { eye, forward, right, above, halfHeight, halfWidth: halfHeight * width / height, ...(clipStart > 0 ? { clipStart } : {}) };
+  const view = { eye, forward, right, above, halfHeight, halfWidth: halfHeight * width / height, ...(clipStart > 0 ? { clipStart, near: clipStart } : {}) };
   // A camera with an fStop adds its thin lens (apertureRadius, focalDistance, apertureBlades, apertureRotation). Only the
   // native "cycles" kernel draws it; every other tracer ignores the extra fields, and a pinhole view is unchanged.
   const thinLens = resolveThinLens(camera, { aspect: width / height, eye, target });
@@ -1042,7 +1042,7 @@ export function toneMapToRgba8(linear, width, height, { viewTransform = 'aces', 
 /** Names what this scene asks for that the path tracer does not draw, so a result never claims more than it traced. */
 export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { kernelMaterials = false, clipStart = 0 } = {}) {
   const notes = new Set();
-  if (clipStart > 0 && (backend === 'gpu' || kernelMaterials)) notes.add('camera.clipStart is ignored: only the CPU and WebGPU tracers start camera rays at it, so geometry between the eye and the clip start is drawn.');
+  if (clipStart > 0 && backend === 'gpu') notes.add('camera.clipStart is ignored: only the CPU, WebGPU and native cycles tracers start camera rays at it, so geometry between the eye and the clip start is drawn.');
   const fog = environment?.volumeFog;
   if (fog?.density > 0 && (fog.noiseAmount ?? 0.5) > 0) notes.add('volumeFog is traced as a uniform medium: noiseAmount, noiseScale and drift are ignored.');
   if (fog?.density > 0 && fog.ambient) notes.add('volumeFog.ambient is not added: the fog is lit by the traced lights and sky.');
